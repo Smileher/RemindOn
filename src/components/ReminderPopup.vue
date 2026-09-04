@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { Check, Clock3, X } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
+import { translate } from '../i18n'
+import type { MessageKey } from '../i18n'
 import type { AppData, ReminderTriggeredEvent } from '../types'
 import { defaultData } from '../types'
 
@@ -25,25 +27,27 @@ const popupClass = computed(() => [
   `notification-${settings.value.notificationStyle}`,
 ])
 
+function t(key: MessageKey, params: Record<string, string | number> = {}) {
+  return translate(settings.value.language, key, params)
+}
+
 const category = computed(() => {
-  if (current.value?.isRest) return '休息提醒'
-  if (current.value?.isShutdown) return '定时操作'
-  return '事件提醒'
+  if (current.value?.isRest) return t('popup.rest')
+  if (current.value?.isShutdown) return t('popup.power')
+  return t('popup.event')
 })
 
 const isAutomaticPower = computed(() =>
-  current.value?.powerAction === 'shutdown' || current.value?.powerAction === 'restart',
+  current.value?.powerAction === 'shutdown'
+    || current.value?.powerAction === 'lock'
+    || current.value?.powerAction === 'restart',
 )
 
-const powerVerb = computed(() => current.value?.powerAction === 'restart' ? '重启' : '关机')
-
-function includesPopup(mode: AppData['settings']['notificationMode']) {
-  return mode === 'popup' || mode === 'both'
-}
-
-function includesSystem(mode: AppData['settings']['notificationMode']) {
-  return mode === 'system' || mode === 'both'
-}
+const powerVerb = computed(() => {
+  if (current.value?.powerAction === 'restart') return t('popup.restart')
+  if (current.value?.powerAction === 'lock') return t('popup.lock')
+  return t('popup.shutdown')
+})
 
 async function closePopup() {
   await getCurrentWindow().hide()
@@ -73,7 +77,7 @@ async function executePowerAction() {
   try {
     await invoke('execute_power_action', { action })
   } catch (error) {
-    powerError.value = `无法${powerVerb.value}：${String(error)}`
+    powerError.value = t('popup.actionFailed', { action: powerVerb.value, error: String(error) })
   }
 }
 
@@ -94,30 +98,23 @@ function startPowerCountdown() {
 async function handleTrigger(event: ReminderTriggeredEvent) {
   current.value = event
   powerError.value = ''
-  triggeredAt.value = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date())
   try {
     settings.value = (await invoke<AppData>('load_data')).settings
   } catch {
     // Keep the last known settings if the backend is unavailable for a moment.
   }
-
-  if (includesSystem(settings.value.notificationMode)) {
-    try {
-      let permission = await isPermissionGranted()
-      if (!permission) permission = (await requestPermission()) === 'granted'
-      if (permission) await sendNotification({ title: `RemindOn · ${category.value}`, body: event.title })
-    } catch {
-      // Software notification remains available when native notification permission is unavailable.
-    }
+  triggeredAt.value = new Intl.DateTimeFormat(settings.value.language, { hour: '2-digit', minute: '2-digit' }).format(new Date())
+  try {
+    await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
+  } catch {
+    // Theme synchronization must not prevent a due notification from opening.
   }
-  if (includesPopup(settings.value.notificationMode) || isAutomaticPower.value) {
-    const window = getCurrentWindow()
-    await window.setAlwaysOnTop(settings.value.popupAlwaysOnTop)
-    await window.center()
-    await window.show()
-    await window.setFocus()
-    if (isAutomaticPower.value) startPowerCountdown()
-  }
+  const window = getCurrentWindow()
+  await window.setAlwaysOnTop(settings.value.popupAlwaysOnTop)
+  await window.center()
+  await window.show()
+  await window.setFocus()
+  if (isAutomaticPower.value) startPowerCountdown()
 }
 
 onMounted(async () => {
@@ -147,19 +144,19 @@ onUnmounted(() => {
 <template>
   <main :class="['popup-shell', ...popupClass]">
     <header class="popup-header">
-      <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ category }} · {{ triggeredAt || '现在' }}</span></div></div>
-      <button class="icon-button popup-close" type="button" aria-label="关闭通知" title="关闭" @click="dismiss"><X :size="18" /></button>
+      <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAt || t('common.now') }) }}</span></div></div>
+      <button class="icon-button popup-close" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="dismiss"><X :size="18" /></button>
     </header>
     <section class="popup-content">
-      <p class="popup-label">现在是提醒时间</p>
-      <h1>{{ current?.title || '你有一条新提醒' }}</h1>
-      <div v-if="isAutomaticPower" class="power-countdown"><strong>{{ powerCountdown }}</strong><span>秒后自动{{ powerVerb }}</span></div>
-      <p v-else class="popup-hint">可以立即完成，或稍后 5 分钟再次提醒。</p>
+      <p class="popup-label">{{ t('popup.label') }}</p>
+      <h1>{{ current?.title || t('popup.defaultTitle') }}</h1>
+      <div v-if="isAutomaticPower" class="power-countdown"><strong>{{ powerCountdown }}</strong><span>{{ t('popup.secondsUntil', { action: powerVerb }) }}</span></div>
+      <p v-else class="popup-hint">{{ t('popup.hint') }}</p>
       <p v-if="powerError" class="popup-error">{{ powerError }}</p>
     </section>
     <footer class="popup-actions">
-      <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">取消{{ powerVerb }}</button><button class="button button-danger" type="button" @click="executePowerAction">立即{{ powerVerb }}</button></template>
-      <template v-else><button class="button" type="button" @click="snooze"><Clock3 :size="15" />稍后 5 分钟</button><button class="button button-primary" type="button" @click="dismiss"><Check :size="15" />完成</button></template>
+      <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button><button class="button button-danger" type="button" @click="executePowerAction">{{ t('popup.executeNow', { action: powerVerb }) }}</button></template>
+      <template v-else><button class="button" type="button" @click="snooze"><Clock3 :size="15" />{{ t('popup.snooze') }}</button><button class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.done') }}</button></template>
     </footer>
   </main>
 </template>

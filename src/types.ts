@@ -1,9 +1,10 @@
 export type ReminderType = 'once' | 'daily' | 'weekly' | 'monthly' | 'workday' | 'weekend' | 'interval'
-export type NotificationMode = 'system' | 'popup' | 'both'
+export type NotificationMode = 'system' | 'popup'
 export type Theme = 'dark' | 'light' | 'system'
+export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type NotificationStyle = 'compact' | 'standard' | 'prominent'
-export type PowerAction = 'shutdown' | 'remindShutdown' | 'restart' | 'remindRestart'
+export type PowerAction = 'shutdown' | 'lock' | 'restart'
 
 export interface Reminder {
   id: string
@@ -18,6 +19,7 @@ export interface Reminder {
 }
 
 export interface AppSettings {
+  language: Language
   autostart: boolean
   minimizeToTray: boolean
   popupAlwaysOnTop: boolean
@@ -50,8 +52,9 @@ export interface ReminderTriggeredEvent {
 }
 
 export const defaultData = (): AppData => ({
-  version: 2,
+  version: 3,
   settings: {
+    language: 'zh-CN',
     autostart: false,
     minimizeToTray: true,
     popupAlwaysOnTop: true,
@@ -63,7 +66,7 @@ export const defaultData = (): AppData => ({
     theme: 'dark',
     accentColor: 'mint',
     shutdownReminderEnabled: false,
-    powerAction: 'remindShutdown',
+    powerAction: 'shutdown',
     shutdownReminderTime: '23:30',
     shutdownReminderMessage: '时间不早了，记得关闭电脑。',
   },
