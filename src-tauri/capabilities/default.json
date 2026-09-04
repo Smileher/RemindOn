@@ -5,6 +5,7 @@
   "windows": ["main", "reminder"],
   "permissions": [
     "core:default",
+    "core:app:allow-set-app-theme",
     "autostart:default",
     "dialog:default",
     "notification:default"

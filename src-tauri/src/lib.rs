@@ -7,13 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 
-const DATA_VERSION: u32 = 2;
+const DATA_VERSION: u32 = 3;
 const REST_ID: &str = "__rest__";
 const SHUTDOWN_ID: &str = "__shutdown__";
+const TRAY_ID: &str = "main-tray";
 
 fn default_rest_message() -> String {
     "休息时间到了，该休息一下了。".to_string()
@@ -24,12 +26,14 @@ fn default_shutdown_time() -> String {
 }
 
 fn default_shutdown_message() -> String {
-    "时间不早了，记得关闭电脑。".to_string()
+    "即将自动关闭电脑。".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    #[serde(default)]
+    pub language: Language,
     pub autostart: bool,
     pub minimize_to_tray: bool,
     pub popup_always_on_top: bool,
@@ -60,7 +64,6 @@ pub struct AppSettings {
 pub enum NotificationMode {
     System,
     Popup,
-    Both,
 }
 
 impl Default for NotificationMode {
@@ -87,20 +90,27 @@ impl Default for NotificationStyle {
 #[serde(rename_all = "camelCase")]
 pub enum PowerAction {
     Shutdown,
-    RemindShutdown,
+    Lock,
     Restart,
-    RemindRestart,
-}
-
-impl PowerAction {
-    fn is_automatic(&self) -> bool {
-        matches!(self, Self::Shutdown | Self::Restart)
-    }
 }
 
 impl Default for PowerAction {
     fn default() -> Self {
-        Self::RemindShutdown
+        Self::Shutdown
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum Language {
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en")]
+    En,
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        Self::ZhCn
     }
 }
 
@@ -136,6 +146,7 @@ impl Default for AccentColor {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            language: Language::ZhCn,
             autostart: false,
             minimize_to_tray: true,
             popup_always_on_top: true,
@@ -147,7 +158,7 @@ impl Default for AppSettings {
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
             shutdown_reminder_enabled: false,
-            power_action: PowerAction::RemindShutdown,
+            power_action: PowerAction::Shutdown,
             shutdown_reminder_time: default_shutdown_time(),
             shutdown_reminder_message: default_shutdown_message(),
         }
@@ -328,12 +339,8 @@ fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String,
     Err("无法计算下一次提醒时间".to_string())
 }
 
-fn should_trigger_power_action(
-    action: &PowerAction,
-    due: DateTime<Local>,
-    now: DateTime<Local>,
-) -> bool {
-    due <= now && (!action.is_automatic() || now.signed_duration_since(due) <= Duration::minutes(1))
+fn should_trigger_power_action(due: DateTime<Local>, now: DateTime<Local>) -> bool {
+    due <= now && now.signed_duration_since(due) <= Duration::minutes(1)
 }
 
 fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
@@ -346,9 +353,6 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
         data.settings.shutdown_reminder_message = default_shutdown_message();
     }
     parse_time(&data.settings.shutdown_reminder_time)?;
-    if data.settings.notification_mode == NotificationMode::Both {
-        data.settings.notification_mode = NotificationMode::Popup;
-    }
     let now = Local::now();
     for reminder in &mut data.reminders {
         if reminder.id.trim().is_empty() {
@@ -413,8 +417,37 @@ fn app_data(state: &AppState) -> AppData {
     state.0.data.lock().expect("配置锁被中毒").clone()
 }
 
-fn emit_trigger(app: &AppHandle, event: ReminderTriggeredEvent) {
-    let _ = app.emit("reminder-triggered", event);
+fn notification_title(language: Language, event: &ReminderTriggeredEvent) -> &'static str {
+    match (language, event.is_rest, event.is_shutdown) {
+        (Language::ZhCn, true, _) => "RemindOn · 休息提醒",
+        (Language::ZhCn, _, true) => "RemindOn · 定时操作",
+        (Language::ZhCn, _, _) => "RemindOn · 事件提醒",
+        (Language::En, true, _) => "RemindOn · Break reminder",
+        (Language::En, _, true) => "RemindOn · Scheduled action",
+        (Language::En, _, _) => "RemindOn · Reminder",
+    }
+}
+
+fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredEvent) {
+    let settings = app_data(state).settings;
+    let requires_popup = event.power_action.is_some();
+
+    if settings.notification_mode == NotificationMode::System && !requires_popup {
+        let _ = app
+            .notification()
+            .builder()
+            .title(notification_title(settings.language, &event))
+            .body(&event.title)
+            .show();
+    } else if let Some(window) = app.get_webview_window("reminder") {
+        let _ = window.set_always_on_top(settings.popup_always_on_top);
+        let _ = window.center();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
+    }
+
+    let _ = app.emit_to("main", "reminder-triggered", event);
 }
 
 fn process_due(app: &AppHandle, state: &AppState) {
@@ -487,7 +520,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                     .ok()
                     .and_then(|value| parse_datetime(&value).ok());
             } else if let Some(due) = next_shutdown.as_ref().filter(|value| **value <= now) {
-                if should_trigger_power_action(&data.settings.power_action, due.clone(), now) {
+                if should_trigger_power_action(due.clone(), now) {
                     triggered.push(ReminderTriggeredEvent {
                         id: SHUTDOWN_ID.to_string(),
                         title: data.settings.shutdown_reminder_message.clone(),
@@ -509,7 +542,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
         }
     }
     for event in triggered {
-        emit_trigger(app, event);
+        dispatch_trigger(app, state, event);
     }
 }
 
@@ -535,12 +568,21 @@ fn load_data(state: State<'_, AppState>) -> Result<AppData, String> {
 }
 
 #[tauri::command]
-fn save_data(mut data: AppData, state: State<'_, AppState>) -> Result<AppData, String> {
+fn save_data(
+    mut data: AppData,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppData, String> {
     validate_and_normalize(&mut data)?;
     write_json(&state.0.data_path, &data)?;
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
     *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    let _ = update_tray_menu(
+        &app,
+        data.settings.language,
+        state.0.paused.load(Ordering::SeqCst),
+    );
     Ok(data)
 }
 
@@ -592,46 +634,57 @@ fn dismiss_reminder(id: String, state: State<'_, AppState>) -> Result<(), String
 
 #[tauri::command]
 fn get_next_rest_trigger(state: State<'_, AppState>) -> Option<String> {
-    state
-        .0
-        .rest_next
-        .lock()
-        .expect("休息提醒锁被中毒")
-        .as_ref()
-        .map(DateTime::to_rfc3339)
+    let data = state.0.data.lock().expect("配置锁被中毒");
+    if !data.settings.rest_enabled {
+        return None;
+    }
+    let mut next = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+    if next.is_none() {
+        *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
+    }
+    next.as_ref().map(DateTime::to_rfc3339)
 }
 
 #[tauri::command]
 fn get_next_shutdown_trigger(state: State<'_, AppState>) -> Option<String> {
-    state
-        .0
-        .shutdown_next
-        .lock()
-        .expect("关机提醒锁被中毒")
-        .as_ref()
-        .map(DateTime::to_rfc3339)
+    let data = state.0.data.lock().expect("配置锁被中毒");
+    if !data.settings.shutdown_reminder_enabled {
+        return None;
+    }
+    let mut next = state.0.shutdown_next.lock().expect("关机提醒锁被中毒");
+    if next.is_none() {
+        *next = next_daily(&data.settings.shutdown_reminder_time, Local::now())
+            .ok()
+            .and_then(|value| parse_datetime(&value).ok());
+    }
+    next.as_ref().map(DateTime::to_rfc3339)
 }
 
 #[tauri::command]
 fn execute_power_action(action: PowerAction) -> Result<(), String> {
-    if !action.is_automatic() {
-        return Err("提醒模式不会执行系统操作".to_string());
-    }
-
     #[cfg(target_os = "windows")]
     {
-        let argument = if action == PowerAction::Shutdown {
-            "/s"
-        } else {
-            "/r"
-        };
         let system_root = std::env::var_os("SystemRoot")
             .ok_or_else(|| "无法确定 Windows 系统目录".to_string())?;
-        let executable = PathBuf::from(system_root)
-            .join("System32")
-            .join("shutdown.exe");
-        Command::new(executable)
-            .args([argument, "/t", "0"])
+        let system32 = PathBuf::from(system_root).join("System32");
+        let mut command = if action == PowerAction::Lock {
+            let mut command = Command::new(system32.join("rundll32.exe"));
+            command.arg("user32.dll,LockWorkStation");
+            command
+        } else {
+            let mut command = Command::new(system32.join("shutdown.exe"));
+            command.args([
+                if action == PowerAction::Shutdown {
+                    "/s"
+                } else {
+                    "/r"
+                },
+                "/t",
+                "0",
+            ]);
+            command
+        };
+        command
             .spawn()
             .map_err(|error| format!("无法执行系统操作：{error}"))?;
         return Ok(());
@@ -639,6 +692,15 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
+        if action == PowerAction::Lock {
+            Command::new(
+                "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession",
+            )
+            .arg("-suspend")
+            .spawn()
+            .map_err(|error| format!("无法锁定电脑：{error}"))?;
+            return Ok(());
+        }
         let script = if action == PowerAction::Shutdown {
             "tell application \"System Events\" to shut down"
         } else {
@@ -652,16 +714,21 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
     }
 
     #[allow(unreachable_code)]
-    Err("当前系统不支持自动关机或重启".to_string())
+    Err("当前系统不支持此自动操作".to_string())
 }
 
 #[tauri::command]
-fn test_reminder(app: AppHandle) -> Result<(), String> {
-    emit_trigger(
+fn test_reminder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let language = app_data(&state).settings.language;
+    dispatch_trigger(
         &app,
+        &state,
         ReminderTriggeredEvent {
             id: "__test__".to_string(),
-            title: "这是一条测试提醒".to_string(),
+            title: match language {
+                Language::ZhCn => "这是一条测试通知".to_string(),
+                Language::En => "This is a test notification".to_string(),
+            },
             reminder_type: ReminderType::Once,
             is_rest: false,
             is_shutdown: false,
@@ -672,7 +739,11 @@ fn test_reminder(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn import_data(path: String, state: State<'_, AppState>) -> Result<AppData, String> {
+fn import_data(
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppData, String> {
     let content =
         fs::read_to_string(&path).map_err(|error| format!("读取导入文件失败：{error}"))?;
     let mut data: AppData =
@@ -682,6 +753,11 @@ fn import_data(path: String, state: State<'_, AppState>) -> Result<AppData, Stri
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
     *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    let _ = update_tray_menu(
+        &app,
+        data.settings.language,
+        state.0.paused.load(Ordering::SeqCst),
+    );
     Ok(data)
 }
 
@@ -693,17 +769,60 @@ fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
     fs::write(path, content).map_err(|error| format!("写出导出文件失败：{error}"))
 }
 
-fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItemBuilder::with_id("show", "打开 RemindOn").build(app)?;
-    let pause = MenuItemBuilder::with_id("pause", "暂停提醒").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&show, &pause, &quit])
-        .build()?;
-    TrayIconBuilder::new()
+fn tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri::Result<Menu<tauri::Wry>> {
+    let (show_text, pause_text, resume_text, about_text, quit_text) = match language {
+        Language::ZhCn => ("打开 RemindOn", "暂停提醒", "恢复提醒", "关于", "退出"),
+        Language::En => (
+            "Open RemindOn",
+            "Pause reminders",
+            "Resume reminders",
+            "About",
+            "Quit",
+        ),
+    };
+    let show = MenuItemBuilder::with_id("show", show_text).build(app)?;
+    let pause = MenuItemBuilder::with_id("pause", if paused { resume_text } else { pause_text })
+        .build(app)?;
+    let about = MenuItemBuilder::with_id("about", about_text).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", quit_text).build(app)?;
+    MenuBuilder::new(app)
+        .items(&[&show, &pause, &about])
+        .separator()
+        .item(&quit)
+        .build()
+}
+
+fn update_tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri::Result<()> {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        tray.set_menu(Some(tray_menu(app, language, paused)?))?;
+    }
+    Ok(())
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn show_about(app: &AppHandle) {
+    show_main_window(app);
+    let _ = app.emit_to("main", "navigate-to", "about");
+}
+
+fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
+    let menu = tray_menu(app.handle(), language, false)?;
+    TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .icon(tauri::include_image!("icons/icon.png"))
         .tooltip("RemindOn")
+        .on_tray_icon_event(|tray, event| {
+            if matches!(event, TrayIconEvent::DoubleClick { .. }) {
+                show_main_window(tray.app_handle());
+            }
+        })
         .build(app)?;
     Ok(())
 }
@@ -728,6 +847,7 @@ pub fn run() {
             validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
             write_json(&path, &data).map_err(std::io::Error::other)?;
             let hide_on_start = data.settings.minimize_to_tray;
+            let language = data.settings.language;
             let state = AppState(Arc::new(InnerState {
                 data: Mutex::new(data),
                 data_path: path,
@@ -738,7 +858,7 @@ pub fn run() {
                 shutdown_next: Mutex::new(None),
             }));
             app.manage(state.clone());
-            setup_tray(app)?;
+            setup_tray(app, language)?;
             if !hide_on_start {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.center();
@@ -766,16 +886,16 @@ pub fn run() {
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
             "pause" => {
                 let state = app.state::<AppState>();
                 let paused = !state.0.paused.load(Ordering::SeqCst);
                 state.0.paused.store(paused, Ordering::SeqCst);
+                let language = state.0.data.lock().expect("配置锁被中毒").settings.language;
+                let _ = update_tray_menu(app, language, paused);
             }
+            "about" => show_about(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -928,40 +1048,30 @@ mod tests {
     }
 
     #[test]
-    fn old_notification_mode_is_migrated_to_popup() {
-        let mut data: AppData = serde_json::from_str(
-            r#"{"version":1,"settings":{"autostart":false,"minimizeToTray":true,"popupAlwaysOnTop":true,"restEnabled":false,"restIntervalMinutes":45,"notificationMode":"both","theme":"dark","accentColor":"mint"},"reminders":[]}"#,
-        )
-        .unwrap();
+    fn current_settings_are_normalized() {
+        let mut data = AppData::default();
+        data.settings.rest_interval_minutes = 0;
         validate_and_normalize(&mut data).unwrap();
         assert_eq!(data.version, DATA_VERSION);
-        assert_eq!(data.settings.notification_mode, NotificationMode::Popup);
-        assert_eq!(
-            data.settings.notification_style,
-            NotificationStyle::Standard
-        );
-        assert_eq!(data.settings.power_action, PowerAction::RemindShutdown);
+        assert_eq!(data.settings.rest_interval_minutes, 1);
+        assert_eq!(data.settings.language, Language::ZhCn);
+        assert_eq!(data.settings.power_action, PowerAction::Shutdown);
     }
 
     #[test]
     fn overdue_automatic_power_action_is_skipped() {
         let now = Local.with_ymd_and_hms(2026, 9, 4, 23, 32, 0).unwrap();
         let due = Local.with_ymd_and_hms(2026, 9, 4, 23, 30, 0).unwrap();
-        assert!(!should_trigger_power_action(
-            &PowerAction::Shutdown,
-            due,
-            now
-        ));
-        assert!(should_trigger_power_action(
-            &PowerAction::RemindShutdown,
-            due,
-            now
-        ));
+        assert!(!should_trigger_power_action(due, now));
+        let recent_due = Local.with_ymd_and_hms(2026, 9, 4, 23, 31, 30).unwrap();
+        assert!(should_trigger_power_action(recent_due, now));
     }
 
     #[test]
-    fn reminder_power_actions_cannot_execute_system_commands() {
-        assert!(execute_power_action(PowerAction::RemindShutdown).is_err());
-        assert!(execute_power_action(PowerAction::RemindRestart).is_err());
+    fn lock_action_uses_stable_json_value() {
+        assert_eq!(
+            serde_json::to_string(&PowerAction::Lock).unwrap(),
+            "\"lock\""
+        );
     }
 }
