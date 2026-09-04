@@ -4,7 +4,7 @@ import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, Clock3, X } from '@lucide/vue'
+import { Check, Clock3 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
@@ -14,6 +14,7 @@ import { defaultData } from '../types'
 const current = ref<ReminderTriggeredEvent | null>(null)
 const settings = ref<AppData['settings']>(defaultData().settings)
 const triggeredAt = ref('')
+const snoozeMinutes = ref(5)
 const powerCountdown = ref(60)
 const powerError = ref('')
 let unlisten: (() => void) | undefined
@@ -66,7 +67,7 @@ async function dismiss() {
 
 async function snooze() {
   clearPowerTimer()
-  if (current.value) await invoke('snooze_reminder', { id: current.value.id, minutes: 5 })
+  if (current.value) await invoke('snooze_reminder', { id: current.value.id, minutes: snoozeMinutes.value })
   await closePopup()
 }
 
@@ -97,6 +98,7 @@ function startPowerCountdown() {
 
 async function handleTrigger(event: ReminderTriggeredEvent) {
   current.value = event
+  snoozeMinutes.value = 5
   powerError.value = ''
   try {
     settings.value = (await invoke<AppData>('load_data')).settings
@@ -145,7 +147,6 @@ onUnmounted(() => {
   <main :class="['popup-shell', ...popupClass]">
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAt || t('common.now') }) }}</span></div></div>
-      <button class="icon-button popup-close" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="dismiss"><X :size="18" /></button>
     </header>
     <section class="popup-content">
       <p class="popup-label">{{ t('popup.label') }}</p>
@@ -156,7 +157,7 @@ onUnmounted(() => {
     </section>
     <footer class="popup-actions">
       <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button><button class="button button-danger" type="button" @click="executePowerAction">{{ t('popup.executeNow', { action: powerVerb }) }}</button></template>
-      <template v-else><button class="button" type="button" @click="snooze"><Clock3 :size="15" />{{ t('popup.snooze') }}</button><button class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.done') }}</button></template>
+      <template v-else><label class="snooze-select"><Clock3 :size="15" /><select v-model.number="snoozeMinutes" :aria-label="t('popup.snooze')"><option v-for="minutes in [5, 10, 30]" :key="minutes" :value="minutes">{{ t('popup.minutes', { minutes }) }}</option></select></label><button class="button" type="button" @click="snooze">{{ t('popup.snooze') }}</button><button class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.done') }}</button></template>
     </footer>
   </main>
 </template>

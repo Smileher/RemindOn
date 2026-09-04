@@ -428,6 +428,13 @@ fn notification_title(language: Language, event: &ReminderTriggeredEvent) -> &'s
     }
 }
 
+fn notification_window_title(language: Language) -> &'static str {
+    match language {
+        Language::ZhCn => "RemindOn 通知",
+        Language::En => "RemindOn Notification",
+    }
+}
+
 fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredEvent) {
     let settings = app_data(state).settings;
     let requires_popup = event.power_action.is_some();
@@ -440,6 +447,7 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
             .body(&event.title)
             .show();
     } else if let Some(window) = app.get_webview_window("reminder") {
+        let _ = window.set_title(notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
         let _ = window.center();
         let _ = window.show();

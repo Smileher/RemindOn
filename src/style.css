@@ -233,6 +233,9 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .power-countdown span { font-size: var(--font-sm); }
 .popup-error { margin: 9px 0 0; color: var(--danger); font-size: var(--font-xs); }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
+.snooze-select { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; color: var(--muted); background: var(--surface); }
+.snooze-select:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.snooze-select select { border: 0; color: var(--text); background: transparent; outline: none; }
 .notification-compact .popup-content { padding-top: 15px; padding-bottom: 15px; }
 .notification-compact .popup-content h1 { font-size: var(--font-section); }
 .notification-compact .popup-hint { display: none; }
