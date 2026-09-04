@@ -29,6 +29,7 @@
         "width": 520,
         "height": 320,
         "resizable": false,
+        "maximizable": false,
         "center": true,
         "decorations": true,
         "alwaysOnTop": true,

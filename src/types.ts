@@ -51,6 +51,11 @@ export interface ReminderTriggeredEvent {
   powerAction?: PowerAction | null
 }
 
+export interface RestTimerStatus {
+  nextTriggerAt: string | null
+  isResting: boolean
+}
+
 export const defaultData = (): AppData => ({
   version: 3,
   settings: {
