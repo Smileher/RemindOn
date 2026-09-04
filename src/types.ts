@@ -56,7 +56,7 @@ export const defaultData = (): AppData => ({
   settings: {
     language: 'zh-CN',
     autostart: false,
-    minimizeToTray: true,
+    minimizeToTray: false,
     popupAlwaysOnTop: true,
     restEnabled: false,
     restIntervalMinutes: 45,

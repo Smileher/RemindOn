@@ -148,7 +148,7 @@ impl Default for AppSettings {
         Self {
             language: Language::ZhCn,
             autostart: false,
-            minimize_to_tray: true,
+            minimize_to_tray: false,
             popup_always_on_top: true,
             rest_enabled: false,
             rest_interval_minutes: 45,
@@ -1066,6 +1066,7 @@ mod tests {
         assert_eq!(data.version, DATA_VERSION);
         assert_eq!(data.settings.rest_interval_minutes, 1);
         assert_eq!(data.settings.language, Language::ZhCn);
+        assert!(!data.settings.minimize_to_tray);
         assert_eq!(data.settings.power_action, PowerAction::Shutdown);
     }
 

@@ -135,13 +135,13 @@ function formatCountdown(value?: string | null) {
   const diff = new Date(value).getTime() - now.value
   if (Number.isNaN(diff)) return ''
   if (diff <= 0) return t('countdown.due')
-  const totalSeconds = Math.floor(diff / 1000)
+  const totalSeconds = Math.ceil(diff / 1000)
   const days = Math.floor(totalSeconds / 86400)
   const hours = Math.floor((totalSeconds % 86400) / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
-  if (days > 0) return t('countdown.days', { days, hours })
-  if (hours > 0) return t('countdown.hours', { hours, minutes })
+  if (days > 0) return t('countdown.days', { days, hours, minutes, seconds })
+  if (hours > 0) return t('countdown.hours', { hours, minutes, seconds })
   if (minutes > 0) return t('countdown.minutes', { minutes, seconds })
   return t('countdown.seconds', { seconds })
 }
@@ -305,6 +305,20 @@ async function updatePowerAction(value: AutomaticPowerAction) {
   }
 }
 
+async function updateRestInterval(event: Event) {
+  const value = (event.target as HTMLInputElement).valueAsNumber
+  if (Number.isInteger(value) && value >= 1 && value <= 1440) {
+    await updateSetting('restIntervalMinutes', value)
+  }
+}
+
+async function updateShutdownTime(event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    await updateSetting('shutdownReminderTime', value)
+  }
+}
+
 async function importData() {
   actionMessage.value = ''
   try {
@@ -351,6 +365,7 @@ async function refreshTimers() {
   ])
   nextRestTrigger.value = rest.status === 'fulfilled' ? rest.value : null
   nextShutdownTrigger.value = shutdown.status === 'fulfilled' ? shutdown.value : null
+  now.value = Date.now()
 }
 
 onMounted(async () => {
@@ -378,7 +393,6 @@ onMounted(async () => {
     })
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
-      void refreshTimers()
     }, 1000)
   } catch (error) {
     actionMessage.value = t('status.loadFailed', { error: String(error) })
@@ -443,7 +457,7 @@ onUnmounted(() => {
           <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
         </div>
         <div class="settings-group rest-settings">
-          <div class="setting-card"><div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div><label class="number-field"><input :value="data.settings.restIntervalMinutes" type="number" min="1" max="1440" @change="updateSetting('restIntervalMinutes', Number(($event.target as HTMLInputElement).value))" /><span>{{ t('common.minutes') }}</span></label></div>
+          <div class="setting-card"><div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div><label class="number-field"><input :value="data.settings.restIntervalMinutes" type="number" min="1" max="1440" @input="updateRestInterval" /><span>{{ t('common.minutes') }}</span></label></div>
           <label class="setting-card stacked-setting"><div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div><input :value="data.settings.restMessage" type="text" maxlength="120" @change="updateSetting('restMessage', ($event.target as HTMLInputElement).value)" /></label>
         </div>
 
@@ -454,7 +468,7 @@ onUnmounted(() => {
         <div class="settings-group power-settings">
           <label class="setting-card setting-toggle"><div><strong>{{ t('power.enable') }}</strong><span>{{ t('power.enableHint') }}</span></div><input :checked="data.settings.shutdownReminderEnabled" type="checkbox" @change="updateSetting('shutdownReminderEnabled', ($event.target as HTMLInputElement).checked)" /></label>
           <div class="setting-card setting-choice power-choice"><div><strong>{{ t('power.action') }}</strong><span>{{ t('power.actionHint') }}</span></div><div class="segmented power-segments"><button v-for="option in powerActionOptions" :key="option.value" :class="{ selected: data.settings.powerAction === option.value }" type="button" @click="updatePowerAction(option.value)"><component :is="option.icon" :size="14" />{{ option.label }}</button></div></div>
-          <label class="setting-card"><div><strong>{{ t('power.dailyTime') }}</strong><span>{{ t('power.dailyTimeHint') }}</span></div><span class="time-control"><Clock3 :size="15" /><input class="time-input" :value="data.settings.shutdownReminderTime" type="time" @change="updateSetting('shutdownReminderTime', ($event.target as HTMLInputElement).value)" /></span></label>
+          <label class="setting-card"><div><strong>{{ t('power.dailyTime') }}</strong><span>{{ t('power.dailyTimeHint') }}</span></div><span class="time-control"><Clock3 :size="15" /><input class="time-input" :value="data.settings.shutdownReminderTime" type="time" @input="updateShutdownTime" /></span></label>
           <label class="setting-card stacked-setting"><div><strong>{{ t('power.message') }}</strong><span>{{ t('power.messageHint') }}</span></div><input :value="data.settings.shutdownReminderMessage" type="text" maxlength="120" @change="updateSetting('shutdownReminderMessage', ($event.target as HTMLInputElement).value)" /></label>
         </div>
         <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
