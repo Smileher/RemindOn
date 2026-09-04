@@ -224,15 +224,25 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-content { align-self: center; padding: 21px 27px; }
 .popup-content h1 { max-width: 440px; font-size: var(--font-title); line-height: 1.35; overflow-wrap: anywhere; }
 .popup-hint { margin: 9px 0 0; color: var(--muted); font-size: var(--font-sm); line-height: 1.5; }
+.rest-elapsed { margin: 0 0 15px; color: var(--muted); font-size: var(--font-title); line-height: 1; }
 .power-countdown { display: flex; align-items: baseline; gap: 7px; margin-top: 11px; color: var(--muted); }
 .power-countdown strong { color: var(--accent-strong); font-size: var(--font-display); line-height: 1; }
 .power-countdown span { font-size: var(--font-sm); }
 .popup-error { margin: 9px 0 0; color: var(--danger); font-size: var(--font-xs); }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
-.snooze-select { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; color: var(--muted); background: var(--surface); }
-.snooze-select:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.snooze-select select { border: 0; color: var(--text); background: transparent; outline: none; color-scheme: inherit; }
-.snooze-select option { color: var(--text); background: var(--surface); }
+.popup-actions.rest-actions { justify-content: space-between; }
+.popup-action-group { display: flex; align-items: center; gap: 7px; }
+.snooze-picker { position: relative; width: 142px; color: var(--text); }
+.snooze-picker summary { display: grid; grid-template-columns: 15px 1fr 15px; align-items: center; gap: 6px; height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: var(--muted); background: var(--page-bg); cursor: pointer; list-style: none; outline: none; }
+.snooze-picker summary::-webkit-details-marker { display: none; }
+.snooze-picker summary:hover { border-color: var(--accent); color: var(--text); background: var(--surface-hover); }
+.snooze-picker[open] summary { border-color: var(--accent); color: var(--text); box-shadow: 0 0 0 3px var(--accent-soft); }
+.snooze-picker .select-chevron { transition: transform .15s ease; }
+.snooze-picker[open] .select-chevron { transform: rotate(180deg); }
+.snooze-options { position: absolute; z-index: 10; bottom: calc(100% + 7px); left: 0; display: grid; width: 100%; max-height: 218px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: var(--surface); box-shadow: var(--shadow); }
+.snooze-options button { display: flex; align-items: center; justify-content: space-between; min-height: 30px; border: 0; border-radius: 4px; padding: 5px 8px; color: var(--text); background: transparent; text-align: left; }
+.snooze-options button:hover { background: var(--surface-hover); }
+.snooze-options button.selected { color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }
 .notification-compact .popup-content { padding-top: 15px; padding-bottom: 15px; }
 .notification-compact .popup-content h1 { font-size: var(--font-section); }
 .notification-compact .popup-hint { display: none; }

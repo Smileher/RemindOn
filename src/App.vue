@@ -14,7 +14,7 @@ import brandIcon from './assets/remindon.svg'
 import donationCode from './assets/donate.png'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
-import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, Theme } from './types'
+import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, Theme } from './types'
 import { defaultData } from './types'
 
 type View = 'events' | 'rest' | 'power' | 'settings' | 'about'
@@ -29,10 +29,12 @@ const editingId = ref<string | null>(null)
 const actionMessage = ref('')
 const now = ref(Date.now())
 const nextRestTrigger = ref<string | null>(null)
+const restIsActive = ref(false)
 const nextShutdownTrigger = ref<string | null>(null)
 const appVersion = ref('0.3.1')
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
+let unlistenRestTimer: (() => void) | undefined
 let clockTimer: number | undefined
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
@@ -62,7 +64,8 @@ const weekdayOptions = computed(() => Array.from({ length: 7 }, (_, index) => ({
 
 const typeLabels = computed<Record<ReminderType, string>>(() => ({
   once: t('frequency.once'), daily: t('frequency.daily'), weekly: t('frequency.weekly'), monthly: t('frequency.monthly'),
-  workday: t('frequency.workday'), weekend: t('frequency.weekend'), interval: t('frequency.interval'),
+  workday: t('frequency.workday'), weekend: t('frequency.weekend'),
+  interval: t('frequency.interval'),
 }))
 
 const form = reactive({
@@ -83,6 +86,7 @@ const sortedReminders = computed(() =>
 )
 
 const restProgress = computed(() => {
+  if (restIsActive.value) return 100
   if (!data.value.settings.restEnabled || !nextRestTrigger.value) return 0
   const remaining = new Date(nextRestTrigger.value).getTime() - now.value
   const total = data.value.settings.restIntervalMinutes * 60 * 1000
@@ -360,10 +364,11 @@ async function testNotification() {
 async function refreshTimers() {
   if (isPopup) return
   const [rest, shutdown] = await Promise.allSettled([
-    invoke<string | null>('get_next_rest_trigger'),
+    invoke<RestTimerStatus>('get_rest_timer_status'),
     invoke<string | null>('get_next_shutdown_trigger'),
   ])
-  nextRestTrigger.value = rest.status === 'fulfilled' ? rest.value : null
+  nextRestTrigger.value = rest.status === 'fulfilled' ? rest.value.nextTriggerAt : null
+  restIsActive.value = rest.status === 'fulfilled' && rest.value.isResting
   nextShutdownTrigger.value = shutdown.status === 'fulfilled' ? shutdown.value : null
   now.value = Date.now()
 }
@@ -391,6 +396,7 @@ onMounted(async () => {
       data.value = await invoke<AppData>('load_data')
       await refreshTimers()
     })
+    unlistenRestTimer = await listen('rest-timer-updated', () => void refreshTimers())
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
     }, 1000)
@@ -402,6 +408,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.()
   unlistenNavigation?.()
+  unlistenRestTimer?.()
   if (clockTimer) window.clearInterval(clockTimer)
 })
 </script>
@@ -454,7 +461,7 @@ onUnmounted(() => {
       <section v-else-if="currentView === 'rest'" class="page-section narrow-section">
         <header class="page-header compact-header"><div><p class="eyebrow">BREAK</p><h1>{{ t('rest.title') }}</h1><p class="page-subtitle">{{ t('rest.subtitle') }}</p></div></header>
         <div class="status-panel">
-          <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ data.settings.restEnabled ? (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating')) : t('common.paused') }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
+          <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ data.settings.restEnabled ? (restIsActive ? t('rest.resting') : (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating'))) : t('common.paused') }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
           <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
         </div>
         <div class="settings-group">

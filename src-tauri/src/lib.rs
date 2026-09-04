@@ -225,12 +225,20 @@ struct ReminderTriggeredEvent {
     power_action: Option<PowerAction>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestTimerStatus {
+    next_trigger_at: Option<String>,
+    is_resting: bool,
+}
+
 struct InnerState {
     data: Mutex<AppData>,
     data_path: PathBuf,
     paused: AtomicBool,
     scheduler_started: AtomicBool,
     scheduler_stop: AtomicBool,
+    rest_active: AtomicBool,
     rest_next: Mutex<Option<DateTime<Local>>>,
     shutdown_next: Mutex<Option<DateTime<Local>>>,
 }
@@ -453,6 +461,7 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
         let _ = window.set_title(notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
         let _ = window.center();
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
@@ -505,23 +514,32 @@ fn process_due(app: &AppHandle, state: &AppState) {
             }
         }
         if data.settings.rest_enabled {
-            let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
-            if next_rest.is_none() {
-                *next_rest =
-                    Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
-            } else if next_rest.is_some_and(|value| value <= now) {
-                triggered.push(ReminderTriggeredEvent {
-                    id: REST_ID.to_string(),
-                    title: data.settings.rest_message.clone(),
-                    reminder_type: ReminderType::Interval,
-                    is_rest: true,
-                    is_shutdown: false,
-                    power_action: None,
-                });
-                *next_rest =
-                    Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
+            if !state.0.rest_active.load(Ordering::SeqCst) {
+                let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+                if next_rest.is_none() {
+                    *next_rest =
+                        Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
+                } else if next_rest.is_some_and(|value| value <= now) {
+                    triggered.push(ReminderTriggeredEvent {
+                        id: REST_ID.to_string(),
+                        title: data.settings.rest_message.clone(),
+                        reminder_type: ReminderType::Interval,
+                        is_rest: true,
+                        is_shutdown: false,
+                        power_action: None,
+                    });
+                    if data.settings.notification_mode == NotificationMode::Popup {
+                        *next_rest = None;
+                        state.0.rest_active.store(true, Ordering::SeqCst);
+                    } else {
+                        *next_rest = Some(
+                            now + Duration::minutes(data.settings.rest_interval_minutes as i64),
+                        );
+                    }
+                }
             }
         } else {
+            state.0.rest_active.store(false, Ordering::SeqCst);
             *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
         }
         if data.settings.shutdown_reminder_enabled {
@@ -585,15 +603,32 @@ fn save_data(
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
     validate_and_normalize(&mut data)?;
+    let (rest_schedule_changed, shutdown_schedule_changed) = {
+        let current = state.0.data.lock().expect("配置锁被中毒");
+        (
+            current.settings.rest_enabled != data.settings.rest_enabled
+                || current.settings.rest_interval_minutes != data.settings.rest_interval_minutes,
+            current.settings.shutdown_reminder_enabled != data.settings.shutdown_reminder_enabled
+                || current.settings.shutdown_reminder_time != data.settings.shutdown_reminder_time,
+        )
+    };
     write_json(&state.0.data_path, &data)?;
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
-    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
-    *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    if rest_schedule_changed {
+        state.0.rest_active.store(false, Ordering::SeqCst);
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+    }
+    if shutdown_schedule_changed {
+        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    }
     let _ = update_tray_menu(
         &app,
         data.settings.language,
         state.0.paused.load(Ordering::SeqCst),
     );
+    if rest_schedule_changed {
+        let _ = app.emit_to("main", "rest-timer-updated", ());
+    }
     Ok(data)
 }
 
@@ -616,44 +651,67 @@ fn set_scheduler_paused(paused: bool, state: State<'_, AppState>) -> Result<(), 
 }
 
 #[tauri::command]
-fn snooze_reminder(id: String, minutes: u32, state: State<'_, AppState>) -> Result<(), String> {
+fn snooze_reminder(
+    id: String,
+    seconds: u32,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut data = state.0.data.lock().expect("配置锁被中毒");
+    let delay = Duration::seconds(seconds.max(1) as i64);
     if id == REST_ID {
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
-            Some(Local::now() + Duration::minutes(minutes.max(1) as i64));
+        state.0.rest_active.store(false, Ordering::SeqCst);
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(Local::now() + delay);
     } else if id == SHUTDOWN_ID {
-        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") =
-            Some(Local::now() + Duration::minutes(minutes.max(1) as i64));
+        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = Some(Local::now() + delay);
     } else if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
         reminder.enabled = true;
-        reminder.next_trigger_at =
-            Some((Local::now() + Duration::minutes(minutes.max(1) as i64)).to_rfc3339());
+        reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
         write_json(&state.0.data_path, &data)?;
     }
-    Ok(())
-}
-
-#[tauri::command]
-fn dismiss_reminder(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    drop(data);
     if id == REST_ID {
-        let data = state.0.data.lock().expect("配置锁被中毒");
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
-            Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
+        let _ = app.emit_to("main", "rest-timer-updated", ());
     }
     Ok(())
 }
 
 #[tauri::command]
-fn get_next_rest_trigger(state: State<'_, AppState>) -> Option<String> {
+fn dismiss_reminder(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if id == REST_ID {
+        let data = state.0.data.lock().expect("配置锁被中毒");
+        state.0.rest_active.store(false, Ordering::SeqCst);
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
+            Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
+        drop(data);
+        let _ = app.emit_to("main", "rest-timer-updated", ());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
     let data = state.0.data.lock().expect("配置锁被中毒");
     if !data.settings.rest_enabled {
-        return None;
+        return RestTimerStatus {
+            next_trigger_at: None,
+            is_resting: false,
+        };
+    }
+    if state.0.rest_active.load(Ordering::SeqCst) {
+        return RestTimerStatus {
+            next_trigger_at: None,
+            is_resting: true,
+        };
     }
     let mut next = state.0.rest_next.lock().expect("休息提醒锁被中毒");
     if next.is_none() {
         *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
     }
-    next.as_ref().map(DateTime::to_rfc3339)
+    RestTimerStatus {
+        next_trigger_at: next.as_ref().map(DateTime::to_rfc3339),
+        is_resting: false,
+    }
 }
 
 #[tauri::command]
@@ -671,31 +729,28 @@ fn get_next_shutdown_trigger(state: State<'_, AppState>) -> Option<String> {
     next.as_ref().map(DateTime::to_rfc3339)
 }
 
+#[cfg(target_os = "windows")]
+fn windows_power_command(action: &PowerAction, system_root: &Path) -> (PathBuf, Vec<&'static str>) {
+    let system32 = system_root.join("System32");
+    match action {
+        PowerAction::Lock => (
+            system32.join("rundll32.exe"),
+            vec!["user32.dll,LockWorkStation"],
+        ),
+        PowerAction::Shutdown => (system32.join("shutdown.exe"), vec!["/s", "/t", "0"]),
+        PowerAction::Restart => (system32.join("shutdown.exe"), vec!["/r", "/t", "0"]),
+    }
+}
+
 #[tauri::command]
 fn execute_power_action(action: PowerAction) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let system_root = std::env::var_os("SystemRoot")
             .ok_or_else(|| "无法确定 Windows 系统目录".to_string())?;
-        let system32 = PathBuf::from(system_root).join("System32");
-        let mut command = if action == PowerAction::Lock {
-            let mut command = Command::new(system32.join("rundll32.exe"));
-            command.arg("user32.dll,LockWorkStation");
-            command
-        } else {
-            let mut command = Command::new(system32.join("shutdown.exe"));
-            command.args([
-                if action == PowerAction::Shutdown {
-                    "/s"
-                } else {
-                    "/r"
-                },
-                "/t",
-                "0",
-            ]);
-            command
-        };
-        command
+        let (program, args) = windows_power_command(&action, &PathBuf::from(system_root));
+        Command::new(program)
+            .args(args)
             .spawn()
             .map_err(|error| format!("无法执行系统操作：{error}"))?;
         return Ok(());
@@ -762,6 +817,7 @@ fn import_data(
     validate_and_normalize(&mut data)?;
     write_json(&state.0.data_path, &data)?;
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
+    state.0.rest_active.store(false, Ordering::SeqCst);
     *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
     let _ = update_tray_menu(
@@ -865,6 +921,7 @@ pub fn run() {
                 paused: AtomicBool::new(false),
                 scheduler_started: AtomicBool::new(false),
                 scheduler_stop: AtomicBool::new(false),
+                rest_active: AtomicBool::new(false),
                 rest_next: Mutex::new(None),
                 shutdown_next: Mutex::new(None),
             }));
@@ -888,7 +945,7 @@ pub fn run() {
             set_scheduler_paused,
             snooze_reminder,
             dismiss_reminder,
-            get_next_rest_trigger,
+            get_rest_timer_status,
             get_next_shutdown_trigger,
             execute_power_action,
             test_reminder,
@@ -1085,5 +1142,32 @@ mod tests {
             serde_json::to_string(&PowerAction::Lock).unwrap(),
             "\"lock\""
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_power_actions_use_expected_commands() {
+        let system_root = Path::new(r"C:\Windows");
+        let (lock_program, lock_args) = windows_power_command(&PowerAction::Lock, system_root);
+        let (shutdown_program, shutdown_args) =
+            windows_power_command(&PowerAction::Shutdown, system_root);
+        let (restart_program, restart_args) =
+            windows_power_command(&PowerAction::Restart, system_root);
+
+        assert_eq!(
+            lock_program,
+            system_root.join("System32").join("rundll32.exe")
+        );
+        assert_eq!(lock_args, vec!["user32.dll,LockWorkStation"]);
+        assert_eq!(
+            shutdown_program,
+            system_root.join("System32").join("shutdown.exe")
+        );
+        assert_eq!(shutdown_args, vec!["/s", "/t", "0"]);
+        assert_eq!(
+            restart_program,
+            system_root.join("System32").join("shutdown.exe")
+        );
+        assert_eq!(restart_args, vec!["/r", "/t", "0"]);
     }
 }
