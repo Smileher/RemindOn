@@ -440,6 +440,9 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
     let requires_popup = event.power_action.is_some();
 
     if settings.notification_mode == NotificationMode::System && !requires_popup {
+        if let Some(window) = app.get_webview_window("reminder") {
+            let _ = window.hide();
+        }
         let _ = app
             .notification()
             .builder()
