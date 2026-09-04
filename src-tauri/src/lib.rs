@@ -1,0 +1,967 @@
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+
+const DATA_VERSION: u32 = 2;
+const REST_ID: &str = "__rest__";
+const SHUTDOWN_ID: &str = "__shutdown__";
+
+fn default_rest_message() -> String {
+    "休息时间到了，该休息一下了。".to_string()
+}
+
+fn default_shutdown_time() -> String {
+    "23:30".to_string()
+}
+
+fn default_shutdown_message() -> String {
+    "时间不早了，记得关闭电脑。".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub autostart: bool,
+    pub minimize_to_tray: bool,
+    pub popup_always_on_top: bool,
+    pub rest_enabled: bool,
+    pub rest_interval_minutes: u32,
+    #[serde(default = "default_rest_message")]
+    pub rest_message: String,
+    #[serde(default)]
+    pub notification_mode: NotificationMode,
+    #[serde(default)]
+    pub notification_style: NotificationStyle,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub accent_color: AccentColor,
+    #[serde(default)]
+    pub shutdown_reminder_enabled: bool,
+    #[serde(default)]
+    pub power_action: PowerAction,
+    #[serde(default = "default_shutdown_time")]
+    pub shutdown_reminder_time: String,
+    #[serde(default = "default_shutdown_message")]
+    pub shutdown_reminder_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationMode {
+    System,
+    Popup,
+    Both,
+}
+
+impl Default for NotificationMode {
+    fn default() -> Self {
+        Self::Popup
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationStyle {
+    Compact,
+    Standard,
+    Prominent,
+}
+
+impl Default for NotificationStyle {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum PowerAction {
+    Shutdown,
+    RemindShutdown,
+    Restart,
+    RemindRestart,
+}
+
+impl PowerAction {
+    fn is_automatic(&self) -> bool {
+        matches!(self, Self::Shutdown | Self::Restart)
+    }
+}
+
+impl Default for PowerAction {
+    fn default() -> Self {
+        Self::RemindShutdown
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Dark,
+    Light,
+    System,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::Dark
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AccentColor {
+    Mint,
+    Blue,
+    Violet,
+    Amber,
+}
+
+impl Default for AccentColor {
+    fn default() -> Self {
+        Self::Mint
+    }
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            autostart: false,
+            minimize_to_tray: true,
+            popup_always_on_top: true,
+            rest_enabled: false,
+            rest_interval_minutes: 45,
+            rest_message: default_rest_message(),
+            notification_mode: NotificationMode::Popup,
+            notification_style: NotificationStyle::Standard,
+            theme: Theme::Dark,
+            accent_color: AccentColor::Mint,
+            shutdown_reminder_enabled: false,
+            power_action: PowerAction::RemindShutdown,
+            shutdown_reminder_time: default_shutdown_time(),
+            shutdown_reminder_message: default_shutdown_message(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReminderType {
+    Once,
+    Daily,
+    Weekly,
+    Monthly,
+    Workday,
+    Weekend,
+    Interval,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reminder {
+    pub id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub reminder_type: ReminderType,
+    pub trigger_at: Option<String>,
+    pub time: Option<String>,
+    #[serde(default)]
+    pub weekdays: Vec<u32>,
+    #[serde(default)]
+    pub month_days: Vec<u32>,
+    pub enabled: bool,
+    #[serde(default)]
+    pub next_trigger_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppData {
+    pub version: u32,
+    pub settings: AppSettings,
+    pub reminders: Vec<Reminder>,
+}
+
+impl Default for AppData {
+    fn default() -> Self {
+        Self {
+            version: DATA_VERSION,
+            settings: AppSettings::default(),
+            reminders: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReminderTriggeredEvent {
+    id: String,
+    title: String,
+    #[serde(rename = "type")]
+    reminder_type: ReminderType,
+    is_rest: bool,
+    is_shutdown: bool,
+    power_action: Option<PowerAction>,
+}
+
+struct InnerState {
+    data: Mutex<AppData>,
+    data_path: PathBuf,
+    paused: AtomicBool,
+    scheduler_started: AtomicBool,
+    scheduler_stop: AtomicBool,
+    rest_next: Mutex<Option<DateTime<Local>>>,
+    shutdown_next: Mutex<Option<DateTime<Local>>>,
+}
+
+#[derive(Clone)]
+struct AppState(Arc<InnerState>);
+
+fn data_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("无法取得配置目录：{error}"))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("无法创建配置目录：{error}"))?;
+    Ok(directory.join("remindon.json"))
+}
+
+fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
+    let content =
+        serde_json::to_string_pretty(data).map_err(|error| format!("序列化配置失败：{error}"))?;
+    // Windows cannot replace an existing file with std::fs::rename, so keep this
+    // small local configuration write straightforward and portable.
+    fs::write(path, content).map_err(|error| format!("保存配置失败：{error}"))
+}
+
+fn corrupt_backup_path(path: &Path) -> PathBuf {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    PathBuf::from(format!("{}.corrupt.{seconds}", path.display()))
+}
+
+fn load_json(path: &Path) -> Result<AppData, String> {
+    if !path.exists() {
+        return Ok(AppData::default());
+    }
+    let content = fs::read_to_string(path).map_err(|error| format!("读取配置失败：{error}"))?;
+    match serde_json::from_str::<AppData>(&content) {
+        Ok(data) => Ok(data),
+        Err(error) => {
+            let backup = corrupt_backup_path(path);
+            fs::rename(path, &backup).map_err(|rename_error| {
+                format!("配置格式无效（{error}），且无法保留损坏文件：{rename_error}")
+            })?;
+            Ok(AppData::default())
+        }
+    }
+}
+
+fn parse_datetime(value: &str) -> Result<DateTime<Local>, String> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|datetime| datetime.with_timezone(&Local))
+        .map_err(|error| format!("时间格式无效：{error}"))
+}
+
+fn parse_time(value: &str) -> Result<NaiveTime, String> {
+    NaiveTime::parse_from_str(value, "%H:%M").map_err(|_| "提醒时间必须是 HH:MM".to_string())
+}
+
+fn local_datetime(date: NaiveDate, time: NaiveTime) -> Result<DateTime<Local>, String> {
+    Local
+        .from_local_datetime(&date.and_time(time))
+        .earliest()
+        .or_else(|| Local.from_local_datetime(&date.and_time(time)).latest())
+        .ok_or_else(|| "无法计算本地提醒时间".to_string())
+}
+
+fn next_daily(time: &str, after: DateTime<Local>) -> Result<String, String> {
+    let parsed_time = parse_time(time)?;
+    let today = local_datetime(after.date_naive(), parsed_time)?;
+    let candidate = if today > after {
+        today
+    } else {
+        local_datetime(after.date_naive() + Duration::days(1), parsed_time)?
+    };
+    Ok(candidate.to_rfc3339())
+}
+
+fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String, String> {
+    let time = reminder
+        .time
+        .as_deref()
+        .ok_or_else(|| "重复提醒缺少 time".to_string())?;
+    let parsed_time = parse_time(time)?;
+
+    for offset in 0..=370 {
+        let date = after.date_naive() + Duration::days(offset);
+        let weekday = date.weekday().number_from_monday();
+        let matches = match reminder.reminder_type {
+            ReminderType::Daily => true,
+            ReminderType::Weekly => reminder.weekdays.contains(&weekday),
+            ReminderType::Monthly => reminder.month_days.contains(&date.day()),
+            ReminderType::Workday => weekday <= 5,
+            ReminderType::Weekend => weekday >= 6,
+            ReminderType::Once | ReminderType::Interval => false,
+        };
+        if !matches {
+            continue;
+        }
+        if let Ok(candidate) = local_datetime(date, parsed_time) {
+            if candidate > after {
+                return Ok(candidate.to_rfc3339());
+            }
+        }
+    }
+    Err("无法计算下一次提醒时间".to_string())
+}
+
+fn should_trigger_power_action(
+    action: &PowerAction,
+    due: DateTime<Local>,
+    now: DateTime<Local>,
+) -> bool {
+    due <= now && (!action.is_automatic() || now.signed_duration_since(due) <= Duration::minutes(1))
+}
+
+fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
+    data.version = DATA_VERSION;
+    data.settings.rest_interval_minutes = data.settings.rest_interval_minutes.clamp(1, 1440);
+    if data.settings.rest_message.trim().is_empty() {
+        data.settings.rest_message = default_rest_message();
+    }
+    if data.settings.shutdown_reminder_message.trim().is_empty() {
+        data.settings.shutdown_reminder_message = default_shutdown_message();
+    }
+    parse_time(&data.settings.shutdown_reminder_time)?;
+    if data.settings.notification_mode == NotificationMode::Both {
+        data.settings.notification_mode = NotificationMode::Popup;
+    }
+    let now = Local::now();
+    for reminder in &mut data.reminders {
+        if reminder.id.trim().is_empty() {
+            return Err("提醒缺少 id".to_string());
+        }
+        if reminder.title.trim().is_empty() {
+            return Err("提醒内容不能为空".to_string());
+        }
+        match reminder.reminder_type {
+            ReminderType::Once => {
+                let trigger = reminder
+                    .trigger_at
+                    .as_deref()
+                    .ok_or_else(|| "单次提醒缺少 triggerAt".to_string())?;
+                parse_datetime(trigger)?;
+                reminder.next_trigger_at = Some(trigger.to_string());
+            }
+            ReminderType::Daily
+            | ReminderType::Weekly
+            | ReminderType::Monthly
+            | ReminderType::Workday
+            | ReminderType::Weekend => {
+                let time = reminder
+                    .time
+                    .as_deref()
+                    .ok_or_else(|| "重复提醒缺少 time".to_string())?;
+                parse_time(time)?;
+                reminder.weekdays.sort_unstable();
+                reminder.weekdays.dedup();
+                reminder.month_days.sort_unstable();
+                reminder.month_days.dedup();
+                if reminder.reminder_type == ReminderType::Weekly
+                    && (reminder.weekdays.is_empty()
+                        || reminder.weekdays.iter().any(|day| !(1..=7).contains(day)))
+                {
+                    return Err("每周提醒至少需要选择一天".to_string());
+                }
+                if reminder.reminder_type == ReminderType::Monthly
+                    && (reminder.month_days.is_empty()
+                        || reminder
+                            .month_days
+                            .iter()
+                            .any(|day| !(1..=31).contains(day)))
+                {
+                    return Err("每月提醒至少需要选择一个日期".to_string());
+                }
+                if reminder.next_trigger_at.is_none() {
+                    reminder.next_trigger_at = Some(next_recurring(reminder, now)?);
+                } else if let Some(next) = reminder.next_trigger_at.as_deref() {
+                    parse_datetime(next)?;
+                }
+            }
+            ReminderType::Interval => {
+                reminder.next_trigger_at = None;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn app_data(state: &AppState) -> AppData {
+    state.0.data.lock().expect("配置锁被中毒").clone()
+}
+
+fn emit_trigger(app: &AppHandle, event: ReminderTriggeredEvent) {
+    let _ = app.emit("reminder-triggered", event);
+}
+
+fn process_due(app: &AppHandle, state: &AppState) {
+    let now = Local::now();
+    let mut triggered = Vec::new();
+    let mut changed = false;
+    {
+        let mut data = state.0.data.lock().expect("配置锁被中毒");
+        for reminder in &mut data.reminders {
+            if !reminder.enabled {
+                continue;
+            }
+            let Some(next_value) = reminder.next_trigger_at.as_deref() else {
+                continue;
+            };
+            let Ok(next) = parse_datetime(next_value) else {
+                continue;
+            };
+            if next > now {
+                continue;
+            }
+            triggered.push(ReminderTriggeredEvent {
+                id: reminder.id.clone(),
+                title: reminder.title.clone(),
+                reminder_type: reminder.reminder_type.clone(),
+                is_rest: false,
+                is_shutdown: false,
+                power_action: None,
+            });
+            changed = true;
+            match reminder.reminder_type {
+                ReminderType::Once => {
+                    reminder.enabled = false;
+                    reminder.next_trigger_at = None;
+                }
+                ReminderType::Daily
+                | ReminderType::Weekly
+                | ReminderType::Monthly
+                | ReminderType::Workday
+                | ReminderType::Weekend => {
+                    reminder.next_trigger_at = next_recurring(reminder, now).ok();
+                }
+                ReminderType::Interval => {}
+            }
+        }
+        if data.settings.rest_enabled {
+            let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+            if next_rest.is_none() {
+                *next_rest =
+                    Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
+            } else if next_rest.is_some_and(|value| value <= now) {
+                triggered.push(ReminderTriggeredEvent {
+                    id: REST_ID.to_string(),
+                    title: data.settings.rest_message.clone(),
+                    reminder_type: ReminderType::Interval,
+                    is_rest: true,
+                    is_shutdown: false,
+                    power_action: None,
+                });
+                *next_rest =
+                    Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
+            }
+        } else {
+            *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        }
+        if data.settings.shutdown_reminder_enabled {
+            let mut next_shutdown = state.0.shutdown_next.lock().expect("关机提醒锁被中毒");
+            if next_shutdown.is_none() {
+                *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
+                    .ok()
+                    .and_then(|value| parse_datetime(&value).ok());
+            } else if let Some(due) = next_shutdown.as_ref().filter(|value| **value <= now) {
+                if should_trigger_power_action(&data.settings.power_action, due.clone(), now) {
+                    triggered.push(ReminderTriggeredEvent {
+                        id: SHUTDOWN_ID.to_string(),
+                        title: data.settings.shutdown_reminder_message.clone(),
+                        reminder_type: ReminderType::Daily,
+                        is_rest: false,
+                        is_shutdown: true,
+                        power_action: Some(data.settings.power_action.clone()),
+                    });
+                }
+                *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
+                    .ok()
+                    .and_then(|value| parse_datetime(&value).ok());
+            }
+        } else {
+            *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+        }
+        if changed {
+            let _ = write_json(&state.0.data_path, &data);
+        }
+    }
+    for event in triggered {
+        emit_trigger(app, event);
+    }
+}
+
+fn spawn_scheduler(app: AppHandle, state: AppState) {
+    if state.0.scheduler_started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    state.0.scheduler_stop.store(false, Ordering::SeqCst);
+    thread::spawn(move || {
+        while !state.0.scheduler_stop.load(Ordering::SeqCst) {
+            if !state.0.paused.load(Ordering::SeqCst) {
+                process_due(&app, &state);
+            }
+            thread::sleep(StdDuration::from_secs(1));
+        }
+        state.0.scheduler_started.store(false, Ordering::SeqCst);
+    });
+}
+
+#[tauri::command]
+fn load_data(state: State<'_, AppState>) -> Result<AppData, String> {
+    Ok(app_data(&state))
+}
+
+#[tauri::command]
+fn save_data(mut data: AppData, state: State<'_, AppState>) -> Result<AppData, String> {
+    validate_and_normalize(&mut data)?;
+    write_json(&state.0.data_path, &data)?;
+    *state.0.data.lock().expect("配置锁被中毒") = data.clone();
+    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+    *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    Ok(data)
+}
+
+#[tauri::command(rename = "start_scheduler")]
+fn start_scheduler_command(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    spawn_scheduler(app, state.inner().clone());
+    Ok(())
+}
+
+#[tauri::command(rename = "stop_scheduler")]
+fn stop_scheduler_command(state: State<'_, AppState>) -> Result<(), String> {
+    state.0.scheduler_stop.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_scheduler_paused(paused: bool, state: State<'_, AppState>) -> Result<(), String> {
+    state.0.paused.store(paused, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+fn snooze_reminder(id: String, minutes: u32, state: State<'_, AppState>) -> Result<(), String> {
+    let mut data = state.0.data.lock().expect("配置锁被中毒");
+    if id == REST_ID {
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
+            Some(Local::now() + Duration::minutes(minutes.max(1) as i64));
+    } else if id == SHUTDOWN_ID {
+        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") =
+            Some(Local::now() + Duration::minutes(minutes.max(1) as i64));
+    } else if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
+        reminder.enabled = true;
+        reminder.next_trigger_at =
+            Some((Local::now() + Duration::minutes(minutes.max(1) as i64)).to_rfc3339());
+        write_json(&state.0.data_path, &data)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn dismiss_reminder(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if id == REST_ID {
+        let data = state.0.data.lock().expect("配置锁被中毒");
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
+            Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_next_rest_trigger(state: State<'_, AppState>) -> Option<String> {
+    state
+        .0
+        .rest_next
+        .lock()
+        .expect("休息提醒锁被中毒")
+        .as_ref()
+        .map(DateTime::to_rfc3339)
+}
+
+#[tauri::command]
+fn get_next_shutdown_trigger(state: State<'_, AppState>) -> Option<String> {
+    state
+        .0
+        .shutdown_next
+        .lock()
+        .expect("关机提醒锁被中毒")
+        .as_ref()
+        .map(DateTime::to_rfc3339)
+}
+
+#[tauri::command]
+fn execute_power_action(action: PowerAction) -> Result<(), String> {
+    if !action.is_automatic() {
+        return Err("提醒模式不会执行系统操作".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let argument = if action == PowerAction::Shutdown {
+            "/s"
+        } else {
+            "/r"
+        };
+        let system_root = std::env::var_os("SystemRoot")
+            .ok_or_else(|| "无法确定 Windows 系统目录".to_string())?;
+        let executable = PathBuf::from(system_root)
+            .join("System32")
+            .join("shutdown.exe");
+        Command::new(executable)
+            .args([argument, "/t", "0"])
+            .spawn()
+            .map_err(|error| format!("无法执行系统操作：{error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = if action == PowerAction::Shutdown {
+            "tell application \"System Events\" to shut down"
+        } else {
+            "tell application \"System Events\" to restart"
+        };
+        Command::new("/usr/bin/osascript")
+            .args(["-e", script])
+            .spawn()
+            .map_err(|error| format!("无法执行系统操作：{error}"))?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("当前系统不支持自动关机或重启".to_string())
+}
+
+#[tauri::command]
+fn test_reminder(app: AppHandle) -> Result<(), String> {
+    emit_trigger(
+        &app,
+        ReminderTriggeredEvent {
+            id: "__test__".to_string(),
+            title: "这是一条测试提醒".to_string(),
+            reminder_type: ReminderType::Once,
+            is_rest: false,
+            is_shutdown: false,
+            power_action: None,
+        },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn import_data(path: String, state: State<'_, AppState>) -> Result<AppData, String> {
+    let content =
+        fs::read_to_string(&path).map_err(|error| format!("读取导入文件失败：{error}"))?;
+    let mut data: AppData =
+        serde_json::from_str(&content).map_err(|error| format!("导入文件格式无效：{error}"))?;
+    validate_and_normalize(&mut data)?;
+    write_json(&state.0.data_path, &data)?;
+    *state.0.data.lock().expect("配置锁被中毒") = data.clone();
+    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+    *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    Ok(data)
+}
+
+#[tauri::command]
+fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let data = app_data(&state);
+    let content =
+        serde_json::to_string_pretty(&data).map_err(|error| format!("序列化导出失败：{error}"))?;
+    fs::write(path, content).map_err(|error| format!("写出导出文件失败：{error}"))
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show = MenuItemBuilder::with_id("show", "打开 RemindOn").build(app)?;
+    let pause = MenuItemBuilder::with_id("pause", "暂停提醒").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&show, &pause, &quit])
+        .build()?;
+    TrayIconBuilder::new()
+        .menu(&menu)
+        .icon(tauri::include_image!("icons/icon.png"))
+        .tooltip("RemindOn")
+        .build(app)?;
+    Ok(())
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            let path = data_path(app.handle()).map_err(std::io::Error::other)?;
+            let mut data = load_json(&path).map_err(std::io::Error::other)?;
+            validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
+            write_json(&path, &data).map_err(std::io::Error::other)?;
+            let hide_on_start = data.settings.minimize_to_tray;
+            let state = AppState(Arc::new(InnerState {
+                data: Mutex::new(data),
+                data_path: path,
+                paused: AtomicBool::new(false),
+                scheduler_started: AtomicBool::new(false),
+                scheduler_stop: AtomicBool::new(false),
+                rest_next: Mutex::new(None),
+                shutdown_next: Mutex::new(None),
+            }));
+            app.manage(state.clone());
+            setup_tray(app)?;
+            if !hide_on_start {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.center();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            spawn_scheduler(app.handle().clone(), state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            load_data,
+            save_data,
+            start_scheduler_command,
+            stop_scheduler_command,
+            set_scheduler_paused,
+            snooze_reminder,
+            dismiss_reminder,
+            get_next_rest_trigger,
+            get_next_shutdown_trigger,
+            execute_power_action,
+            test_reminder,
+            import_data,
+            export_data
+        ])
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "pause" => {
+                let state = app.state::<AppState>();
+                let paused = !state.0.paused.load(Ordering::SeqCst);
+                state.0.paused.store(paused, Ordering::SeqCst);
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(tauri::generate_context!())
+        .expect("RemindOn 初始化失败")
+        .run(|app, event| {
+            if let RunEvent::ExitRequested { .. } = event {
+                app.state::<AppState>()
+                    .0
+                    .scheduler_stop
+                    .store(true, Ordering::SeqCst);
+            }
+            if let RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } = event
+            {
+                if label == "main" {
+                    let state = app.state::<AppState>();
+                    if state
+                        .0
+                        .data
+                        .lock()
+                        .expect("配置锁被中毒")
+                        .settings
+                        .minimize_to_tray
+                    {
+                        api.prevent_close();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                } else if label == "reminder" {
+                    api.prevent_close();
+                    if let Some(window) = app.get_webview_window("reminder") {
+                        let _ = window.hide();
+                    }
+                }
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_once(trigger_at: String) -> Reminder {
+        Reminder {
+            id: "sample".to_string(),
+            title: "测试提醒".to_string(),
+            reminder_type: ReminderType::Once,
+            trigger_at: Some(trigger_at),
+            time: None,
+            weekdays: Vec::new(),
+            month_days: Vec::new(),
+            enabled: true,
+            next_trigger_at: None,
+        }
+    }
+
+    fn sample_recurring(reminder_type: ReminderType, time: &str) -> Reminder {
+        Reminder {
+            id: "recurring".to_string(),
+            title: "重复提醒".to_string(),
+            reminder_type,
+            trigger_at: None,
+            time: Some(time.to_string()),
+            weekdays: Vec::new(),
+            month_days: Vec::new(),
+            enabled: true,
+            next_trigger_at: None,
+        }
+    }
+
+    #[test]
+    fn daily_time_after_current_time_moves_to_next_day() {
+        let after = Local.with_ymd_and_hms(2026, 9, 3, 10, 0, 0).unwrap();
+        let next = next_daily("09:00", after).unwrap();
+        let parsed = parse_datetime(&next).unwrap();
+        assert_eq!(parsed.date_naive(), after.date_naive() + Duration::days(1));
+        assert_eq!(parsed.time(), NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn validation_rejects_empty_title() {
+        let mut data = AppData {
+            reminders: vec![sample_once(Local::now().to_rfc3339())],
+            ..AppData::default()
+        };
+        data.reminders[0].title.clear();
+        assert!(validate_and_normalize(&mut data).is_err());
+    }
+
+    #[test]
+    fn once_reminder_gets_next_trigger_at() {
+        let trigger = Local::now().to_rfc3339();
+        let mut data = AppData {
+            reminders: vec![sample_once(trigger.clone())],
+            ..AppData::default()
+        };
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(
+            data.reminders[0].next_trigger_at.as_deref(),
+            Some(trigger.as_str())
+        );
+    }
+
+    #[test]
+    fn weekly_reminder_uses_selected_weekdays() {
+        let after = Local.with_ymd_and_hms(2026, 9, 4, 10, 0, 0).unwrap();
+        let mut reminder = sample_recurring(ReminderType::Weekly, "09:00");
+        reminder.weekdays = vec![1, 3];
+        let next = parse_datetime(&next_recurring(&reminder, after).unwrap()).unwrap();
+        assert_eq!(
+            next.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 9, 7).unwrap()
+        );
+    }
+
+    #[test]
+    fn monthly_reminder_skips_unselected_dates() {
+        let after = Local.with_ymd_and_hms(2026, 9, 4, 10, 0, 0).unwrap();
+        let mut reminder = sample_recurring(ReminderType::Monthly, "09:00");
+        reminder.month_days = vec![4, 15];
+        let next = parse_datetime(&next_recurring(&reminder, after).unwrap()).unwrap();
+        assert_eq!(
+            next.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()
+        );
+    }
+
+    #[test]
+    fn workday_and_weekend_skip_to_matching_day() {
+        let friday_evening = Local.with_ymd_and_hms(2026, 9, 4, 18, 0, 0).unwrap();
+        let workday = sample_recurring(ReminderType::Workday, "09:00");
+        let weekend = sample_recurring(ReminderType::Weekend, "09:00");
+        let next_workday =
+            parse_datetime(&next_recurring(&workday, friday_evening).unwrap()).unwrap();
+        let next_weekend =
+            parse_datetime(&next_recurring(&weekend, friday_evening).unwrap()).unwrap();
+        assert_eq!(
+            next_workday.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 9, 7).unwrap()
+        );
+        assert_eq!(
+            next_weekend.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
+        );
+    }
+
+    #[test]
+    fn old_notification_mode_is_migrated_to_popup() {
+        let mut data: AppData = serde_json::from_str(
+            r#"{"version":1,"settings":{"autostart":false,"minimizeToTray":true,"popupAlwaysOnTop":true,"restEnabled":false,"restIntervalMinutes":45,"notificationMode":"both","theme":"dark","accentColor":"mint"},"reminders":[]}"#,
+        )
+        .unwrap();
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.version, DATA_VERSION);
+        assert_eq!(data.settings.notification_mode, NotificationMode::Popup);
+        assert_eq!(
+            data.settings.notification_style,
+            NotificationStyle::Standard
+        );
+        assert_eq!(data.settings.power_action, PowerAction::RemindShutdown);
+    }
+
+    #[test]
+    fn overdue_automatic_power_action_is_skipped() {
+        let now = Local.with_ymd_and_hms(2026, 9, 4, 23, 32, 0).unwrap();
+        let due = Local.with_ymd_and_hms(2026, 9, 4, 23, 30, 0).unwrap();
+        assert!(!should_trigger_power_action(
+            &PowerAction::Shutdown,
+            due,
+            now
+        ));
+        assert!(should_trigger_power_action(
+            &PowerAction::RemindShutdown,
+            due,
+            now
+        ));
+    }
+
+    #[test]
+    fn reminder_power_actions_cannot_execute_system_commands() {
+        assert!(execute_power_action(PowerAction::RemindShutdown).is_err());
+        assert!(execute_power_action(PowerAction::RemindRestart).is_err());
+    }
+}
