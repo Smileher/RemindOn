@@ -17,7 +17,7 @@ import type { MessageKey } from './i18n'
 import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, Theme } from './types'
 import { defaultData } from './types'
 
-type View = 'events' | 'rest' | 'settings' | 'about'
+type View = 'events' | 'rest' | 'power' | 'settings' | 'about'
 type EditableReminderType = Exclude<ReminderType, 'interval'>
 type AutomaticPowerAction = Extract<PowerAction, 'shutdown' | 'lock' | 'restart'>
 
@@ -417,6 +417,7 @@ onUnmounted(() => {
       <nav class="nav-list" aria-label="Navigation">
         <button :class="['nav-item', { active: currentView === 'events' }]" @click="currentView = 'events'"><CalendarClock :size="17" /><span>{{ t('nav.events') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'rest' }]" @click="currentView = 'rest'"><Coffee :size="17" /><span>{{ t('nav.rest') }}</span></button>
+        <button :class="['nav-item', { active: currentView === 'power' }]" @click="currentView = 'power'"><Power :size="17" /><span>{{ t('nav.power') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'settings' }]" @click="currentView = 'settings'"><Settings2 :size="17" /><span>{{ t('nav.settings') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span></button>
       </nav>
@@ -456,16 +457,19 @@ onUnmounted(() => {
           <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ data.settings.restEnabled ? (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating')) : t('common.paused') }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
           <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
         </div>
-        <div class="settings-group rest-settings">
+        <div class="settings-group">
           <div class="setting-card"><div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div><label class="number-field"><input :value="data.settings.restIntervalMinutes" type="number" min="1" max="1440" @input="updateRestInterval" /><span>{{ t('common.minutes') }}</span></label></div>
           <label class="setting-card stacked-setting"><div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div><input :value="data.settings.restMessage" type="text" maxlength="120" @change="updateSetting('restMessage', ($event.target as HTMLInputElement).value)" /></label>
         </div>
+        <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
+      </section>
 
-        <div class="subsection-heading"><div><p class="eyebrow">SYSTEM</p><h2>{{ t('power.title') }}</h2><p>{{ t('power.subtitle') }}</p></div></div>
+      <section v-else-if="currentView === 'power'" class="page-section narrow-section">
+        <header class="page-header compact-header"><div><p class="eyebrow">SYSTEM</p><h1>{{ t('power.title') }}</h1><p class="page-subtitle">{{ t('power.subtitle') }}</p></div></header>
         <div class="status-panel power-status">
           <div class="status-panel-top"><span class="status-icon"><Power :size="18" /></span><div><span class="card-label">{{ t('power.next') }}</span><strong>{{ data.settings.shutdownReminderEnabled ? (nextShutdownTrigger ? formatCountdown(nextShutdownTrigger) : t('common.calculating')) : t('common.paused') }}</strong></div></div>
         </div>
-        <div class="settings-group power-settings">
+        <div class="settings-group">
           <label class="setting-card setting-toggle"><div><strong>{{ t('power.enable') }}</strong><span>{{ t('power.enableHint') }}</span></div><input :checked="data.settings.shutdownReminderEnabled" type="checkbox" @change="updateSetting('shutdownReminderEnabled', ($event.target as HTMLInputElement).checked)" /></label>
           <div class="setting-card setting-choice power-choice"><div><strong>{{ t('power.action') }}</strong><span>{{ t('power.actionHint') }}</span></div><div class="segmented power-segments"><button v-for="option in powerActionOptions" :key="option.value" :class="{ selected: data.settings.powerAction === option.value }" type="button" @click="updatePowerAction(option.value)"><component :is="option.icon" :size="14" />{{ option.label }}</button></div></div>
           <label class="setting-card"><div><strong>{{ t('power.dailyTime') }}</strong><span>{{ t('power.dailyTimeHint') }}</span></div><span class="time-control"><Clock3 :size="15" /><input class="time-input" :value="data.settings.shutdownReminderTime" type="time" @input="updateShutdownTime" /></span></label>
