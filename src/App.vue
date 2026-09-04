@@ -30,7 +30,7 @@ const actionMessage = ref('')
 const now = ref(Date.now())
 const nextRestTrigger = ref<string | null>(null)
 const nextShutdownTrigger = ref<string | null>(null)
-const appVersion = ref('0.3.0')
+const appVersion = ref('0.3.1')
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let clockTimer: number | undefined
