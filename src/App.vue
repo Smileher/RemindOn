@@ -46,8 +46,6 @@ const frequencyOptions = computed<Array<{ value: EditableReminderType; label: st
   { value: 'daily', label: t('frequency.daily') },
   { value: 'weekly', label: t('frequency.weekly') },
   { value: 'monthly', label: t('frequency.monthly') },
-  { value: 'workday', label: t('frequency.workday') },
-  { value: 'weekend', label: t('frequency.weekend') },
 ])
 
 const powerActionOptions = computed<Array<{ value: AutomaticPowerAction; label: string; icon: typeof Power }>>(() => [
@@ -64,7 +62,6 @@ const weekdayOptions = computed(() => Array.from({ length: 7 }, (_, index) => ({
 
 const typeLabels = computed<Record<ReminderType, string>>(() => ({
   once: t('frequency.once'), daily: t('frequency.daily'), weekly: t('frequency.weekly'), monthly: t('frequency.monthly'),
-  workday: t('frequency.workday'), weekend: t('frequency.weekend'),
   interval: t('frequency.interval'),
 }))
 

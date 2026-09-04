@@ -1,4 +1,4 @@
-export type ReminderType = 'once' | 'daily' | 'weekly' | 'monthly' | 'workday' | 'weekend' | 'interval'
+export type ReminderType = 'once' | 'daily' | 'weekly' | 'monthly' | 'interval'
 export type NotificationMode = 'system' | 'popup'
 export type Theme = 'dark' | 'light' | 'system'
 export type Language = 'zh-CN' | 'en'

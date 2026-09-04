@@ -172,8 +172,6 @@ pub enum ReminderType {
     Daily,
     Weekly,
     Monthly,
-    Workday,
-    Weekend,
     Interval,
 }
 
@@ -331,8 +329,6 @@ fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String,
             ReminderType::Daily => true,
             ReminderType::Weekly => reminder.weekdays.contains(&weekday),
             ReminderType::Monthly => reminder.month_days.contains(&date.day()),
-            ReminderType::Workday => weekday <= 5,
-            ReminderType::Weekend => weekday >= 6,
             ReminderType::Once | ReminderType::Interval => false,
         };
         if !matches {
@@ -378,11 +374,7 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                 parse_datetime(trigger)?;
                 reminder.next_trigger_at = Some(trigger.to_string());
             }
-            ReminderType::Daily
-            | ReminderType::Weekly
-            | ReminderType::Monthly
-            | ReminderType::Workday
-            | ReminderType::Weekend => {
+            ReminderType::Daily | ReminderType::Weekly | ReminderType::Monthly => {
                 let time = reminder
                     .time
                     .as_deref()
@@ -503,11 +495,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                     reminder.enabled = false;
                     reminder.next_trigger_at = None;
                 }
-                ReminderType::Daily
-                | ReminderType::Weekly
-                | ReminderType::Monthly
-                | ReminderType::Workday
-                | ReminderType::Weekend => {
+                ReminderType::Daily | ReminderType::Weekly | ReminderType::Monthly => {
                     reminder.next_trigger_at = next_recurring(reminder, now).ok();
                 }
                 ReminderType::Interval => {}
@@ -1093,25 +1081,6 @@ mod tests {
         assert_eq!(
             next.date_naive(),
             NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()
-        );
-    }
-
-    #[test]
-    fn workday_and_weekend_skip_to_matching_day() {
-        let friday_evening = Local.with_ymd_and_hms(2026, 9, 4, 18, 0, 0).unwrap();
-        let workday = sample_recurring(ReminderType::Workday, "09:00");
-        let weekend = sample_recurring(ReminderType::Weekend, "09:00");
-        let next_workday =
-            parse_datetime(&next_recurring(&workday, friday_evening).unwrap()).unwrap();
-        let next_weekend =
-            parse_datetime(&next_recurring(&weekend, friday_evening).unwrap()).unwrap();
-        assert_eq!(
-            next_workday.date_naive(),
-            NaiveDate::from_ymd_opt(2026, 9, 7).unwrap()
-        );
-        assert_eq!(
-            next_weekend.date_naive(),
-            NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
         );
     }
 
