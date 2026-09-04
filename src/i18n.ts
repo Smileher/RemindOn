@@ -137,10 +137,7 @@ const zh = {
   'popup.power': '定时操作',
   'popup.event': '事件提醒',
   'popup.time': '{category} · {time}',
-  'popup.label': '现在是提醒时间',
   'popup.defaultTitle': '你有一条新提醒',
-  'popup.hint': '可以立即完成，或选择稍后再次提醒的时间。',
-  'popup.restHint': '休息结束后关闭窗口，或选择稍后再次提醒。',
   'popup.rested': '已休息：{minutes} 分 {seconds} 秒',
   'popup.secondsUntil': '秒后自动{action}',
   'popup.cancelAction': '取消{action}',
@@ -154,6 +151,9 @@ const zh = {
   'popup.shutdown': '关机',
   'popup.lock': '锁定',
   'popup.restart': '重启',
+  'popup.testMode': '测试定时操作',
+  'popup.testPowerConfirm': '当前是测试模式，是否立即{action}？',
+  'popup.confirmExecute': '确认执行',
   'popup.actionFailed': '无法{action}：{error}',
 } as const
 
@@ -296,10 +296,7 @@ const en: Record<MessageKey, string> = {
   'popup.power': 'Scheduled action',
   'popup.event': 'Reminder',
   'popup.time': '{category} · {time}',
-  'popup.label': 'It is time',
   'popup.defaultTitle': 'You have a new reminder',
-  'popup.hint': 'Mark it done or choose when to be reminded again.',
-  'popup.restHint': 'Close the window when your break is done, or snooze the reminder.',
   'popup.rested': 'Resting: {minutes}m {seconds}s',
   'popup.secondsUntil': 'seconds until {action}',
   'popup.cancelAction': 'Cancel {action}',
@@ -313,6 +310,9 @@ const en: Record<MessageKey, string> = {
   'popup.shutdown': 'shutdown',
   'popup.lock': 'lock',
   'popup.restart': 'restart',
+  'popup.testMode': 'Test scheduled action',
+  'popup.testPowerConfirm': 'This is a test. Do you want to {action} now?',
+  'popup.confirmExecute': 'Continue',
   'popup.actionFailed': 'Could not {action}: {error}',
 }
 

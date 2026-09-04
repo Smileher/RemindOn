@@ -14,7 +14,7 @@ import brandIcon from './assets/remindon.svg'
 import donationCode from './assets/donate.png'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
-import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, Theme } from './types'
+import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
 
 type View = 'events' | 'rest' | 'power' | 'settings' | 'about'
@@ -348,11 +348,11 @@ async function exportData() {
   }
 }
 
-async function testNotification() {
+async function testNotification(kind: TestReminderKind) {
   actionMessage.value = ''
   try {
     await persist()
-    await invoke('test_reminder')
+    await invoke('test_reminder', { kind })
   } catch (error) {
     actionMessage.value = t('status.testFailed', { error: String(error) })
   }
@@ -430,7 +430,7 @@ onUnmounted(() => {
 
     <main class="content">
       <section v-if="currentView === 'events'" class="page-section">
-        <header class="page-header"><div><p class="eyebrow">REMINDERS</p><h1>{{ t('events.title') }}</h1><p class="page-subtitle">{{ t('events.subtitle') }}</p></div><button class="button button-primary" type="button" @click="openAddForm"><Plus :size="15" />{{ t('events.add') }}</button></header>
+        <header class="page-header"><div><p class="eyebrow">REMINDERS</p><h1>{{ t('events.title') }}</h1><p class="page-subtitle">{{ t('events.subtitle') }}</p></div><div class="page-header-actions"><button class="button" type="button" @click="testNotification('event')"><Play :size="14" />{{ t('settings.testNotification') }}</button><button class="button button-primary" type="button" @click="openAddForm"><Plus :size="15" />{{ t('events.add') }}</button></div></header>
 
         <div v-if="showForm" class="form-panel">
           <div class="form-heading"><div><p class="eyebrow">REMINDER</p><h2>{{ editingId ? t('events.editTitle') : t('events.addTitle') }}</h2></div><button class="icon-button" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="showForm = false"><X :size="18" /></button></div>
@@ -456,7 +456,7 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="currentView === 'rest'" class="page-section narrow-section">
-        <header class="page-header compact-header"><div><p class="eyebrow">BREAK</p><h1>{{ t('rest.title') }}</h1><p class="page-subtitle">{{ t('rest.subtitle') }}</p></div></header>
+        <header class="page-header compact-header"><div><p class="eyebrow">BREAK</p><h1>{{ t('rest.title') }}</h1><p class="page-subtitle">{{ t('rest.subtitle') }}</p></div><button class="button" type="button" @click="testNotification('rest')"><Play :size="14" />{{ t('settings.testNotification') }}</button></header>
         <div class="status-panel">
           <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ data.settings.restEnabled ? (restIsActive ? t('rest.resting') : (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating'))) : t('common.paused') }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
           <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
@@ -469,7 +469,7 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="currentView === 'power'" class="page-section narrow-section">
-        <header class="page-header compact-header"><div><p class="eyebrow">SYSTEM</p><h1>{{ t('power.title') }}</h1><p class="page-subtitle">{{ t('power.subtitle') }}</p></div></header>
+        <header class="page-header compact-header"><div><p class="eyebrow">SYSTEM</p><h1>{{ t('power.title') }}</h1><p class="page-subtitle">{{ t('power.subtitle') }}</p></div><button class="button" type="button" @click="testNotification('power')"><Play :size="14" />{{ t('settings.testNotification') }}</button></header>
         <div class="status-panel power-status">
           <div class="status-panel-top"><span class="status-icon"><Power :size="18" /></span><div><span class="card-label">{{ t('power.next') }}</span><strong>{{ data.settings.shutdownReminderEnabled ? (nextShutdownTrigger ? formatCountdown(nextShutdownTrigger) : t('common.calculating')) : t('common.paused') }}</strong></div></div>
         </div>
@@ -489,7 +489,7 @@ onUnmounted(() => {
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span></div><input :checked="data.settings.autostart" type="checkbox" @change="updateAutostart(($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.startHidden') }}</strong><span>{{ t('settings.startHiddenHint') }}</span></div><input :checked="data.settings.minimizeToTray" type="checkbox" @change="updateSetting('minimizeToTray', ($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div><input :checked="data.settings.popupAlwaysOnTop" type="checkbox" @change="updateSetting('popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" /></label>
-          <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationMode') }}</strong><span>{{ t('settings.notificationModeHint') }}</span></div><div class="setting-control-row"><div class="segmented"><button :class="{ selected: data.settings.notificationMode === 'system' }" type="button" @click="updateSetting('notificationMode', 'system')">{{ t('settings.systemNotification') }}</button><button :class="{ selected: data.settings.notificationMode === 'popup' }" type="button" @click="updateSetting('notificationMode', 'popup')">{{ t('settings.softwareNotification') }}</button></div><button class="button" type="button" @click="testNotification"><Play :size="14" />{{ t('settings.testNotification') }}</button></div></div>
+          <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationMode') }}</strong><span>{{ t('settings.notificationModeHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationMode === 'system' }" type="button" @click="updateSetting('notificationMode', 'system')">{{ t('settings.systemNotification') }}</button><button :class="{ selected: data.settings.notificationMode === 'popup' }" type="button" @click="updateSetting('notificationMode', 'popup')">{{ t('settings.softwareNotification') }}</button></div></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationStyle') }}</strong><span>{{ t('settings.notificationStyleHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationStyle === 'compact' }" type="button" @click="updateSetting('notificationStyle', 'compact')">{{ t('settings.compact') }}</button><button :class="{ selected: data.settings.notificationStyle === 'standard' }" type="button" @click="updateSetting('notificationStyle', 'standard')">{{ t('settings.standard') }}</button><button :class="{ selected: data.settings.notificationStyle === 'prominent' }" type="button" @click="updateSetting('notificationStyle', 'prominent')">{{ t('settings.prominent') }}</button></div></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.theme === 'dark' }" type="button" @click="updateSetting('theme', 'dark')">{{ t('settings.dark') }}</button><button :class="{ selected: data.settings.theme === 'light' }" type="button" @click="updateSetting('theme', 'light')">{{ t('settings.light') }}</button><button :class="{ selected: data.settings.theme === 'system' }" type="button" @click="updateSetting('theme', 'system')">{{ t('settings.system') }}</button></div></div>
           <div class="setting-card color-setting"><div><strong>{{ t('settings.accent') }}</strong><span>{{ t('settings.accentHint') }}</span></div><div class="color-options"><button v-for="color in accentColors" :key="color" :class="['color-swatch', `swatch-${color}`, { selected: data.settings.accentColor === color }]" type="button" :aria-label="color" @click="updateSetting('accentColor', color)"></button></div></div>

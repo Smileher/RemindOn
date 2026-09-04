@@ -4,6 +4,7 @@ import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { confirm } from '@tauri-apps/plugin-dialog'
 import { Check, ChevronDown, Clock3 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
@@ -123,6 +124,18 @@ async function executePowerAction() {
   const action = current.value?.powerAction
   if (action !== 'shutdown' && action !== 'lock' && action !== 'restart') return
   try {
+    if (current.value?.isTest) {
+      const confirmed = await confirm(t('popup.testPowerConfirm', { action: powerVerb.value }), {
+        title: t('popup.testMode'),
+        kind: 'warning',
+        okLabel: t('popup.confirmExecute'),
+        cancelLabel: t('common.cancel'),
+      })
+      if (!confirmed) {
+        await closePopup()
+        return
+      }
+    }
     await invoke('execute_power_action', { action })
     await closePopup()
   } catch (error) {
@@ -203,13 +216,11 @@ onUnmounted(() => {
     </header>
     <section class="popup-content">
       <p v-if="current?.isRest" class="rest-elapsed">{{ restElapsed }}</p>
-      <p class="popup-label">{{ t('popup.label') }}</p>
       <h1>{{ current?.title || t('popup.defaultTitle') }}</h1>
       <div v-if="isAutomaticPower" class="power-countdown"><strong>{{ powerCountdown }}</strong><span>{{ t('popup.secondsUntil', { action: powerVerb }) }}</span></div>
-      <p v-else class="popup-hint">{{ current?.isRest ? t('popup.restHint') : t('popup.hint') }}</p>
       <p v-if="powerError" class="popup-error">{{ powerError }}</p>
     </section>
-    <footer :class="['popup-actions', { 'rest-actions': current?.isRest }]">
+    <footer :class="['popup-actions', { 'split-actions': !isAutomaticPower }]">
       <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button><button class="button button-danger" type="button" @click="executePowerAction">{{ t('popup.executeNow', { action: powerVerb }) }}</button></template>
       <template v-else>
         <div class="popup-action-group">
