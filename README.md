@@ -6,6 +6,17 @@ RemindOn 是一个使用 Tauri 2、Vue 3、TypeScript 和 Rust 编写的轻量�
 
 标语：轻量定时提醒。作者：ChenHe（SimileHe）。
 
+## 当前功能
+
+- 单次、每天、每周、每月、工作日和休息日提醒
+- 固定间隔休息提醒和自定义提醒文字
+- 系统通知或居中置顶的软件通知
+- 自动关机、自动锁定和自动重启，执行前提供 60 秒可取消倒计时
+- 系统托盘常驻、双击打开、托盘跳转关于页和开机自动运行
+- 深色、浅色、跟随系统主题及四种强调色
+- 简体中文和 English 动态切换
+- 本地数据导入、导出和异常文件备份
+
 ## 给 WPF/.NET 开发者的快速理解
 
 可以先用下面的方式理解项目分工：
@@ -115,13 +126,13 @@ Windows 构建结果通常在：
 
 ```text
 src-tauri/target/release/remindon.exe
-src-tauri/target/release/bundle/nsis/RemindOn_0.2.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/RemindOn_0.3.0_x64-setup.exe
 ```
 
 当前项目的便携版 ZIP 是由 release 单文件程序压缩得到的。构建完成后，可以在 PowerShell 中执行：
 
 ```powershell
-$zip = 'src-tauri/target/release/bundle/RemindOn_0.2.0_x64_portable.zip'
+$zip = 'src-tauri/target/release/bundle/RemindOn_0.3.0_x64_portable.zip'
 Compress-Archive -Path 'src-tauri/target/release/remindon.exe' -DestinationPath $zip -Force
 ```
 
@@ -139,11 +150,12 @@ RemindOn/
 ├─ src/                       # Vue 前端
 │  ├─ main.ts                 # 创建 Vue 应用
 │  ├─ App.vue                 # 主窗口页面、提醒列表、设置页面
+│  ├─ i18n.ts                 # 中英文界面文字
 │  ├─ types.ts                # 前端数据类型和默认配置
 │  ├─ style.css               # 全局界面样式
-│  ├─ assets/                 # 主界面图标等资源
+│  ├─ assets/                 # 软件 Logo 和赞赏码等资源
 │  └─ components/
-│     └─ ReminderPopup.vue    # 到期软件通知和系统通知
+│     └─ ReminderPopup.vue    # 到期软件通知窗口
 └─ src-tauri/                 # Tauri/Rust 原生层
    ├─ src/
    │  ├─ main.rs              # Rust 程序入口
@@ -225,12 +237,13 @@ const result = await invoke<string>('example_command', { value: '测试' })
 
 ### 修改托盘、窗口和系统能力
 
-- 托盘菜单：`setup_tray()` 和 `.on_menu_event(...)`
+- 托盘菜单：`tray_menu()`、`setup_tray()` 和 `.on_menu_event(...)`
 - 关闭主窗口隐藏到托盘：`RunEvent::WindowEvent` 中的 `CloseRequested`
 - 主窗口和提醒窗口尺寸、置顶、是否显示任务栏：`src-tauri/tauri.conf.json`
 - 开机启动：前端 `updateAutostart()` 和 Rust 的 `tauri_plugin_autostart`
-- 系统通知：`src/components/ReminderPopup.vue` 和 `tauri_plugin_notification`
-- 通知方式、主题和强调色：`src/App.vue`、`src/components/ReminderPopup.vue` 和 `src/types.ts`
+- 系统通知：Rust `dispatch_trigger()` 和 `tauri_plugin_notification`
+- 软件通知：`src/components/ReminderPopup.vue` 和 Rust `dispatch_trigger()`
+- 通知方式、主题、语言和强调色：`src/App.vue`、`src/i18n.ts`、`src/components/ReminderPopup.vue` 和 `src/types.ts`
 - 权限声明：`src-tauri/capabilities/default.json`
 
 Tauri 配置中有两个窗口：
@@ -242,14 +255,22 @@ Tauri 配置中有两个窗口：
 
 ## 本地 JSON 数据
 
-配置文件名为 `remindon.json`，由 Rust 的 `app_config_dir()` 决定目录。Windows 通常位于用户的 `%APPDATA%` 下，macOS 通常位于 `~/Library/Application Support/` 下，实际目录以系统返回路径为准。
+配置文件名为 `remindon.json`，由 Rust 的 `app_config_dir()` 决定目录。安装版、便携版和开发版都使用相同的应用标识 `com.remindon.app`，因此不会把设置写进 EXE 所在目录。
+
+常见位置：
+
+```text
+Windows: C:\Users\<用户名>\AppData\Roaming\com.remindon.app\remindon.json
+macOS:   ~/Library/Application Support/com.remindon.app/remindon.json
+```
 
 当前结构：
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "settings": {
+    "language": "zh-CN",
     "autostart": false,
     "minimizeToTray": true,
     "popupAlwaysOnTop": true,
@@ -261,9 +282,9 @@ Tauri 配置中有两个窗口：
     "theme": "dark",
     "accentColor": "mint",
     "shutdownReminderEnabled": false,
-    "powerAction": "remindShutdown",
+    "powerAction": "shutdown",
     "shutdownReminderTime": "23:30",
-    "shutdownReminderMessage": "时间不早了，记得关闭电脑。"
+    "shutdownReminderMessage": "即将自动关闭电脑。"
   },
   "reminders": [
     {
@@ -291,15 +312,15 @@ Tauri 配置中有两个窗口：
 - `weekend`：周六和周日提醒。
 - `interval`：类型已保留在数据模型中，当前界面中的休息提醒由 `settings.restEnabled` 和 `restIntervalMinutes` 管理。
 
-界面中的通知方式可以设置为 `system`（系统通知）或 `popup`（软件通知），默认为 `popup`。旧数据中的 `both` 仍可读取，加载后会自动转为 `popup`。软件通知是独立的带标题栏窗口，居中显示，可选简洁、标准或醒目样式。参数设置页的“测试通知”会使用当前选择的通知方式。
+界面中的通知方式可以设置为 `system`（系统通知）或 `popup`（软件通知），默认为 `popup`。软件通知是独立的带标题栏窗口，居中显示，可选简洁、标准或醒目样式。参数设置页的“测试通知”会先保存当前选项，再使用当前通知方式和样式发送测试。
 
-休息提醒页内还可设置定时操作：`shutdown`（自动关机）、`remindShutdown`（提醒关机）、`restart`（自动重启）和 `remindRestart`（提醒重启）。自动模式到点后会强制显示软件通知，倒计时 60 秒后执行，期间可取消或立即执行。如果因休眠等原因错过计划时间超过 1 分钟，自动操作会跳过，不会补执行。Windows 使用 `shutdown.exe`，macOS 使用系统 AppleScript，macOS 首次执行时可能要求系统自动化权限。
+休息提醒页内还可设置三种定时操作：`shutdown`（自动关机）、`lock`（自动锁定）和 `restart`（自动重启）。到点后会强制显示软件通知，倒计时 60 秒后执行，期间关闭窗口可取消，也可立即执行。如果因休眠等原因错过计划时间超过 1 分钟，操作会跳过，不会补执行。Windows 使用系统自带的 `shutdown.exe` 和 `rundll32.exe`；macOS 使用系统 AppleScript 和 `CGSession`，首次执行时可能要求系统权限。
 
 当前的工作日和休息日按周一至周五、周六至周日计算，不包含中国法定节假日调休数据。
 
-Windows 下使用 `pnpm tauri:dev` 调试时，Tauri 通知插件会通过 PowerShell 的已注册通知身份发送测试通知，因此 Windows 可能显示“来自 PowerShell”。通过 NSIS 安装的正式版会使用 RemindOn 的应用标识；这是开发环境差异，不是通知内容由 PowerShell 脚本实现。
+系统通知由 Rust 后端直接调用 Tauri 通知插件，并使用 RemindOn 的应用标识，不通过 PowerShell 脚本发送。软件通知由隐藏的 `reminder` 窗口显示；后端会先居中、置顶并显示窗口，再定向发送提醒内容。
 
-添加、修改、删除和导入都会立即保存。JSON 损坏时，程序会先把原文件改名为类似 `remindon.json.corrupt.时间戳` 的备份，再创建默认配置。
+添加、修改、删除、设置变更和导入都会立即保存。保存失败时界面会恢复原设置并显示错误；数据文件损坏或结构不符合当前版本时，程序会先把原文件改名为类似 `remindon.json.corrupt.时间戳` 的备份，再创建默认配置。当前开发阶段不迁移早期版本的数据结构。
 
 ## 调试方法
 
@@ -358,6 +379,14 @@ Windows 编译失败且提示 linker 或 MSVC 缺失时，安装 Visual Studio B
 ### 修改了 Rust 命令但前端提示命令不存在
 
 检查三个地方：命令函数上的 `#[tauri::command]`、`tauri::generate_handler![...]` 注册项、前端 `invoke()` 使用的命令名和参数名。
+
+### 修改源码后，release 目录里的程序没有变化
+
+`src-tauri/target/release/remindon.exe` 是上一次构建生成的成品，不会随着源码保存自动更新。开发时运行 `pnpm tauri:dev`；需要新的正式程序时重新运行 `pnpm tauri:build`。
+
+### 重启后看起来设置丢失
+
+先确认运行的是刚构建的 `0.3.0`，并完全退出托盘中的旧实例。安装版、便携版和开发版共享上面列出的标准配置文件；如果同时保留不同开发版本，旧程序可能用旧数据结构重写同一个文件。新版保存失败时会在页面显示原因，不会只改变界面而不提示。
 
 ### 想清空所有本地数据
 
