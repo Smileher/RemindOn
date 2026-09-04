@@ -314,7 +314,7 @@ macOS:   ~/Library/Application Support/com.remindon.app/remindon.json
 
 界面中的通知方式可以设置为 `system`（系统通知）或 `popup`（软件通知），默认为 `popup`。软件通知是独立的带标题栏窗口，居中显示，可选简洁、标准或醒目样式。参数设置页的“测试通知”会先保存当前选项，再使用当前通知方式和样式发送测试。
 
-休息提醒页内还可设置三种定时操作：`shutdown`（自动关机）、`lock`（自动锁定）和 `restart`（自动重启）。到点后会强制显示软件通知，倒计时 60 秒后执行，期间关闭窗口可取消，也可立即执行。如果因休眠等原因错过计划时间超过 1 分钟，操作会跳过，不会补执行。Windows 使用系统自带的 `shutdown.exe` 和 `rundll32.exe`；macOS 使用系统 AppleScript 和 `CGSession`，首次执行时可能要求系统权限。
+独立的定时操作页可设置三种操作：`shutdown`（自动关机）、`lock`（自动锁定）和 `restart`（自动重启）。到点后会强制显示软件通知，倒计时 60 秒后执行，期间关闭窗口可取消，也可立即执行。如果因休眠等原因错过计划时间超过 1 分钟，操作会跳过，不会补执行。Windows 使用系统自带的 `shutdown.exe` 和 `rundll32.exe`；macOS 使用系统 AppleScript 和 `CGSession`，首次执行时可能要求系统权限。
 
 当前的工作日和休息日按周一至周五、周六至周日计算，不包含中国法定节假日调休数据。
 
