@@ -334,10 +334,10 @@ async function exportData() {
 }
 
 async function testNotification() {
+  actionMessage.value = ''
   try {
     await persist()
     await invoke('test_reminder')
-    actionMessage.value = t('status.testSent')
   } catch (error) {
     actionMessage.value = t('status.testFailed', { error: String(error) })
   }
