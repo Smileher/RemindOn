@@ -213,8 +213,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .donation-section > div:first-child svg { grid-row: 1 / 3; color: var(--accent-strong); }
 .donation-section strong { color: var(--text); font-size: var(--font-sm); }
 .donation-section span { color: var(--muted); font-size: var(--font-xs); }
-.donation-code { position: relative; width: 150px; height: 150px; flex: 0 0 150px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: #fff; }
-.donation-code > img:first-child { display: block; width: 100%; height: 100%; object-fit: contain; }
+.donation-code { position: relative; width: 158px; height: 158px; flex: 0 0 158px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; padding: 4px; background: #fff; box-shadow: 0 1px 3px rgba(31, 42, 55, .08); }
+.donation-code > img:first-child { display: block; width: 100%; height: 100%; object-fit: cover; clip-path: inset(1px); }
 .donation-logo { position: absolute; top: 50%; left: 50%; width: 38px; height: 38px; border: 4px solid #fff; border-radius: 10px; transform: translate(-50%, -50%); }
 .about-copyright { margin: 6px 0 0; color: var(--subtle); font-size: var(--font-xs); }
 
@@ -235,7 +235,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
 .snooze-select { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; color: var(--muted); background: var(--surface); }
 .snooze-select:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.snooze-select select { border: 0; color: var(--text); background: transparent; outline: none; }
+.snooze-select select { border: 0; color: var(--text); background: transparent; outline: none; color-scheme: inherit; }
+.snooze-select option { color: var(--text); background: var(--surface); }
 .notification-compact .popup-content { padding-top: 15px; padding-bottom: 15px; }
 .notification-compact .popup-content h1 { font-size: var(--font-section); }
 .notification-compact .popup-hint { display: none; }

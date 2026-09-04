@@ -356,6 +356,9 @@ async function refreshTimers() {
 onMounted(async () => {
   if (isPopup) return
   try {
+    unlistenNavigation = await listen<View>('navigate-to', (event) => {
+      currentView.value = event.payload
+    })
     data.value = await invoke<AppData>('load_data')
     await applyNativeTheme(data.value.settings.theme)
     try {
@@ -372,9 +375,6 @@ onMounted(async () => {
     unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       data.value = await invoke<AppData>('load_data')
       await refreshTimers()
-    })
-    unlistenNavigation = await listen<View>('navigate-to', (event) => {
-      currentView.value = event.payload
     })
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
