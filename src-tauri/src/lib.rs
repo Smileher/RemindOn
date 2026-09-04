@@ -175,6 +175,14 @@ pub enum ReminderType {
     Interval,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum TestReminderKind {
+    Event,
+    Rest,
+    Power,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reminder {
@@ -221,6 +229,7 @@ struct ReminderTriggeredEvent {
     is_rest: bool,
     is_shutdown: bool,
     power_action: Option<PowerAction>,
+    is_test: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -488,6 +497,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                 is_rest: false,
                 is_shutdown: false,
                 power_action: None,
+                is_test: false,
             });
             changed = true;
             match reminder.reminder_type {
@@ -515,6 +525,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         is_rest: true,
                         is_shutdown: false,
                         power_action: None,
+                        is_test: false,
                     });
                     if data.settings.notification_mode == NotificationMode::Popup {
                         *next_rest = None;
@@ -545,6 +556,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         is_rest: false,
                         is_shutdown: true,
                         power_action: Some(data.settings.power_action.clone()),
+                        is_test: false,
                     });
                 }
                 *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
@@ -771,15 +783,11 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
     Err("当前系统不支持此自动操作".to_string())
 }
 
-#[tauri::command]
-fn test_reminder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let language = app_data(&state).settings.language;
-    dispatch_trigger(
-        &app,
-        &state,
-        ReminderTriggeredEvent {
-            id: "__test__".to_string(),
-            title: match language {
+fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> ReminderTriggeredEvent {
+    match kind {
+        TestReminderKind::Event => ReminderTriggeredEvent {
+            id: "__test_event__".to_string(),
+            title: match settings.language {
                 Language::ZhCn => "这是一条测试通知".to_string(),
                 Language::En => "This is a test notification".to_string(),
             },
@@ -787,8 +795,37 @@ fn test_reminder(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             is_rest: false,
             is_shutdown: false,
             power_action: None,
+            is_test: true,
         },
-    );
+        TestReminderKind::Rest => ReminderTriggeredEvent {
+            id: "__test_rest__".to_string(),
+            title: settings.rest_message.clone(),
+            reminder_type: ReminderType::Interval,
+            is_rest: true,
+            is_shutdown: false,
+            power_action: None,
+            is_test: true,
+        },
+        TestReminderKind::Power => ReminderTriggeredEvent {
+            id: "__test_power__".to_string(),
+            title: settings.shutdown_reminder_message.clone(),
+            reminder_type: ReminderType::Daily,
+            is_rest: false,
+            is_shutdown: true,
+            power_action: Some(settings.power_action.clone()),
+            is_test: true,
+        },
+    }
+}
+
+#[tauri::command]
+fn test_reminder(
+    kind: TestReminderKind,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let event = test_reminder_event(&app_data(&state).settings, kind);
+    dispatch_trigger(&app, &state, event);
     Ok(())
 }
 
@@ -1138,5 +1175,44 @@ mod tests {
             system_root.join("System32").join("shutdown.exe")
         );
         assert_eq!(restart_args, vec!["/r", "/t", "0"]);
+    }
+
+    #[test]
+    fn event_test_reminder_is_generic_and_non_power() {
+        let event = test_reminder_event(&AppSettings::default(), TestReminderKind::Event);
+
+        assert!(event.is_test);
+        assert!(!event.is_rest);
+        assert!(!event.is_shutdown);
+        assert_eq!(event.reminder_type, ReminderType::Once);
+        assert_eq!(event.title, "这是一条测试通知");
+        assert!(event.power_action.is_none());
+    }
+
+    #[test]
+    fn rest_test_reminder_uses_configured_content_without_real_rest_id() {
+        let mut settings = AppSettings::default();
+        settings.rest_message = "起来活动一下".to_string();
+        let event = test_reminder_event(&settings, TestReminderKind::Rest);
+
+        assert!(event.is_test);
+        assert!(event.is_rest);
+        assert_eq!(event.title, settings.rest_message);
+        assert_ne!(event.id, REST_ID);
+        assert!(event.power_action.is_none());
+    }
+
+    #[test]
+    fn power_test_reminder_uses_configured_action_without_real_power_id() {
+        let mut settings = AppSettings::default();
+        settings.power_action = PowerAction::Restart;
+        settings.shutdown_reminder_message = "准备重新启动".to_string();
+        let event = test_reminder_event(&settings, TestReminderKind::Power);
+
+        assert!(event.is_test);
+        assert!(event.is_shutdown);
+        assert_eq!(event.title, settings.shutdown_reminder_message);
+        assert_eq!(event.power_action, Some(PowerAction::Restart));
+        assert_ne!(event.id, SHUTDOWN_ID);
     }
 }

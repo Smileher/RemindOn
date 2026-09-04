@@ -5,6 +5,7 @@ export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type NotificationStyle = 'compact' | 'standard' | 'prominent'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
+export type TestReminderKind = 'event' | 'rest' | 'power'
 
 export interface Reminder {
   id: string
@@ -49,6 +50,7 @@ export interface ReminderTriggeredEvent {
   isRest: boolean
   isShutdown: boolean
   powerAction?: PowerAction | null
+  isTest: boolean
 }
 
 export interface RestTimerStatus {
