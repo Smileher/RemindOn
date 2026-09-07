@@ -389,9 +389,21 @@ onMounted(async () => {
       // Keep the saved value when the platform autostart API is unavailable.
     }
     await refreshTimers()
-    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
+    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async (event) => {
+      const isActiveRestPopup = event.payload.isRest
+        && !event.payload.isTest
+        && data.value.settings.notificationMode === 'popup'
+      if (isActiveRestPopup) {
+        restIsActive.value = true
+        nextRestTrigger.value = null
+      }
       data.value = await invoke<AppData>('load_data')
       await refreshTimers()
+      if (isActiveRestPopup) {
+        // Keep the immediate resting state while the backend refresh completes.
+        restIsActive.value = true
+        nextRestTrigger.value = null
+      }
     })
     unlistenRestTimer = await listen('rest-timer-updated', () => void refreshTimers())
     clockTimer = window.setInterval(() => {
