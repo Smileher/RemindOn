@@ -448,6 +448,12 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
     let settings = app_data(state).settings;
     let requires_popup = event.power_action.is_some();
 
+    // 真实休息通知打开后保持暂停状态，直到用户完成或稍后提醒。
+    if event.is_rest && !event.is_test && settings.notification_mode == NotificationMode::Popup {
+        state.0.rest_active.store(true, Ordering::SeqCst);
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+    }
+
     if settings.notification_mode == NotificationMode::System && !requires_popup {
         if let Some(window) = app.get_webview_window("reminder") {
             let _ = window.hide();
@@ -466,6 +472,10 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
         let _ = window.show();
         let _ = window.set_focus();
         let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
+    }
+
+    if event.is_rest && !event.is_test && settings.notification_mode == NotificationMode::Popup {
+        let _ = app.emit_to("main", "rest-timer-updated", ());
     }
 
     let _ = app.emit_to("main", "reminder-triggered", event);
