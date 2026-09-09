@@ -33,7 +33,7 @@ const restIsActive = ref(false)
 const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
-const appVersion = ref('0.3.3')
+const appVersion = ref('0.4')
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
@@ -410,7 +410,7 @@ onMounted(async () => {
     shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
     await applyNativeTheme(data.value.settings.theme)
     try {
-      appVersion.value = await getVersion()
+      appVersion.value = (await getVersion()).replace(/\.0$/, '')
     } catch {
       // Keep the package-version fallback in standalone preview mode.
     }
