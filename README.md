@@ -4,7 +4,7 @@ RemindOn 是一个使用 Tauri 2、Vue 3、TypeScript 和 Rust 编写的轻量�
 
 它不使用服务器、登录系统或数据库。提醒数据保存在本地 JSON 文件中。
 
-标语：轻量定时提醒。作者：ChenHe（SimileHe）。
+标语：轻量定时提醒。作者：ChenHe。
 
 ## 当前功能
 

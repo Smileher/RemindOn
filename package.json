@@ -2,7 +2,7 @@
   "name": "remindon",
   "version": "0.3.3",
   "description": "RemindOn - 轻量定时提醒",
-  "author": "ChenHe (SimileHe)",
+  "author": "ChenHe",
   "private": true,
   "type": "module",
   "scripts": {
