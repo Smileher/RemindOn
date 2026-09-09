@@ -1,6 +1,6 @@
 [package]
 name = "remindon"
-version = "0.3.3"
+version = "0.4.0"
 description = "A small cross-platform desktop reminder"
 authors = ["ChenHe"]
 edition = "2021"
