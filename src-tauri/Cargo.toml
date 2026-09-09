@@ -2,7 +2,7 @@
 name = "remindon"
 version = "0.3.3"
 description = "A small cross-platform desktop reminder"
-authors = ["ChenHe (SimileHe)"]
+authors = ["ChenHe"]
 edition = "2021"
 
 [lib]

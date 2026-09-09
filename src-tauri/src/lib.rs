@@ -474,10 +474,6 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
         let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
     }
 
-    if event.is_rest && !event.is_test && settings.notification_mode == NotificationMode::Popup {
-        let _ = app.emit_to("main", "rest-timer-updated", ());
-    }
-
     let _ = app.emit_to("main", "reminder-triggered", event);
 }
 
