@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import {
-  BellRing, CalendarClock, Check, Clock3, Coffee, Download, Info, LockKeyhole,
+  BellRing, CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
 } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -38,7 +38,8 @@ const appVersion = ref('0.6')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
-  checkForUpdates, installUpdate, restartApp, openReleases, dispose: disposeUpdater,
+  checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
+  revealDownloadedUpdate, openReleases, dispose: disposeUpdater,
 } = useUpdater()
 const confirmingUpdate = ref(false)
 let unlisten: (() => void) | undefined
@@ -98,6 +99,24 @@ const restProgress = computed(() => {
   const total = data.value.settings.restIntervalMinutes * 60 * 1000
   if (!Number.isFinite(remaining) || total <= 0) return 0
   return Math.max(0, Math.min(100, (1 - remaining / total) * 100))
+})
+
+const updateStatusText = computed(() => {
+  if (updateStatus.value === 'checking') return t('update.checking')
+  if (updateStatus.value === 'downloading') {
+    return updateProgress.value === null
+      ? t('update.downloading')
+      : t('update.progress', { progress: updateProgress.value })
+  }
+  if (updateStatus.value === 'installing') return t('update.installing')
+  if (updateStatus.value === 'ready') return t('update.ready')
+  if (updateStatus.value === 'downloaded') return t('update.downloaded', { version: newVersion.value })
+  if (updateStatus.value === 'upToDate') return t('update.upToDate')
+  if (updateStatus.value === 'error') return t('update.checkFailed')
+  if (updateMode.value === 'development') return t('update.development')
+  if (updateMode.value === 'unsupported') return t('update.unsupported')
+  if (newVersion.value) return t('update.available', { version: newVersion.value })
+  return t('update.idle')
 })
 
 function resetForm() {
@@ -424,6 +443,14 @@ async function confirmUpdate() {
   }
 }
 
+async function startUpdate() {
+  if (updateMode.value === 'portable') {
+    await downloadPortableUpdate()
+    return
+  }
+  await confirmUpdate()
+}
+
 onMounted(async () => {
   if (isPopup) return
   void checkForUpdates(true)
@@ -493,9 +520,9 @@ onUnmounted(() => {
       <div class="sidebar-footer">RemindOn v{{ appVersion }}</div>
     </aside>
 
-    <main class="content">
+    <main :class="['content', { 'content-about': currentView === 'about' }]">
       <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
-        <span>{{ updateStatus === 'ready' ? t('update.ready') : t('update.available', { version: newVersion }) }}</span>
+        <span>{{ updateStatus === 'ready' ? t('update.ready') : updateStatus === 'downloaded' ? t('update.downloaded', { version: newVersion }) : t('update.available', { version: newVersion }) }}</span>
         <button class="button" type="button" @click="currentView = 'about'">{{ t('update.view') }}</button>
       </div>
       <section v-if="currentView === 'events'" class="page-section">
@@ -566,33 +593,25 @@ onUnmounted(() => {
         <div class="data-actions"><div><strong>{{ t('settings.data') }}</strong><span>{{ t('settings.dataHint') }}</span></div><div class="action-row"><button class="button" type="button" @click="importData"><Upload :size="14" />{{ t('settings.import') }}</button><button class="button" type="button" @click="exportData"><Download :size="14" />{{ t('settings.export') }}</button></div><small v-if="actionMessage" class="status-message">{{ actionMessage }}</small></div>
       </section>
 
-      <section v-else class="page-section narrow-section about-section">
-        <div class="about-hero"><img :src="brandIcon" alt="" /><h1>RemindOn</h1><p>{{ t('app.tagline') }}</p><span>{{ t('about.version', { version: appVersion }) }}</span></div>
-        <div class="update-panel" aria-live="polite">
-          <p v-if="updateMode === 'portable'">{{ t('update.portable') }}</p>
-          <p v-else-if="updateMode === 'development'">{{ t('update.development') }}</p>
-          <p v-else-if="updateMode === 'unsupported'">{{ t('update.unsupported') }}</p>
-          <template v-else>
-            <p v-if="updateStatus === 'checking'">{{ t('update.checking') }}</p>
-            <p v-else-if="updateStatus === 'downloading'">{{ updateProgress === null ? t('update.downloading') : t('update.progress', { progress: updateProgress }) }}</p>
-            <p v-else-if="updateStatus === 'installing'">{{ t('update.installing') }}</p>
-            <p v-else-if="updateStatus === 'ready'">{{ t('update.ready') }}</p>
-            <p v-else-if="newVersion">{{ t('update.available', { version: newVersion }) }}</p>
-            <p v-else-if="updateStatus === 'upToDate'">{{ t('update.upToDate') }}</p>
-            <progress v-if="updateStatus === 'downloading'" :value="updateProgress ?? undefined" max="100" :aria-label="t('update.downloading')"></progress>
-            <div class="update-actions">
-              <button v-if="updateStatus === 'ready'" class="button button-primary" type="button" @click="restartApp">{{ t('update.restart') }}</button>
-              <template v-else>
-                <button v-if="newVersion && !updateBusy" class="button button-primary" type="button" :disabled="confirmingUpdate" @click="confirmUpdate">{{ t('update.install') }}</button>
-                <button class="button" type="button" :disabled="updateBusy || confirmingUpdate" @click="checkForUpdates()"><RotateCw :size="14" />{{ t('update.check') }}</button>
-              </template>
-            </div>
-          </template>
-          <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed', { error: updateError }) }}</p>
-          <button v-if="updateMode === 'portable' || updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
+      <section v-else class="page-section about-section">
+        <div class="about-overview">
+          <img :src="brandIcon" alt="" />
+          <div class="about-product"><h1>RemindOn</h1><p>{{ t('app.tagline') }}</p></div>
+          <span class="about-version">{{ t('about.version', { version: appVersion }) }}</span>
         </div>
-        <div class="about-meta"><span>{{ t('about.author') }}</span><strong>ChenHe</strong></div>
-        <div class="donation-section"><div><BellRing :size="18" /><strong>{{ t('about.support') }}</strong><span>{{ t('about.supportHint') }}</span></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
+        <div class="update-panel" aria-live="polite">
+          <div class="update-summary"><span :class="['update-icon', { checking: updateStatus === 'checking' }]"><RotateCw :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ updateStatusText }}</strong></div></div>
+          <div class="update-actions">
+            <button v-if="updateStatus === 'ready'" class="button button-primary" type="button" @click="restartApp">{{ t('update.restart') }}</button>
+            <button v-else-if="updateStatus === 'downloaded'" class="button button-primary" type="button" @click="revealDownloadedUpdate"><FolderOpen :size="14" />{{ t('update.reveal') }}</button>
+            <button v-else-if="newVersion && !updateBusy" class="button button-primary" type="button" :disabled="confirmingUpdate" @click="startUpdate"><Download v-if="updateMode === 'portable'" :size="14" />{{ updateMode === 'portable' ? t('update.downloadNew') : t('update.install') }}</button>
+            <button class="button" type="button" :disabled="updateBusy || confirmingUpdate || updateStatus === 'ready' || updateMode === 'development' || updateMode === 'unsupported'" @click="checkForUpdates()"><RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}</button>
+            <button v-if="updateMode === 'unsupported' || updateError" class="icon-button" type="button" :aria-label="t('update.download')" :title="t('update.download')" @click="openReleases"><Download :size="16" /></button>
+          </div>
+          <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
+          <p v-if="updateError" class="update-error" role="alert" :title="t('update.failed', { error: updateError })">{{ t('update.failed', { error: updateError }) }}</p>
+        </div>
+        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>ChenHe</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>
       </section>
     </main>
