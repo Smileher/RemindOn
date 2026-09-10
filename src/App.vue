@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { open, save } from '@tauri-apps/plugin-dialog'
+import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import {
   BellRing, CalendarClock, Check, Clock3, Coffee, Download, Info, LockKeyhole,
@@ -16,6 +16,7 @@ import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
+import { useUpdater } from './composables/useUpdater'
 
 type View = 'events' | 'rest' | 'power' | 'settings' | 'about'
 type EditableReminderType = Exclude<ReminderType, 'interval'>
@@ -34,6 +35,12 @@ const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
 const appVersion = ref('0.5')
+const {
+  mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
+  errorMessage: updateError, busy: updateBusy,
+  checkForUpdates, installUpdate, restartApp, openReleases, dispose: disposeUpdater,
+} = useUpdater()
+const confirmingUpdate = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
@@ -399,8 +406,27 @@ async function refreshTimers() {
   now.value = Date.now()
 }
 
+async function confirmUpdate() {
+  if (confirmingUpdate.value || updateBusy.value) return
+  confirmingUpdate.value = true
+  try {
+    const confirmed = await ask(t('update.confirm', { version: newVersion.value }), {
+      title: 'RemindOn',
+      kind: 'info',
+      okLabel: t('update.install'),
+      cancelLabel: t('common.cancel'),
+    })
+    if (confirmed) await installUpdate()
+  } catch (error) {
+    updateError.value = String(error)
+  } finally {
+    confirmingUpdate.value = false
+  }
+}
+
 onMounted(async () => {
   if (isPopup) return
+  void checkForUpdates(true)
   try {
     unlistenNavigation = await listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
@@ -441,6 +467,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposeUpdater()
   unlisten?.()
   unlistenNavigation?.()
   unlistenRestTimer?.()
@@ -461,12 +488,16 @@ onUnmounted(() => {
         <button :class="['nav-item', { active: currentView === 'rest' }]" @click="currentView = 'rest'"><Coffee :size="17" /><span>{{ t('nav.rest') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'power' }]" @click="currentView = 'power'"><Power :size="17" /><span>{{ t('nav.power') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'settings' }]" @click="currentView = 'settings'"><Settings2 :size="17" /><span>{{ t('nav.settings') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span></button>
+        <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span><span v-if="newVersion && updateStatus !== 'ready'" class="update-dot" :aria-label="t('update.available', { version: newVersion })"></span></button>
       </nav>
       <div class="sidebar-footer">RemindOn v{{ appVersion }}</div>
     </aside>
 
     <main class="content">
+      <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
+        <span>{{ updateStatus === 'ready' ? t('update.ready') : t('update.available', { version: newVersion }) }}</span>
+        <button class="button" type="button" @click="currentView = 'about'">{{ t('update.view') }}</button>
+      </div>
       <section v-if="currentView === 'events'" class="page-section">
         <header class="page-header"><div><p class="eyebrow">REMINDERS</p><h1>{{ t('events.title') }}</h1><p class="page-subtitle">{{ t('events.subtitle') }}</p></div><div class="page-header-actions"><button class="button" type="button" @click="testNotification('event')"><Play :size="14" />{{ t('settings.testNotification') }}</button><button class="button button-primary" type="button" @click="openAddForm"><Plus :size="15" />{{ t('events.add') }}</button></div></header>
 
@@ -537,6 +568,29 @@ onUnmounted(() => {
 
       <section v-else class="page-section narrow-section about-section">
         <div class="about-hero"><img :src="brandIcon" alt="" /><h1>RemindOn</h1><p>{{ t('app.tagline') }}</p><span>{{ t('about.version', { version: appVersion }) }}</span></div>
+        <div class="update-panel" aria-live="polite">
+          <p v-if="updateMode === 'portable'">{{ t('update.portable') }}</p>
+          <p v-else-if="updateMode === 'development'">{{ t('update.development') }}</p>
+          <p v-else-if="updateMode === 'unsupported'">{{ t('update.unsupported') }}</p>
+          <template v-else>
+            <p v-if="updateStatus === 'checking'">{{ t('update.checking') }}</p>
+            <p v-else-if="updateStatus === 'downloading'">{{ updateProgress === null ? t('update.downloading') : t('update.progress', { progress: updateProgress }) }}</p>
+            <p v-else-if="updateStatus === 'installing'">{{ t('update.installing') }}</p>
+            <p v-else-if="updateStatus === 'ready'">{{ t('update.ready') }}</p>
+            <p v-else-if="newVersion">{{ t('update.available', { version: newVersion }) }}</p>
+            <p v-else-if="updateStatus === 'upToDate'">{{ t('update.upToDate') }}</p>
+            <progress v-if="updateStatus === 'downloading'" :value="updateProgress ?? undefined" max="100" :aria-label="t('update.downloading')"></progress>
+            <div class="update-actions">
+              <button v-if="updateStatus === 'ready'" class="button button-primary" type="button" @click="restartApp">{{ t('update.restart') }}</button>
+              <template v-else>
+                <button v-if="newVersion && !updateBusy" class="button button-primary" type="button" :disabled="confirmingUpdate" @click="confirmUpdate">{{ t('update.install') }}</button>
+                <button class="button" type="button" :disabled="updateBusy || confirmingUpdate" @click="checkForUpdates()"><RotateCw :size="14" />{{ t('update.check') }}</button>
+              </template>
+            </div>
+          </template>
+          <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed', { error: updateError }) }}</p>
+          <button v-if="updateMode === 'portable' || updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
+        </div>
         <div class="about-meta"><span>{{ t('about.author') }}</span><strong>ChenHe</strong></div>
         <div class="donation-section"><div><BellRing :size="18" /><strong>{{ t('about.support') }}</strong><span>{{ t('about.supportHint') }}</span></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>

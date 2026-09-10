@@ -12,6 +12,8 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
+mod updater;
+
 const DATA_VERSION: u32 = 3;
 const REST_ID: &str = "__rest__";
 const SHUTDOWN_ID: &str = "__shutdown__";
@@ -937,6 +939,9 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let path = data_path(app.handle()).map_err(std::io::Error::other)?;
             let mut data = load_json(&path).map_err(std::io::Error::other)?;
@@ -979,7 +984,8 @@ pub fn run() {
             execute_power_action,
             test_reminder,
             import_data,
-            export_data
+            export_data,
+            updater::get_update_mode
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
