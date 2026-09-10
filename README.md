@@ -126,17 +126,19 @@ Windows 构建结果通常在：
 
 ```text
 src-tauri/target/release/remindon.exe
-src-tauri/target/release/bundle/nsis/RemindOn_0.4.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/RemindOn_0.5.0_x64-setup.exe
 ```
 
 当前项目的便携版 ZIP 是由 release 单文件程序压缩得到的。构建完成后，可以在 PowerShell 中执行：
 
 ```powershell
-$zip = 'src-tauri/target/release/bundle/RemindOn_0.4.0_x64_portable.zip'
+$zip = 'src-tauri/target/release/bundle/RemindOn_0.5.0_x64_portable.zip'
 Compress-Archive -Path 'src-tauri/target/release/remindon.exe' -DestinationPath $zip -Force
 ```
 
 安装版负责安装和卸载入口；便携版只是解压后直接运行。两者的程序逻辑相同，配置都保存在系统应用数据目录，而不是程序所在目录。
+
+“启动后自动最小化”只决定程序启动时是否直接隐藏到托盘。无论是否启用，点击主窗口关闭按钮都会隐藏到托盘并继续提醒；需要完全结束程序时，请使用托盘菜单中的“退出”。
 
 ## 目录结构
 
@@ -386,7 +388,7 @@ Windows 编译失败且提示 linker 或 MSVC 缺失时，安装 Visual Studio B
 
 ### 重启后看起来设置丢失
 
-先确认运行的是刚构建的 `0.4`（构建元数据为 `0.4.0`），并完全退出托盘中的旧实例。安装版、便携版和开发版共享上面列出的标准配置文件；如果同时保留不同开发版本，旧程序可能用旧数据结构重写同一个文件。新版保存失败时会在页面显示原因，不会只改变界面而不提示。
+先确认运行的是刚构建的 `0.5`（构建元数据为 `0.5.0`），并完全退出托盘中的旧实例。安装版、便携版和开发版共享上面列出的标准配置文件；如果同时保留不同开发版本，旧程序可能用旧数据结构重写同一个文件。新版保存失败时会在页面显示原因，不会只改变界面而不提示。
 
 ### 想清空所有本地数据
 
