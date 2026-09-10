@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Allow the main window to update RemindOn and open its releases page",
+  "windows": ["main"],
+  "permissions": [
+    "updater:default",
+    "process:allow-restart",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://github.com/Smileher/RemindOn/releases/latest" }
+      ]
+    }
+  ]
+}
