@@ -1,17 +1,20 @@
 import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { listen } from '@tauri-apps/api/event'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 
 type UpdateMode = 'unknown' | 'installed' | 'portable' | 'development' | 'unsupported'
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'ready' | 'upToDate' | 'error'
+type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'ready' | 'downloaded' | 'upToDate' | 'error'
+type PortableDownloadProgress = { downloadedBytes: number; totalBytes: number | null; percentage: number | null }
 
 export function useUpdater() {
   const mode = ref<UpdateMode>('unknown')
   const status = ref<UpdateStatus>('idle')
   const newVersion = ref('')
   const progress = ref<number | null>(null)
+  const downloadedPath = ref('')
   const errorMessage = ref('')
   const busy = computed(() => ['checking', 'downloading', 'installing'].includes(status.value))
   let pendingUpdate: Update | null = null
@@ -25,7 +28,7 @@ export function useUpdater() {
     try {
       mode.value = await invoke<UpdateMode>('get_update_mode')
       if (disposed) return
-      if (mode.value !== 'installed') {
+      if (mode.value !== 'installed' && mode.value !== 'portable') {
         status.value = 'idle'
         return
       }
@@ -37,12 +40,43 @@ export function useUpdater() {
       const previous = pendingUpdate
       pendingUpdate = update
       newVersion.value = update?.version ?? ''
+      downloadedPath.value = ''
       status.value = update ? 'available' : 'upToDate'
       // Each successful check owns a native resource, including repeated checks of the same version.
       await previous?.close().catch(() => {})
     } catch (error) {
       status.value = silent ? (pendingUpdate ? 'available' : 'idle') : 'error'
       if (!silent) errorMessage.value = String(error)
+    }
+  }
+
+  async function downloadPortableUpdate() {
+    if (!pendingUpdate || mode.value !== 'portable' || busy.value) return
+    status.value = 'downloading'
+    progress.value = null
+    downloadedPath.value = ''
+    errorMessage.value = ''
+
+    let unlistenProgress: (() => void) | undefined
+    try {
+      unlistenProgress = await listen<PortableDownloadProgress>('portable-download-progress', (event) => {
+        progress.value = event.payload.percentage
+      })
+      if (disposed) return
+      const path = await invoke<string>('download_portable_update', {
+        expectedVersion: pendingUpdate.version,
+      })
+      if (disposed) return
+      downloadedPath.value = path
+      progress.value = 100
+      status.value = 'downloaded'
+    } catch (error) {
+      if (!disposed) {
+        status.value = 'error'
+        errorMessage.value = String(error)
+      }
+    } finally {
+      unlistenProgress?.()
     }
   }
 
@@ -96,6 +130,16 @@ export function useUpdater() {
     }
   }
 
+  async function revealDownloadedUpdate() {
+    if (!downloadedPath.value) return
+    errorMessage.value = ''
+    try {
+      await revealItemInDir(downloadedPath.value)
+    } catch (error) {
+      errorMessage.value = String(error)
+    }
+  }
+
   function dispose() {
     disposed = true
     const update = pendingUpdate
@@ -104,7 +148,8 @@ export function useUpdater() {
   }
 
   return {
-    mode, status, newVersion, progress, errorMessage, busy,
-    checkForUpdates, installUpdate, restartApp, openReleases, dispose,
+    mode, status, newVersion, progress, downloadedPath, errorMessage, busy,
+    checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
+    revealDownloadedUpdate, openReleases, dispose,
   }
 }

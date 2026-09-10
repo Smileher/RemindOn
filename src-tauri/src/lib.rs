@@ -985,7 +985,8 @@ pub fn run() {
             test_reminder,
             import_data,
             export_data,
-            updater::get_update_mode
+            updater::get_update_mode,
+            updater::download_portable_update
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
