@@ -50,10 +50,15 @@ jobs:
         run: |
           if gh release view "$TAG" --json isDraft > release-state.json 2>/dev/null; then
             node -e "if (!require('./release-state.json').isDraft) throw new Error('This version is already published; use a new version tag')"
+            release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | .id")
           else
-            gh release create "$TAG" --draft --title "RemindOn $TAG" --generate-notes
+            release_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="RemindOn $TAG" \
+              -F draft=true -F generate_release_notes=true --jq .id)
           fi
-          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | .id")" >> "$GITHUB_OUTPUT"
+          # The list endpoint can lag behind creation; use the ID from the creation response.
+          [[ "$release_id" =~ ^[0-9]+$ ]] || { echo 'Could not resolve the draft release ID.'; exit 1; }
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
