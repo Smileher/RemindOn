@@ -899,6 +899,7 @@ fn update_tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri:
 
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -928,10 +929,7 @@ fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1014,19 +1012,9 @@ pub fn run() {
             } = event
             {
                 if label == "main" {
-                    let state = app.state::<AppState>();
-                    if state
-                        .0
-                        .data
-                        .lock()
-                        .expect("配置锁被中毒")
-                        .settings
-                        .minimize_to_tray
-                    {
-                        api.prevent_close();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.hide();
-                        }
+                    api.prevent_close();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
                     }
                 } else if label == "reminder" {
                     api.prevent_close();
