@@ -93,12 +93,12 @@ const sortedReminders = computed(() =>
 )
 
 const restProgress = computed(() => {
-  if (restIsActive.value) return 100
+  if (restIsActive.value) return 0
   if (!data.value.settings.restEnabled || !nextRestTrigger.value) return 0
   const remaining = new Date(nextRestTrigger.value).getTime() - now.value
   const total = data.value.settings.restIntervalMinutes * 60 * 1000
   if (!Number.isFinite(remaining) || total <= 0) return 0
-  return Math.max(0, Math.min(100, (1 - remaining / total) * 100))
+  return Math.max(0, Math.min(100, (remaining / total) * 100))
 })
 
 const updateStatusText = computed(() => {
