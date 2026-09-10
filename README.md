@@ -2,6 +2,12 @@
 
 轻量桌面提醒工具，基于 Tauri 2、Vue 3、TypeScript 和 Rust，面向 Windows 与 Apple Silicon Mac。无需账号或服务器，数据保存在本地。
 
+## 宣传官网
+
+宣传官网：<https://smileher.github.io/RemindOn/>。支持中英文，主题默认跟随系统，也可手动切换深浅，下载信息随正式版本发布自动更新。
+
+在项目根目录运行 `node site/preview.mjs`，打开 <http://127.0.0.1:4173/RemindOn/> 进行本地预览。截图维护和部署步骤见 [官网说明](site/README.md)。
+
 ## 功能
 
 - **事件提醒**：单次、每天、每周、每月提醒。
