@@ -10,7 +10,7 @@
 - **通知方式**：系统通知或置顶软件通知，提供三种软件通知样式。
 - **个性设置**：中英文切换，深色、浅色、跟随系统主题及四种强调色。
 - **桌面集成**：托盘常驻、开机自启、本地数据导入与导出。
-- **应用更新**：安装版启动后自动检查更新，也可在“关于”页手动检查，确认后下载安装并重启；便携版提供手动下载入口。
+- **应用更新**：安装版可在应用内下载安装；便携版可将新版程序下载到系统“下载”目录。
 
 ## 开发运行
 
@@ -45,7 +45,7 @@ pnpm tauri:build --bundles nsis
 pnpm tauri:build --bundles app,dmg
 ```
 
-安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`，也可单独分发使用。macOS 构建需在对应平台验证。
+安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序 `RemindOn_0.7.0_x64_portable.exe`。macOS 构建需在对应平台验证。
 
 ## 使用说明
 
@@ -64,10 +64,11 @@ pnpm tauri:build --bundles app,dmg
 
 更新文件托管在 [GitHub Releases](https://github.com/Smileher/RemindOn/releases)，无需自建服务器。客户端读取最新正式版本的 `latest.json`，使用内置公钥校验更新包签名。检查与下载需要能够访问 GitHub；自动检查失败时保持安静，手动检查失败时会显示错误并提供下载入口。
 
-- Windows 自动更新仅支持 NSIS 安装版：当前程序目录必须与注册表中的安装目录一致，并包含卸载程序。单独复制的 `remindon.exe` 需要手动替换。
-- macOS 仅发布 Apple Silicon 版本。请先将应用复制到 `/Applications` 或 `~/Applications`；直接从 DMG 或其他位置运行时提供手动下载入口。
+- Windows NSIS 安装版可在应用内安装更新。便携版会把版本化 EXE 下载到系统“下载”目录；下载完成后可点击“打开所在位置”，退出旧程序后自行运行或替换为新版。
+- macOS 仅发布 Apple Silicon 版本。位于 `/Applications` 或 `~/Applications` 的应用副本可自动更新；从 DMG 或其他位置运行时，会把最新版 DMG 下载到系统“下载”目录。
+- 便携文件先写入 `.part` 临时文件，完成后校验 SHA-256，再改为正式文件；不会覆盖当前运行程序或同名的不同文件。
 - 开发模式不检查更新。更新只在用户确认后安装；安装和重启期间无法发送提醒，请先完成编辑或等待定时操作结束。
-- 0.5 及更早版本需要先手动安装一次含更新功能的版本。提醒数据仍保存在原应用数据目录。
+- 0.6 便携版尚未包含应用内下载能力，需要首次手动升级到 0.7；此后可直接在“关于”页下载新版。提醒数据仍保存在原应用数据目录。
 
 仓库的 Actions Secrets 需要配置 `TAURI_SIGNING_PRIVATE_KEY`（更新私钥文件的完整内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（私钥密码）。它们必须与 `src-tauri/tauri.conf.json` 中的公钥对应。私钥和密码应保存在仓库外并备份，不能提交到 Git，也不要为每次发布重新生成密钥。
 
@@ -83,9 +84,9 @@ pnpm tauri:build --bundles nsis
 发布步骤：
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
-2. 执行上述检查，提交代码并推送版本标签，例如 `v0.6.0`。
-3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon 安装包及签名，另提供 Windows 便携可执行文件。
-4. 所有构建成功后统一生成含这两个平台的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
+2. 执行上述检查，提交代码并推送版本标签，例如 `v0.7.0`。
+3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
+4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
 
 如需重跑失败的发布，可重新运行工作流，或在 Actions 中选择对应版本标签手动运行。已公开的版本不可覆盖，应递增版本号重新发布。macOS 构建使用 ad-hoc 签名，未配置 Apple Developer ID 公证；更新签名与操作系统代码签名是不同机制。
 
