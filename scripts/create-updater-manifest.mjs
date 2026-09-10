@@ -16,7 +16,13 @@ export function createUpdaterManifest(version, release, signatures) {
     if (!asset?.browser_download_url || !signature) {
       throw new Error(`Missing signed update package for ${platform}: ${name}`)
     }
-    platforms[platform] = { url: asset.browser_download_url, signature }
+    // Draft assets use an untagged URL that changes when the release is published.
+    const downloadUrl = new URL(asset.browser_download_url)
+    downloadUrl.pathname = downloadUrl.pathname.replace(
+      /\/releases\/download\/[^/]+\//,
+      `/releases/download/${encodeURIComponent(release.tag_name)}/`,
+    )
+    platforms[platform] = { url: downloadUrl.href, signature }
   }
   return {
     version,

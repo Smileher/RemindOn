@@ -26,3 +26,16 @@ test('a missing platform, missing signature or mismatched version stops publicat
   assert.throws(() => createUpdaterManifest('0.6.0', { ...release, assets: release.assets.slice(1) }, signatures), /windows-x86_64/)
   assert.throws(() => createUpdaterManifest('0.6.0', release, { ...signatures, [`${names[1]}.sig`]: '  ' }), /darwin-aarch64/)
 })
+
+test('draft asset URLs are converted to permanent version URLs before publication', () => {
+  const draft = {
+    ...release,
+    assets: release.assets.map((asset) => ({
+      ...asset,
+      browser_download_url: asset.browser_download_url.replace('/v0.6.0/', '/untagged-draft/'),
+    })),
+  }
+  const manifest = createUpdaterManifest('0.6.0', draft, signatures)
+  assert.equal(manifest.platforms['windows-x86_64'].url, release.assets[0].browser_download_url)
+  assert.equal(manifest.platforms['darwin-aarch64'].url, release.assets[1].browser_download_url)
+})
