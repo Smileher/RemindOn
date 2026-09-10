@@ -111,7 +111,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$env:TAG" src-tauri/target/x86_64-pc-windows-msvc/release/remindon.exe --clobber
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $portable = "RemindOn_$($env:VERSION)_x64_portable.exe"
+          Copy-Item -LiteralPath 'src-tauri/target/x86_64-pc-windows-msvc/release/remindon.exe' -Destination $portable
+          $hash = (Get-FileHash -LiteralPath $portable -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$portable.sha256", "$hash`n", [System.Text.Encoding]::ASCII)
+          gh release upload "$env:TAG" $portable "$portable.sha256" --clobber
+      - name: Upload macOS download checksum
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/RemindOn_${VERSION}_aarch64.dmg"
+          shasum -a 256 "$dmg" | awk '{print $1}' > "$dmg.sha256"
+          gh release upload "$TAG" "$dmg.sha256" --clobber
 
   publish:
     needs: [prepare, build]
@@ -130,6 +146,7 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release.json
           gh release download "$TAG" --pattern '*.sig' --dir signatures
-          node scripts/create-updater-manifest.mjs "$VERSION" release.json signatures latest.json
+          gh release download "$TAG" --pattern '*.sha256' --dir checksums
+          node scripts/create-updater-manifest.mjs "$VERSION" release.json signatures checksums latest.json
           gh release upload "$TAG" latest.json --clobber
           gh release edit "$TAG" --draft=false --latest

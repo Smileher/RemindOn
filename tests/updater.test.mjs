@@ -5,22 +5,47 @@ const invoke = mock.fn()
 const check = mock.fn()
 const relaunch = mock.fn()
 const openUrl = mock.fn()
+const revealItemInDir = mock.fn()
+const listen = mock.fn()
+const unlistenProgress = mock.fn()
+let progressListener
 mock.module('@tauri-apps/api/core', { namedExports: { invoke } })
+mock.module('@tauri-apps/api/event', { namedExports: { listen } })
 mock.module('@tauri-apps/plugin-updater', { namedExports: { check } })
 mock.module('@tauri-apps/plugin-process', { namedExports: { relaunch } })
-mock.module('@tauri-apps/plugin-opener', { namedExports: { openUrl } })
+mock.module('@tauri-apps/plugin-opener', { namedExports: { openUrl, revealItemInDir } })
 const { useUpdater } = await import('../src/composables/useUpdater.ts')
 
 beforeEach(() => {
-  for (const fn of [invoke, check, relaunch, openUrl]) fn.mock.resetCalls()
-  invoke.mock.mockImplementation(async () => 'installed')
+  for (const fn of [invoke, check, relaunch, openUrl, revealItemInDir, listen, unlistenProgress]) fn.mock.resetCalls()
+  progressListener = undefined
+  invoke.mock.mockImplementation(async (command) => command === 'get_update_mode' ? 'installed' : undefined)
   check.mock.mockImplementation(async () => null)
   relaunch.mock.mockImplementation(async () => {})
   openUrl.mock.mockImplementation(async () => {})
+  revealItemInDir.mock.mockImplementation(async () => {})
+  listen.mock.mockImplementation(async (_event, listener) => {
+    progressListener = listener
+    return unlistenProgress
+  })
 })
 
-test('portable and development copies never check or install updates', async () => {
-  for (const mode of ['portable', 'development', 'unsupported']) {
+test('portable copies check for updates but never run the native installer', async () => {
+  const downloadAndInstall = mock.fn()
+  invoke.mock.mockImplementation(async (command) => command === 'get_update_mode' ? 'portable' : undefined)
+  check.mock.mockImplementation(async () => ({ version: '0.7.0', close: async () => {}, downloadAndInstall }))
+  const updater = useUpdater()
+  await updater.checkForUpdates()
+  await updater.installUpdate()
+  assert.equal(updater.mode.value, 'portable')
+  assert.equal(updater.status.value, 'available')
+  assert.equal(check.mock.callCount(), 1)
+  assert.equal(downloadAndInstall.mock.callCount(), 0)
+  assert.equal(relaunch.mock.callCount(), 0)
+})
+
+test('development and unsupported copies never contact the update endpoint', async () => {
+  for (const mode of ['development', 'unsupported']) {
     invoke.mock.mockImplementation(async () => mode)
     const updater = useUpdater()
     await updater.checkForUpdates()
@@ -29,7 +54,6 @@ test('portable and development copies never check or install updates', async () 
     assert.equal(updater.status.value, 'idle')
   }
   assert.equal(check.mock.callCount(), 0)
-  assert.equal(relaunch.mock.callCount(), 0)
 })
 
 test('mode detection failures cannot enable native updates', async () => {
@@ -141,6 +165,53 @@ test('unknown download lengths stay indeterminate and restart failure is retryab
   assert.equal(downloadAndInstall.mock.callCount(), 1)
   await updater.restartApp()
   assert.equal(relaunch.mock.callCount(), 2)
+})
+
+test('portable downloads report progress, never restart and reveal the completed file', async () => {
+  const downloadAndInstall = mock.fn()
+  const downloadedPath = 'C:\\Users\\Test\\Downloads\\RemindOn_0.7.0_x64_portable.exe'
+  invoke.mock.mockImplementation(async (command, args) => {
+    if (command === 'get_update_mode') return 'portable'
+    if (command === 'download_portable_update') {
+      assert.deepEqual(args, { expectedVersion: '0.7.0' })
+      progressListener({ payload: { downloadedBytes: 40, totalBytes: 100, percentage: 40 } })
+      return downloadedPath
+    }
+  })
+  check.mock.mockImplementation(async () => ({ version: '0.7.0', close: async () => {}, downloadAndInstall }))
+  const updater = useUpdater()
+  await updater.checkForUpdates()
+  await updater.downloadPortableUpdate()
+  assert.equal(updater.status.value, 'downloaded')
+  assert.equal(updater.progress.value, 100)
+  assert.equal(updater.downloadedPath.value, downloadedPath)
+  assert.equal(downloadAndInstall.mock.callCount(), 0)
+  assert.equal(relaunch.mock.callCount(), 0)
+  assert.equal(unlistenProgress.mock.callCount(), 1)
+
+  await updater.revealDownloadedUpdate()
+  assert.deepEqual(revealItemInDir.mock.calls[0].arguments, [downloadedPath])
+})
+
+test('failed portable downloads can be retried and always remove the progress listener', async () => {
+  let attempts = 0
+  invoke.mock.mockImplementation(async (command) => {
+    if (command === 'get_update_mode') return 'portable'
+    if (command === 'download_portable_update') {
+      attempts += 1
+      if (attempts === 1) throw new Error('checksum mismatch')
+      return 'C:\\Users\\Test\\Downloads\\RemindOn_0.7.0_x64_portable.exe'
+    }
+  })
+  check.mock.mockImplementation(async () => ({ version: '0.7.0', close: async () => {} }))
+  const updater = useUpdater()
+  await updater.checkForUpdates()
+  await updater.downloadPortableUpdate()
+  assert.equal(updater.status.value, 'error')
+  assert.match(updater.errorMessage.value, /checksum mismatch/)
+  await updater.downloadPortableUpdate()
+  assert.equal(updater.status.value, 'downloaded')
+  assert.equal(unlistenProgress.mock.callCount(), 2)
 })
 
 test('manual downloads open only the project release page and expose open errors', async () => {
