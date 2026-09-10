@@ -1,6 +1,6 @@
 # RemindOn
 
-轻量桌面提醒工具，基于 Tauri 2、Vue 3、TypeScript 和 Rust，面向 Windows 与 macOS。无需账号或服务器，数据保存在本地。
+轻量桌面提醒工具，基于 Tauri 2、Vue 3、TypeScript 和 Rust，面向 Windows 与 Apple Silicon Mac。无需账号或服务器，数据保存在本地。
 
 ## 功能
 
@@ -41,7 +41,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 # Windows：构建 NSIS 安装包
 pnpm tauri:build --bundles nsis
 
-# macOS：在 macOS 主机上构建 DMG
+# macOS：在 Apple Silicon Mac 上构建 DMG
 pnpm tauri:build --bundles app,dmg
 ```
 
@@ -65,7 +65,7 @@ pnpm tauri:build --bundles app,dmg
 更新文件托管在 [GitHub Releases](https://github.com/Smileher/RemindOn/releases)，无需自建服务器。客户端读取最新正式版本的 `latest.json`，使用内置公钥校验更新包签名。检查与下载需要能够访问 GitHub；自动检查失败时保持安静，手动检查失败时会显示错误并提供下载入口。
 
 - Windows 自动更新仅支持 NSIS 安装版：当前程序目录必须与注册表中的安装目录一致，并包含卸载程序。单独复制的 `remindon.exe` 需要手动替换。
-- macOS 支持 Intel 和 Apple Silicon。请先将应用复制到 `/Applications` 或 `~/Applications`；直接从 DMG 或其他位置运行时提供手动下载入口。
+- macOS 仅发布 Apple Silicon 版本。请先将应用复制到 `/Applications` 或 `~/Applications`；直接从 DMG 或其他位置运行时提供手动下载入口。
 - 开发模式不检查更新。更新只在用户确认后安装；安装和重启期间无法发送提醒，请先完成编辑或等待定时操作结束。
 - 0.5 及更早版本需要先手动安装一次含更新功能的版本。提醒数据仍保存在原应用数据目录。
 
@@ -84,8 +84,8 @@ pnpm tauri:build --bundles nsis
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
 2. 执行上述检查，提交代码并推送版本标签，例如 `v0.6.0`。
-3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon、macOS Intel 安装包及签名，另提供 Windows 便携可执行文件。
-4. 所有构建成功后统一生成含三个平台的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
+3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon 安装包及签名，另提供 Windows 便携可执行文件。
+4. 所有构建成功后统一生成含这两个平台的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
 
 如需重跑失败的发布，可重新运行工作流，或在 Actions 中选择对应版本标签手动运行。已公开的版本不可覆盖，应递增版本号重新发布。macOS 构建使用 ad-hoc 签名，未配置 Apple Developer ID 公证；更新签名与操作系统代码签名是不同机制。
 

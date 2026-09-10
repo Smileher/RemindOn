@@ -8,7 +8,6 @@ export function createUpdaterManifest(version, release, signatures) {
   const packages = {
     'windows-x86_64': `RemindOn_${version}_x64-setup.exe`,
     'darwin-aarch64': 'RemindOn_aarch64.app.tar.gz',
-    'darwin-x86_64': 'RemindOn_x64.app.tar.gz',
   }
   const platforms = {}
   for (const [platform, name] of Object.entries(packages)) {
