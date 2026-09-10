@@ -34,7 +34,7 @@ const restIsActive = ref(false)
 const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
-const appVersion = ref('0.5')
+const appVersion = ref('0.6')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
