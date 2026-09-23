@@ -260,6 +260,16 @@ async function toggleReminder(reminder: Reminder) {
 }
 
 async function removeReminder(id: string) {
+  const reminder = data.value.reminders.find((item) => item.id === id)
+  if (!reminder) return
+  const confirmed = await ask(t('events.deleteConfirm', { title: reminder.title }), {
+    title: t('events.deleteConfirmTitle'),
+    kind: 'warning',
+    okLabel: t('events.delete'),
+    cancelLabel: t('common.cancel'),
+  })
+  if (!confirmed) return
+
   const previous = data.value.reminders
   data.value.reminders = data.value.reminders.filter((item) => item.id !== id)
   try {
