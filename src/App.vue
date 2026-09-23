@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
@@ -26,7 +27,7 @@ type AutomaticPowerAction = Extract<PowerAction, 'shutdown' | 'lock' | 'restart'
 
 const isPopup = window.location.hash === '#/reminder'
 const data = ref<AppData>(defaultData())
-const currentView = ref<View>('events')
+const currentView = ref<View>('rest')
 const showForm = ref(false)
 const editingId = ref<string | null>(null)
 const actionMessage = ref('')
@@ -49,6 +50,7 @@ const confirmingUpdate = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
+let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
 
@@ -547,6 +549,9 @@ onMounted(async () => {
       // Keep the saved value when the platform autostart API is unavailable.
     }
     await refreshTimers()
+    unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
+      void refreshTimers()
+    })
     unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async (event) => {
       data.value = await invoke<AppData>('load_data')
       if (event.payload.isRest && !event.payload.isTest) {
@@ -577,6 +582,7 @@ onUnmounted(() => {
   unlisten?.()
   unlistenNavigation?.()
   unlistenRestTimer?.()
+  unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
 })
 </script>

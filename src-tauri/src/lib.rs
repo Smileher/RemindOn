@@ -461,6 +461,7 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
     if event.is_rest && !event.is_test && settings.notification_mode == NotificationMode::Popup {
         state.0.rest_active.store(true, Ordering::SeqCst);
         *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        let _ = app.emit_to("main", "rest-timer-updated", ());
     }
 
     if settings.notification_mode == NotificationMode::System && !requires_popup {
