@@ -180,12 +180,11 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .status-message { color: var(--accent-strong); font-size: var(--font-xs); }
 .data-actions .status-message { max-width: 180px; }
 .page-message { display: block; margin-top: 8px; }
+.setting-error { color: var(--danger) !important; font-size: var(--font-xs); line-height: 1.4; overflow-wrap: anywhere; }
 .number-field { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--font-xs); }
 .number-field input { width: 72px; }
 .stacked-setting { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
 .stacked-setting input { margin-top: 4px; }
-.notification-permission-card .button { min-height: 30px; }
-
 .status-panel { margin-bottom: 8px; padding: 13px 14px; }
 .status-panel-top { display: flex; align-items: center; gap: 10px; }
 .status-panel-top > div { display: grid; flex: 1; gap: 2px; }
