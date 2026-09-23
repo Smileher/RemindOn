@@ -69,6 +69,10 @@ const zh = {
   'status.exported': '数据已导出',
   'status.exportFailed': '数据导出失败，请重试。',
   'status.testFailed': '测试通知失败，请检查通知权限或通知方式。',
+  'status.notificationPermissionGranted': '系统通知权限已开启。',
+  'status.notificationPermissionDenied': '系统通知权限未开启，请在系统设置中允许通知。',
+  'status.notificationPermissionRequired': '请先开启系统通知权限。',
+  'status.notificationPermissionFailed': '无法请求系统通知权限，请在系统设置中允许通知。',
   'rest.title': '休息提醒',
   'rest.subtitle': '按固定间隔提醒你离开屏幕片刻。',
   'rest.next': '下次休息',
@@ -111,6 +115,11 @@ const zh = {
   'settings.notificationModeHint': '系统通知仅显示简洁提示；软件通知支持完成和稍后提醒。',
   'settings.systemNotification': '系统通知',
   'settings.softwareNotification': '软件通知',
+  'settings.notificationPermission': '系统通知权限',
+  'settings.notificationPermissionGranted': '通知权限已开启。',
+  'settings.notificationPermissionRequired': '通知权限未开启。',
+  'settings.notificationPermissionCheck': '重新检查',
+  'settings.notificationPermissionRequest': '开启通知',
   'settings.testNotification': '测试通知',
   'settings.notificationStyle': '通知样式',
   'settings.notificationStyleHint': '选择软件通知的视觉强度。',
@@ -178,6 +187,8 @@ const zh = {
   'popup.testPowerConfirm': '当前是测试模式，是否立即{action}？',
   'popup.confirmExecute': '确认执行',
   'popup.actionFailed': '无法{action}，请检查系统权限和定时操作设置。',
+  'popup.openPowerSettings': '打开定时操作设置',
+  'popup.settingsOpenFailed': '无法打开定时操作设置，请关闭此通知后手动打开。',
 } as const
 
 export type MessageKey = keyof typeof zh
@@ -251,6 +262,10 @@ const en: Record<MessageKey, string> = {
   'status.exported': 'Data exported',
   'status.exportFailed': 'Export failed. Try again.',
   'status.testFailed': 'Test notification failed. Check notification permissions or the notification method.',
+  'status.notificationPermissionGranted': 'System notification permission is enabled.',
+  'status.notificationPermissionDenied': 'System notification permission is not enabled. Allow notifications in system settings.',
+  'status.notificationPermissionRequired': 'Allow system notifications first.',
+  'status.notificationPermissionFailed': 'Could not request system notification permission. Allow notifications in system settings.',
   'rest.title': 'Break reminders',
   'rest.subtitle': 'Step away from the screen at a regular interval.',
   'rest.next': 'Next break',
@@ -293,6 +308,11 @@ const en: Record<MessageKey, string> = {
   'settings.notificationModeHint': 'System notifications are brief; software notifications support done and snooze actions.',
   'settings.systemNotification': 'System',
   'settings.softwareNotification': 'Software',
+  'settings.notificationPermission': 'System notification permission',
+  'settings.notificationPermissionGranted': 'Notification permission is enabled.',
+  'settings.notificationPermissionRequired': 'Notification permission is not enabled.',
+  'settings.notificationPermissionCheck': 'Check again',
+  'settings.notificationPermissionRequest': 'Allow notifications',
   'settings.testNotification': 'Test',
   'settings.notificationStyle': 'Notification style',
   'settings.notificationStyleHint': 'Choose the visual strength of software notifications.',
@@ -360,6 +380,8 @@ const en: Record<MessageKey, string> = {
   'popup.testPowerConfirm': 'This is a test. Do you want to {action} now?',
   'popup.confirmExecute': 'Continue',
   'popup.actionFailed': 'Could not {action}. Check system permissions and scheduled action settings.',
+  'popup.openPowerSettings': 'Open scheduled action settings',
+  'popup.settingsOpenFailed': 'Could not open scheduled action settings. Close this notification and open it manually.',
 }
 
 const messages: Record<Language, Record<MessageKey, string>> = {

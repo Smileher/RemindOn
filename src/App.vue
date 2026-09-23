@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import {
   BellRing, CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
@@ -35,6 +36,8 @@ const restIsActive = ref(false)
 const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
+const notificationPermission = ref<boolean | null>(null)
+const notificationPermissionBusy = ref(false)
 const appVersion = ref('0.7')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
@@ -300,6 +303,7 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   try {
     await persist()
     await refreshTimers()
+    if (key === 'notificationMode') await refreshNotificationPermission()
     return true
   } catch (error) {
     data.value.settings = previous
@@ -425,9 +429,46 @@ async function exportData() {
   }
 }
 
+async function refreshNotificationPermission() {
+  if (data.value.settings.notificationMode !== 'system') {
+    notificationPermission.value = null
+    return
+  }
+  try {
+    notificationPermission.value = await isPermissionGranted()
+  } catch (error) {
+    logError('check notification permission', error)
+    notificationPermission.value = null
+  }
+}
+
+async function requestNotificationPermission() {
+  if (notificationPermissionBusy.value) return
+  notificationPermissionBusy.value = true
+  actionMessage.value = ''
+  try {
+    notificationPermission.value = (await requestPermission()) === 'granted'
+    actionMessage.value = notificationPermission.value
+      ? t('status.notificationPermissionGranted')
+      : t('status.notificationPermissionDenied')
+  } catch (error) {
+    logError('request notification permission', error)
+    actionMessage.value = t('status.notificationPermissionFailed')
+  } finally {
+    notificationPermissionBusy.value = false
+  }
+}
+
 async function testNotification(kind: TestReminderKind) {
   actionMessage.value = ''
   try {
+    if (data.value.settings.notificationMode === 'system') {
+      await refreshNotificationPermission()
+      if (notificationPermission.value === false) {
+        actionMessage.value = t('status.notificationPermissionRequired')
+        return
+      }
+    }
     await persist()
     await invoke('test_reminder', { kind })
   } catch (error) {
@@ -494,6 +535,7 @@ onMounted(async () => {
     restMessageDraft.value = data.value.settings.restMessage
     shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
     await applyNativeTheme(data.value.settings.theme)
+    await refreshNotificationPermission()
     try {
       appVersion.value = (await getVersion()).replace(/\.0$/, '')
     } catch {
@@ -623,6 +665,7 @@ onUnmounted(() => {
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.startHidden') }}</strong><span>{{ t('settings.startHiddenHint') }}</span></div><input :checked="data.settings.minimizeToTray" type="checkbox" @change="updateSetting('minimizeToTray', ($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div><input :checked="data.settings.popupAlwaysOnTop" type="checkbox" @change="updateSetting('popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" /></label>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationMode') }}</strong><span>{{ t('settings.notificationModeHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationMode === 'system' }" type="button" @click="updateSetting('notificationMode', 'system')">{{ t('settings.systemNotification') }}</button><button :class="{ selected: data.settings.notificationMode === 'popup' }" type="button" @click="updateSetting('notificationMode', 'popup')">{{ t('settings.softwareNotification') }}</button></div></div>
+          <div v-if="data.settings.notificationMode === 'system' && notificationPermission !== null" class="setting-card notification-permission-card"><div><strong>{{ t('settings.notificationPermission') }}</strong><span>{{ notificationPermission ? t('settings.notificationPermissionGranted') : t('settings.notificationPermissionRequired') }}</span></div><button class="button" type="button" :disabled="notificationPermissionBusy" @click="requestNotificationPermission"><BellRing :size="14" />{{ notificationPermission ? t('settings.notificationPermissionCheck') : t('settings.notificationPermissionRequest') }}</button></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationStyle') }}</strong><span>{{ t('settings.notificationStyleHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationStyle === 'compact' }" type="button" @click="updateSetting('notificationStyle', 'compact')">{{ t('settings.compact') }}</button><button :class="{ selected: data.settings.notificationStyle === 'standard' }" type="button" @click="updateSetting('notificationStyle', 'standard')">{{ t('settings.standard') }}</button><button :class="{ selected: data.settings.notificationStyle === 'prominent' }" type="button" @click="updateSetting('notificationStyle', 'prominent')">{{ t('settings.prominent') }}</button></div></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.theme === 'dark' }" type="button" @click="updateSetting('theme', 'dark')">{{ t('settings.dark') }}</button><button :class="{ selected: data.settings.theme === 'light' }" type="button" @click="updateSetting('theme', 'light')">{{ t('settings.light') }}</button><button :class="{ selected: data.settings.theme === 'system' }" type="button" @click="updateSetting('theme', 'system')">{{ t('settings.system') }}</button></div></div>
           <div class="setting-card color-setting"><div><strong>{{ t('settings.accent') }}</strong><span>{{ t('settings.accentHint') }}</span></div><div class="color-options"><button v-for="color in accentColors" :key="color" :class="['color-swatch', `swatch-${color}`, { selected: data.settings.accentColor === color }]" type="button" :aria-label="color" @click="updateSetting('accentColor', color)"></button></div></div>
@@ -643,7 +686,7 @@ onUnmounted(() => {
             <button v-else-if="updateStatus === 'downloaded'" class="button button-primary" type="button" @click="revealDownloadedUpdate"><FolderOpen :size="14" />{{ t('update.reveal') }}</button>
             <button v-else-if="newVersion && !updateBusy" class="button button-primary" type="button" :disabled="confirmingUpdate" @click="startUpdate"><Download v-if="updateMode === 'portable'" :size="14" />{{ updateMode === 'portable' ? t('update.downloadNew') : t('update.install') }}</button>
             <button class="button" type="button" :disabled="updateBusy || confirmingUpdate || updateStatus === 'ready' || updateMode === 'development' || updateMode === 'unsupported'" @click="checkForUpdates()"><RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}</button>
-            <button v-if="updateMode === 'unsupported' || updateError" class="icon-button" type="button" :aria-label="t('update.download')" :title="t('update.download')" @click="openReleases"><Download :size="16" /></button>
+            <button v-if="updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
           </div>
           <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>

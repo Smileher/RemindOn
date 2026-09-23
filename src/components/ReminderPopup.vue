@@ -5,7 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { confirm } from '@tauri-apps/plugin-dialog'
-import { Check, ChevronDown, Clock3 } from '@lucide/vue'
+import { Check, ChevronDown, Clock3, Settings2 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
@@ -150,6 +150,16 @@ async function executePowerAction() {
   }
 }
 
+async function openPowerSettings() {
+  try {
+    await invoke('open_power_settings')
+    await closePopup()
+  } catch (error) {
+    logError('open power settings', error)
+    powerError.value = t('popup.settingsOpenFailed')
+  }
+}
+
 function startPowerCountdown() {
   clearPowerTimer()
   powerCountdown.value = 60
@@ -244,6 +254,7 @@ onUnmounted(() => {
       <h1>{{ current?.title || t('popup.defaultTitle') }}</h1>
       <div v-if="isAutomaticPower" class="power-countdown"><strong>{{ powerCountdown }}</strong><span>{{ t('popup.secondsUntil', { action: powerVerb }) }}</span></div>
       <p v-if="powerError" class="popup-error">{{ powerError }}</p>
+      <button v-if="powerError" class="button popup-settings-button" type="button" @click="openPowerSettings"><Settings2 :size="14" />{{ t('popup.openPowerSettings') }}</button>
     </section>
     <footer :class="['popup-actions', { 'split-actions': !isAutomaticPower }]">
       <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button><button class="button button-danger" type="button" @click="executePowerAction">{{ t('popup.executeNow', { action: powerVerb }) }}</button></template>

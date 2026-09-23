@@ -921,6 +921,13 @@ fn show_about(app: &AppHandle) {
     let _ = app.emit_to("main", "navigate-to", "about");
 }
 
+#[tauri::command]
+fn open_power_settings(app: AppHandle) -> Result<(), String> {
+    show_main_window(&app);
+    app.emit_to("main", "navigate-to", "power")
+        .map_err(|error| format!("无法打开定时操作设置：{error}"))
+}
+
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
     let menu = tray_menu(app.handle(), language, false)?;
     TrayIconBuilder::with_id(TRAY_ID)
@@ -994,6 +1001,7 @@ pub fn run() {
             test_reminder,
             import_data,
             export_data,
+            open_power_settings,
             updater::get_update_mode,
             updater::download_portable_update
         ])
