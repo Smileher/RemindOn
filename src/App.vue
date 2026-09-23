@@ -46,6 +46,7 @@ let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let clockTimer: number | undefined
+let timerRefreshToken = 0
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(data.value.settings.language, key, params)
@@ -415,14 +416,22 @@ async function testNotification(kind: TestReminderKind) {
 
 async function refreshTimers() {
   if (isPopup) return
+  const refreshToken = ++timerRefreshToken
   const [rest, shutdown] = await Promise.allSettled([
     invoke<RestTimerStatus>('get_rest_timer_status'),
     invoke<string | null>('get_next_shutdown_trigger'),
   ])
+  if (refreshToken !== timerRefreshToken) return
   nextRestTrigger.value = rest.status === 'fulfilled' ? rest.value.nextTriggerAt : null
   restIsActive.value = rest.status === 'fulfilled' && rest.value.isResting
   nextShutdownTrigger.value = shutdown.status === 'fulfilled' ? shutdown.value : null
   now.value = Date.now()
+}
+
+function showRestingState() {
+  timerRefreshToken += 1
+  restIsActive.value = true
+  nextRestTrigger.value = null
 }
 
 async function confirmUpdate() {
@@ -474,15 +483,19 @@ onMounted(async () => {
     }
     await refreshTimers()
     unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async (event) => {
-      const isActiveRestPopup = event.payload.isRest
-        && !event.payload.isTest
-        && data.value.settings.notificationMode === 'popup'
-      if (isActiveRestPopup) {
-        restIsActive.value = true
-        nextRestTrigger.value = null
-      }
       data.value = await invoke<AppData>('load_data')
-      if (!isActiveRestPopup) await refreshTimers()
+      if (event.payload.isRest && !event.payload.isTest) {
+        try {
+          const status = await invoke<RestTimerStatus>('get_rest_timer_status')
+          if (status.isResting) {
+            showRestingState()
+            return
+          }
+        } catch {
+          // Fall through to the regular refresh when the backend is unavailable.
+        }
+      }
+      await refreshTimers()
     })
     unlistenRestTimer = await listen('rest-timer-updated', () => void refreshTimers())
     clockTimer = window.setInterval(() => {
@@ -511,8 +524,8 @@ onUnmounted(() => {
         <div class="brand-copy"><strong>RemindOn</strong><span>{{ t('app.tagline') }}</span></div>
       </div>
       <nav class="nav-list" aria-label="Navigation">
-        <button :class="['nav-item', { active: currentView === 'events' }]" @click="currentView = 'events'"><CalendarClock :size="17" /><span>{{ t('nav.events') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'rest' }]" @click="currentView = 'rest'"><Coffee :size="17" /><span>{{ t('nav.rest') }}</span></button>
+        <button :class="['nav-item', { active: currentView === 'events' }]" @click="currentView = 'events'"><CalendarClock :size="17" /><span>{{ t('nav.events') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'power' }]" @click="currentView = 'power'"><Power :size="17" /><span>{{ t('nav.power') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'settings' }]" @click="currentView = 'settings'"><Settings2 :size="17" /><span>{{ t('nav.settings') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span><span v-if="newVersion && updateStatus !== 'ready'" class="update-dot" :aria-label="t('update.available', { version: newVersion })"></span></button>
