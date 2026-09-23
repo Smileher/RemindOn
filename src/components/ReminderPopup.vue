@@ -9,6 +9,7 @@ import { Check, ChevronDown, Clock3 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
+import { logError } from '../error'
 import type { AppData, AppSettings, ReminderTriggeredEvent } from '../types'
 import { defaultData } from '../types'
 
@@ -144,7 +145,8 @@ async function executePowerAction() {
     await invoke('execute_power_action', { action })
     await closePopup()
   } catch (error) {
-    powerError.value = t('popup.actionFailed', { action: powerVerb.value, error: String(error) })
+    logError('execute power action', error)
+    powerError.value = t('popup.actionFailed', { action: powerVerb.value })
   }
 }
 

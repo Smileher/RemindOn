@@ -62,7 +62,7 @@ test('mode detection failures cannot enable native updates', async () => {
   await updater.checkForUpdates()
   assert.equal(check.mock.callCount(), 0)
   assert.equal(updater.status.value, 'error')
-  assert.match(updater.errorMessage.value, /mode unavailable/)
+  assert.equal(updater.errorMessage.value, 'update-failed')
 })
 
 test('concurrent checks are ignored, including during mode detection', async () => {
@@ -86,7 +86,7 @@ test('automatic failures are quiet; manual failures show errors and can retry', 
   assert.equal(updater.errorMessage.value, '')
   await updater.checkForUpdates()
   assert.equal(updater.status.value, 'error')
-  assert.match(updater.errorMessage.value, /offline/)
+  assert.equal(updater.errorMessage.value, 'update-failed')
   check.mock.mockImplementation(async () => null)
   await updater.checkForUpdates()
   assert.equal(updater.status.value, 'upToDate')
@@ -208,7 +208,7 @@ test('failed portable downloads can be retried and always remove the progress li
   await updater.checkForUpdates()
   await updater.downloadPortableUpdate()
   assert.equal(updater.status.value, 'error')
-  assert.match(updater.errorMessage.value, /checksum mismatch/)
+  assert.equal(updater.errorMessage.value, 'update-failed')
   await updater.downloadPortableUpdate()
   assert.equal(updater.status.value, 'downloaded')
   assert.equal(unlistenProgress.mock.callCount(), 2)
@@ -220,5 +220,5 @@ test('manual downloads open only the project release page and expose open errors
   assert.deepEqual(openUrl.mock.calls[0].arguments, ['https://github.com/Smileher/RemindOn/releases/latest'])
   openUrl.mock.mockImplementation(async () => { throw new Error('browser unavailable') })
   await updater.openReleases()
-  assert.match(updater.errorMessage.value, /browser unavailable/)
+  assert.equal(updater.errorMessage.value, 'update-failed')
 })
