@@ -16,7 +16,19 @@ import { defaultData } from '../types'
 const current = ref<ReminderTriggeredEvent | null>(null)
 const settings = ref<AppData['settings']>(defaultData().settings)
 const triggeredAt = ref<Date | null>(null)
-const snoozeSeconds = ref(300)
+const snoozeStorageKey = 'remindon.popup.snoozeSeconds'
+const snoozeValues = [30, 60, 300, 600, 1800, 3600, 7200, 10800, 14400]
+
+function readStoredSnoozeSeconds() {
+  try {
+    const value = Number(localStorage.getItem(snoozeStorageKey))
+    return snoozeValues.includes(value) ? value : 300
+  } catch {
+    return 300
+  }
+}
+
+const snoozeSeconds = ref(readStoredSnoozeSeconds())
 const snoozeMenu = ref<HTMLDetailsElement | null>(null)
 const restElapsedSeconds = ref(0)
 const powerCountdown = ref(60)
@@ -84,6 +96,7 @@ const restElapsed = computed(() => t('popup.rested', {
 }))
 
 async function closePopup() {
+  snoozeMenu.value?.removeAttribute('open')
   await getCurrentWindow().hide()
 }
 
@@ -108,7 +121,19 @@ function startRestTimer() {
 
 function selectSnooze(seconds: number) {
   snoozeSeconds.value = seconds
+  try {
+    localStorage.setItem(snoozeStorageKey, String(seconds))
+  } catch {
+    // Remembering the selection is best effort when local storage is unavailable.
+  }
   snoozeMenu.value?.removeAttribute('open')
+}
+
+function closeSnoozeMenuOnOutsideClick(event: MouseEvent) {
+  const menu = snoozeMenu.value
+  if (menu?.open && event.target instanceof Node && !menu.contains(event.target)) {
+    menu.removeAttribute('open')
+  }
 }
 
 async function dismiss() {
@@ -178,7 +203,7 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   clearPowerTimer()
   clearRestTimer()
   current.value = event
-  snoozeSeconds.value = 300
+  snoozeSeconds.value = readStoredSnoozeSeconds()
   restElapsedSeconds.value = 0
   powerError.value = ''
   try {
@@ -202,6 +227,7 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
 }
 
 onMounted(async () => {
+  document.addEventListener('click', closeSnoozeMenuOnOutsideClick)
   try {
     settings.value = (await invoke<AppData>('load_data')).settings
   } catch {
@@ -236,6 +262,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', closeSnoozeMenuOnOutsideClick)
   clearPowerTimer()
   clearRestTimer()
   unlisten?.()
@@ -268,7 +295,7 @@ onUnmounted(() => {
           </details>
           <button class="button" type="button" @click="snooze(snoozeSeconds)">{{ t('popup.snooze') }}</button>
         </div>
-        <button v-if="current?.isRest" class="button button-primary" type="button" @click="snooze(60)">{{ t('popup.remindInOneMinute') }}</button>
+        <button v-if="current?.isRest" class="button button-primary" type="button" @click="snooze(settings.restIntervalMinutes * 60)">{{ t('popup.remindInInterval', { minutes: settings.restIntervalMinutes }) }}</button>
         <button v-else class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.done') }}</button>
       </template>
     </footer>
