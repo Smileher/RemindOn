@@ -43,6 +43,12 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   let mounted
   let focused
   let readStatus = async () => status
+  function emitTo(target, name, payload) {
+    const listener = listeners.get(name)
+    if (listener && (listener.target === null || listener.target === target)) {
+      return listener.callback({ payload })
+    }
+  }
   const modules = {
     vue: { ...vue, onMounted: (callback) => { mounted = callback }, onUnmounted: noop },
     '@tauri-apps/api/app': { getVersion: async () => '0.8.0', setTheme: async () => {} },
@@ -59,10 +65,13 @@ async function mountApp({ enabled = true, status = resting } = {}) {
       },
     },
     '@tauri-apps/api/event': {
-      listen: async (name, callback) => { listeners.set(name, callback); return noop },
+      listen: async (name, callback) => { listeners.set(name, { target: null, callback }); return noop },
     },
     '@tauri-apps/api/window': {
-      getCurrentWindow: () => ({ onFocusChanged: async (callback) => { focused = callback; return noop } }),
+      getCurrentWindow: () => ({
+        onFocusChanged: async (callback) => { focused = callback; return noop },
+        listen: async (name, callback) => { listeners.set(name, { target: 'main', callback }); return noop },
+      }),
     },
     '@tauri-apps/plugin-dialog': { ask: noop, open: noop, save: noop },
     '@tauri-apps/plugin-autostart': { disable: noop, enable: noop, isEnabled: async () => false },
@@ -102,7 +111,8 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   return {
     state, calls,
     setReadStatus: (callback) => { readStatus = callback },
-    emit: (name, payload) => listeners.get(name)({ payload }),
+    emit: (name, payload) => emitTo('main', name, payload),
+    emitTo,
     focus: (isFocused) => focused({ payload: isFocused }),
     render: () => renderToString(vue.createSSRApp({
       setup: () => state, render, components: { BellRing: { render: noop } },
@@ -192,4 +202,22 @@ test('a trigger follows backend countdown state for system notifications', async
   await app.emit('reminder-triggered', { id: '__rest__', isRest: true, isTest: false })
   assert.equal(app.state.restIsActive.value, false)
   assert.equal(app.state.nextRestTrigger.value, nextTriggerAt)
+})
+
+test('the main window ignores popup-targeted events and handles each scheduled reminder once', async () => {
+  const nextTriggerAt = new Date(Date.now() + 60 * 1000).toISOString()
+  const app = await mountApp({ status: { isResting: false, nextTriggerAt } })
+  const callCount = app.calls.length
+  const event = { id: '__rest__', isRest: true, isTest: false }
+  app.setReadStatus(async () => resting)
+  await app.emitTo('reminder', 'reminder-triggered', event)
+  await app.emitTo('reminder', 'rest-timer-updated', resting)
+  assert.equal(app.calls.length, callCount)
+  assert.equal(app.state.restIsActive.value, false)
+  assert.equal(app.state.nextRestTrigger.value, nextTriggerAt)
+
+  await app.emitTo('main', 'reminder-triggered', event)
+  assert.equal(app.calls.slice(callCount).filter((command) => command === 'load_data').length, 1)
+  assert.equal(app.state.restIsActive.value, true)
+  assert.equal(app.state.nextRestTrigger.value, null)
 })

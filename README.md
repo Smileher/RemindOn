@@ -65,7 +65,7 @@ pnpm tauri:build --bundles app,dmg
 - Windows：`%APPDATA%\com.remindon.app\remindon.json`
 - macOS：`~/Library/Application Support/com.remindon.app/remindon.json`
 
-可在应用内导入、导出数据。读取到损坏或不兼容的数据文件时，程序会先备份原文件，再生成默认配置。
+可在应用内导入、导出数据。导入成功后会关闭当前提醒弹窗、取消其计时和待执行操作，并清除暂停及稍后提醒状态，按导入配置重新计时。读取到损坏或不兼容的数据文件时，程序会先备份原文件，再生成默认配置。
 
 ## 发布更新
 

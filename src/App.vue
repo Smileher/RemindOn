@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -511,7 +510,7 @@ onMounted(async () => {
   if (isPopup) return
   void checkForUpdates(true)
   try {
-    unlistenNavigation = await listen<View>('navigate-to', (event) => {
+    unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
     })
     data.value = await invoke<AppData>('load_data')
@@ -531,7 +530,7 @@ onMounted(async () => {
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
       void refreshTimers()
     })
-    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
+    unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       try {
         data.value = await invoke<AppData>('load_data')
       } catch {
@@ -539,10 +538,10 @@ onMounted(async () => {
       }
       await refreshTimers()
     })
-    unlistenRestTimer = await listen<RestTimerStatus>('rest-timer-updated', (event) => {
+    unlistenRestTimer = await getCurrentWindow().listen<RestTimerStatus>('rest-timer-updated', (event) => {
       applyRestTimerStatus(event.payload)
     })
-    unlistenNotificationFailure = await listen<string>('notification-failed', (event) => {
+    unlistenNotificationFailure = await getCurrentWindow().listen<string>('notification-failed', (event) => {
       const message = t('status.notificationFailed', { error: event.payload })
       notificationError.value = message
       actionMessage.value = message
