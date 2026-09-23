@@ -9,18 +9,19 @@ import { Check, ChevronDown, Clock3 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { AppData, ReminderTriggeredEvent } from '../types'
+import type { AppData, AppSettings, ReminderTriggeredEvent } from '../types'
 import { defaultData } from '../types'
 
 const current = ref<ReminderTriggeredEvent | null>(null)
 const settings = ref<AppData['settings']>(defaultData().settings)
-const triggeredAt = ref('')
+const triggeredAt = ref<Date | null>(null)
 const snoozeSeconds = ref(300)
 const snoozeMenu = ref<HTMLDetailsElement | null>(null)
 const restElapsedSeconds = ref(0)
 const powerCountdown = ref(60)
 const powerError = ref('')
 let unlisten: (() => void) | undefined
+let unlistenSettings: (() => void) | undefined
 let unlistenClose: (() => void) | undefined
 let restTimer: number | undefined
 let powerTimer: number | undefined
@@ -36,6 +37,10 @@ const popupClass = computed(() => [
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(settings.value.language, key, params)
 }
+
+const triggeredAtLabel = computed(() => triggeredAt.value
+  ? new Intl.DateTimeFormat(settings.value.language, { hour: '2-digit', minute: '2-digit' }).format(triggeredAt.value)
+  : '')
 
 const category = computed(() => {
   if (current.value?.isRest) return t('popup.rest')
@@ -169,7 +174,7 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   } catch {
     // Keep the last known settings if the backend is unavailable for a moment.
   }
-  triggeredAt.value = new Intl.DateTimeFormat(settings.value.language, { hour: '2-digit', minute: '2-digit' }).format(new Date())
+  triggeredAt.value = new Date()
   try {
     await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
   } catch {
@@ -195,6 +200,23 @@ onMounted(async () => {
   } catch {
     // The standalone Vite preview has no Tauri event bridge.
   }
+  try {
+    unlistenSettings = await listen<AppSettings>('settings-updated', async (event) => {
+      settings.value = event.payload
+      try {
+        await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
+      } catch {
+        // Theme synchronization must not prevent the popup from updating.
+      }
+      try {
+        await getCurrentWindow().setAlwaysOnTop(settings.value.popupAlwaysOnTop)
+      } catch {
+        // Window synchronization is best effort while the popup is closing.
+      }
+    })
+  } catch {
+    // The standalone Vite preview has no Tauri event bridge.
+  }
   unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
     event.preventDefault()
     void dismiss()
@@ -205,6 +227,7 @@ onUnmounted(() => {
   clearPowerTimer()
   clearRestTimer()
   unlisten?.()
+  unlistenSettings?.()
   unlistenClose?.()
 })
 </script>
@@ -212,7 +235,7 @@ onUnmounted(() => {
 <template>
   <main :class="['popup-shell', ...popupClass]">
     <header class="popup-header">
-      <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAt || t('common.now') }) }}</span></div></div>
+      <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
     </header>
     <section class="popup-content">
       <p v-if="current?.isRest" class="rest-elapsed">{{ restElapsed }}</p>
