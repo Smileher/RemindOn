@@ -14,6 +14,7 @@ import brandIcon from './assets/remindon.svg'
 import donationCode from './assets/donate.png'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
+import { logError } from './error'
 import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
 import { useUpdater } from './composables/useUpdater'
@@ -244,7 +245,8 @@ async function saveReminder() {
     actionMessage.value = t('status.reminderSaved')
   } catch (error) {
     data.value.reminders = previous
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('save reminder', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -255,7 +257,8 @@ async function toggleReminder(reminder: Reminder) {
     await persist()
   } catch (error) {
     reminder.enabled = previous
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('toggle reminder', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -277,7 +280,8 @@ async function removeReminder(id: string) {
     actionMessage.value = t('status.reminderDeleted')
   } catch (error) {
     data.value.reminders = previous
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('delete reminder', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -300,7 +304,8 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   } catch (error) {
     data.value.settings = previous
     if (key === 'theme') await applyNativeTheme(previous.theme)
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError(`save setting: ${String(key)}`, error)
+    actionMessage.value = t('status.saveFailed')
     return false
   }
 }
@@ -314,7 +319,8 @@ async function updateAutostart(value: boolean) {
       else await enable()
     }
   } catch (error) {
-    actionMessage.value = t('status.autostartFailed', { error: String(error) })
+    logError('update autostart', error)
+    actionMessage.value = t('status.autostartFailed')
   }
 }
 
@@ -342,7 +348,8 @@ async function updatePowerAction(value: AutomaticPowerAction) {
     await refreshTimers()
   } catch (error) {
     data.value.settings = previous
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('update power action', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -368,7 +375,8 @@ async function saveRestMessage() {
   } catch (error) {
     data.value.settings = previous
     restMessageDraft.value = previous.restMessage
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('save rest message', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -380,7 +388,8 @@ async function saveShutdownMessage() {
   } catch (error) {
     data.value.settings = previous
     shutdownMessageDraft.value = previous.shutdownReminderMessage
-    actionMessage.value = t('status.saveFailed', { error: String(error) })
+    logError('save power message', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -397,7 +406,8 @@ async function importData() {
       await refreshTimers()
     }
   } catch (error) {
-    actionMessage.value = t('status.importFailed', { error: String(error) })
+    logError('import data', error)
+    actionMessage.value = t('status.importFailed')
   }
 }
 
@@ -410,7 +420,8 @@ async function exportData() {
       actionMessage.value = t('status.exported')
     }
   } catch (error) {
-    actionMessage.value = t('status.exportFailed', { error: String(error) })
+    logError('export data', error)
+    actionMessage.value = t('status.exportFailed')
   }
 }
 
@@ -420,7 +431,8 @@ async function testNotification(kind: TestReminderKind) {
     await persist()
     await invoke('test_reminder', { kind })
   } catch (error) {
-    actionMessage.value = t('status.testFailed', { error: String(error) })
+    logError('test notification', error)
+    actionMessage.value = t('status.testFailed')
   }
 }
 
@@ -456,7 +468,8 @@ async function confirmUpdate() {
     })
     if (confirmed) await installUpdate()
   } catch (error) {
-    updateError.value = String(error)
+    logError('confirm update', error)
+    updateError.value = 'update-failed'
   } finally {
     confirmingUpdate.value = false
   }
@@ -512,7 +525,8 @@ onMounted(async () => {
       now.value = Date.now()
     }, 1000)
   } catch (error) {
-    actionMessage.value = t('status.loadFailed', { error: String(error) })
+    logError('load application data', error)
+    actionMessage.value = t('status.loadFailed')
   }
 })
 
@@ -632,7 +646,7 @@ onUnmounted(() => {
             <button v-if="updateMode === 'unsupported' || updateError" class="icon-button" type="button" :aria-label="t('update.download')" :title="t('update.download')" @click="openReleases"><Download :size="16" /></button>
           </div>
           <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
-          <p v-if="updateError" class="update-error" role="alert" :title="t('update.failed', { error: updateError })">{{ t('update.failed', { error: updateError }) }}</p>
+          <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
         <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>ChenHe</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>

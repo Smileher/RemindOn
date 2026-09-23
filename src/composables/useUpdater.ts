@@ -5,6 +5,10 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 
+function logUpdaterError(context: string, error: unknown) {
+  console.error(`[RemindOn] ${context}`, error)
+}
+
 type UpdateMode = 'unknown' | 'installed' | 'portable' | 'development' | 'unsupported'
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'ready' | 'downloaded' | 'upToDate' | 'error'
 type PortableDownloadProgress = { downloadedBytes: number; totalBytes: number | null; percentage: number | null }
@@ -46,7 +50,8 @@ export function useUpdater() {
       await previous?.close().catch(() => {})
     } catch (error) {
       status.value = silent ? (pendingUpdate ? 'available' : 'idle') : 'error'
-      if (!silent) errorMessage.value = String(error)
+      logUpdaterError('check for updates', error)
+      if (!silent) errorMessage.value = 'update-failed'
     }
   }
 
@@ -73,7 +78,8 @@ export function useUpdater() {
     } catch (error) {
       if (!disposed) {
         status.value = 'error'
-        errorMessage.value = String(error)
+        logUpdaterError('download portable update', error)
+        errorMessage.value = 'update-failed'
       }
     } finally {
       unlistenProgress?.()
@@ -88,7 +94,8 @@ export function useUpdater() {
       await relaunch()
     } catch (error) {
       status.value = 'ready'
-      errorMessage.value = String(error)
+      logUpdaterError('restart after update', error)
+      errorMessage.value = 'update-failed'
     }
   }
 
@@ -117,7 +124,8 @@ export function useUpdater() {
       await restartApp()
     } catch (error) {
       status.value = 'error'
-      errorMessage.value = String(error)
+      logUpdaterError('install update', error)
+      errorMessage.value = 'update-failed'
     }
   }
 
@@ -126,7 +134,8 @@ export function useUpdater() {
     try {
       await openUrl('https://github.com/Smileher/RemindOn/releases/latest')
     } catch (error) {
-      errorMessage.value = String(error)
+      logUpdaterError('open release page', error)
+      errorMessage.value = 'update-failed'
     }
   }
 
@@ -136,7 +145,8 @@ export function useUpdater() {
     try {
       await revealItemInDir(downloadedPath.value)
     } catch (error) {
-      errorMessage.value = String(error)
+      logUpdaterError('reveal downloaded update', error)
+      errorMessage.value = 'update-failed'
     }
   }
 
