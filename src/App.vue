@@ -465,16 +465,12 @@ async function refreshTimers() {
     invoke<string | null>('get_next_shutdown_trigger'),
   ])
   if (refreshToken !== timerRefreshToken) return
-  nextRestTrigger.value = rest.status === 'fulfilled' ? rest.value.nextTriggerAt : null
-  restIsActive.value = rest.status === 'fulfilled' && rest.value.isResting
+  if (rest.status === 'fulfilled') {
+    nextRestTrigger.value = rest.value.nextTriggerAt
+    restIsActive.value = rest.value.isResting
+  }
   nextShutdownTrigger.value = shutdown.status === 'fulfilled' ? shutdown.value : null
   now.value = Date.now()
-}
-
-function showRestingState() {
-  timerRefreshToken += 1
-  restIsActive.value = true
-  nextRestTrigger.value = null
 }
 
 function applyRestTimerStatus(status: RestTimerStatus) {
@@ -532,23 +528,16 @@ onMounted(async () => {
     } catch {
       // Keep the saved value when the platform autostart API is unavailable.
     }
-    await refreshTimers()
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
       void refreshTimers()
     })
-    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async (event) => {
-      const isPopupRest = event.payload.isRest
-        && !event.payload.isTest
-        && data.value.settings.notificationMode === 'popup'
-      if (isPopupRest) showRestingState()
+    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       try {
         data.value = await invoke<AppData>('load_data')
       } catch {
         // Keep the current data while the backend is temporarily unavailable.
       }
-      // Real popup rests are already marked active by the backend. Avoid a
-      // second status read whose stale result could restore the old countdown.
-      if (!isPopupRest) await refreshTimers()
+      await refreshTimers()
     })
     unlistenRestTimer = await listen<RestTimerStatus>('rest-timer-updated', (event) => {
       applyRestTimerStatus(event.payload)
@@ -558,6 +547,7 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
+    await refreshTimers()
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
     }, 1000)
@@ -630,7 +620,7 @@ onUnmounted(() => {
       <section v-else-if="currentView === 'rest'" class="page-section narrow-section">
         <header class="page-header compact-header"><div><p class="eyebrow">BREAK</p><h1>{{ t('rest.title') }}</h1><p class="page-subtitle">{{ t('rest.subtitle') }}</p></div><button class="button" type="button" @click="testNotification('rest')"><Play :size="14" />{{ t('settings.testNotification') }}</button></header>
         <div class="status-panel">
-          <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ data.settings.restEnabled ? (restIsActive ? t('rest.resting') : (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating'))) : t('common.paused') }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
+          <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ restIsActive ? t('rest.resting') : (data.settings.restEnabled ? (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating')) : t('common.paused')) }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
           <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
         </div>
         <div class="settings-group">
