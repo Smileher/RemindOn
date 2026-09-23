@@ -32,6 +32,10 @@ fn default_shutdown_message() -> String {
     "即将自动关闭电脑。".to_string()
 }
 
+fn default_system_notification_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -44,10 +48,8 @@ pub struct AppSettings {
     pub rest_interval_minutes: u32,
     #[serde(default = "default_rest_message")]
     pub rest_message: String,
-    #[serde(default)]
-    pub notification_mode: NotificationMode,
-    #[serde(default)]
-    pub notification_style: NotificationStyle,
+    #[serde(default = "default_system_notification_enabled")]
+    pub system_notification_enabled: bool,
     #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
@@ -60,33 +62,6 @@ pub struct AppSettings {
     pub shutdown_reminder_time: String,
     #[serde(default = "default_shutdown_message")]
     pub shutdown_reminder_message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum NotificationMode {
-    System,
-    Popup,
-}
-
-impl Default for NotificationMode {
-    fn default() -> Self {
-        Self::Popup
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum NotificationStyle {
-    Compact,
-    Standard,
-    Prominent,
-}
-
-impl Default for NotificationStyle {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,8 +131,7 @@ impl Default for AppSettings {
             rest_enabled: false,
             rest_interval_minutes: 45,
             rest_message: default_rest_message(),
-            notification_mode: NotificationMode::Popup,
-            notification_style: NotificationStyle::Standard,
+            system_notification_enabled: true,
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
             shutdown_reminder_enabled: false,
@@ -525,7 +499,7 @@ fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Opt
     }
 
     // 测试和定时休息弹窗使用相同的暂停及完成逻辑。
-    if event.is_rest && settings.notification_mode == NotificationMode::Popup {
+    if event.is_rest {
         state.0.rest_active.store(true, Ordering::SeqCst);
         *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
         state.0.rest_round_pending.store(true, Ordering::SeqCst);
@@ -547,21 +521,8 @@ fn dispatch_trigger(
     let Some(settings) = prepare_notification(state, &event) else {
         return Ok(());
     };
-    let requires_popup = event.power_action.is_some();
     emit_rest_timer_updated(app, state);
-
-    if settings.notification_mode == NotificationMode::System && !requires_popup {
-        if let Some(window) = app.get_webview_window("reminder") {
-            let _ = window.hide();
-        }
-        app
-            .notification()
-            .builder()
-            .title(notification_title(settings.language, &event))
-            .body(&event.title)
-            .show()
-            .map_err(|error| format!("系统通知发送失败：{error}"))?;
-    } else if let Some(window) = app.get_webview_window("reminder") {
+    if let Some(window) = app.get_webview_window("reminder") {
         let _ = window.set_title(notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
         let _ = window.center();
@@ -571,7 +532,19 @@ fn dispatch_trigger(
         let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
     }
 
-    let _ = app.emit_to("main", "reminder-triggered", event);
+    // 主窗口必须先收到事件，即使可选的系统通知发送失败，也不能留下过期倒计时。
+    let _ = app.emit_to("main", "reminder-triggered", event.clone());
+
+    if settings.system_notification_enabled {
+        app
+            .notification()
+            .builder()
+            .title(notification_title(settings.language, &event))
+            .body(&event.title)
+            .show()
+            .map_err(|error| format!("系统通知发送失败：{error}"))?;
+    }
+
     Ok(())
 }
 
@@ -640,16 +613,9 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         power_action: None,
                         is_test: false,
                     });
-                    if data.settings.notification_mode == NotificationMode::Popup {
-                        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
-                        state.0.rest_round_pending.store(true, Ordering::SeqCst);
-                        state.0.rest_active.store(true, Ordering::SeqCst);
-                    } else {
-                        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(
-                            now + Duration::minutes(data.settings.rest_interval_minutes as i64),
-                        );
-                        state.0.rest_round_pending.store(false, Ordering::SeqCst);
-                    }
+                    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+                    state.0.rest_round_pending.store(true, Ordering::SeqCst);
+                    state.0.rest_active.store(true, Ordering::SeqCst);
                 }
             }
         }
@@ -1398,14 +1364,15 @@ mod tests {
     }
 
     #[test]
-    fn system_rest_notifications_keep_the_interval_running() {
+    fn appended_system_rest_notifications_keep_the_interval_running() {
         let state = rest_state(true);
-        state.0.data.lock().unwrap().settings.notification_mode = NotificationMode::System;
+        state.0.data.lock().unwrap().settings.system_notification_enabled = true;
         let before = rest_timer_status(&state).next_trigger_at;
         prepare_notification(&state, &rest_event(&state, true)).unwrap();
 
-        assert!(!rest_timer_status(&state).is_resting);
-        assert_eq!(rest_timer_status(&state).next_trigger_at, before);
+        assert!(rest_timer_status(&state).is_resting);
+        assert!(rest_timer_status(&state).next_trigger_at.is_none());
+        assert!(before.is_some());
     }
 
     #[test]

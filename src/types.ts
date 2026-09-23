@@ -1,9 +1,7 @@
 export type ReminderType = 'once' | 'daily' | 'weekly' | 'monthly' | 'interval'
-export type NotificationMode = 'system' | 'popup'
 export type Theme = 'dark' | 'light' | 'system'
 export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
-export type NotificationStyle = 'compact' | 'standard' | 'prominent'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest' | 'power'
 
@@ -27,8 +25,7 @@ export interface AppSettings {
   restEnabled: boolean
   restIntervalMinutes: number
   restMessage: string
-  notificationMode: NotificationMode
-  notificationStyle: NotificationStyle
+  systemNotificationEnabled: boolean
   theme: Theme
   accentColor: AccentColor
   shutdownReminderEnabled: boolean
@@ -68,8 +65,7 @@ export const defaultData = (): AppData => ({
     restEnabled: false,
     restIntervalMinutes: 45,
     restMessage: '休息时间到了，该休息一下了。',
-    notificationMode: 'popup',
-    notificationStyle: 'standard',
+    systemNotificationEnabled: true,
     theme: 'dark',
     accentColor: 'mint',
     shutdownReminderEnabled: false,
