@@ -290,10 +290,6 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .snooze-options button { display: flex; align-items: center; justify-content: space-between; min-height: 30px; border: 0; border-radius: 4px; padding: 5px 8px; color: var(--text); background: transparent; text-align: left; }
 .snooze-options button:hover { background: var(--surface-hover); }
 .snooze-options button.selected { color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }
-.notification-compact .popup-content { padding-top: 15px; padding-bottom: 15px; }
-.notification-compact .popup-content h1 { font-size: var(--font-section); }
-.notification-prominent .popup-content { border-left: 5px solid var(--accent); padding-left: 26px; }
-.notification-prominent .popup-content h1 { font-size: var(--font-display); }
 
 @media (max-width: 860px) {
   .content { padding: 20px 20px 26px; }

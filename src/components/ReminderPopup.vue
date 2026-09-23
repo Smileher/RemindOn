@@ -46,7 +46,6 @@ let notificationSequence = 0
 const popupClass = computed(() => [
   `theme-${settings.value.theme}`,
   `accent-${settings.value.accentColor}`,
-  `notification-${settings.value.notificationStyle}`,
 ])
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
