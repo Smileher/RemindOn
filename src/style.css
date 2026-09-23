@@ -184,6 +184,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .number-field input { width: 72px; }
 .stacked-setting { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
 .stacked-setting input { margin-top: 4px; }
+.notification-permission-card .button { min-height: 30px; }
 
 .status-panel { margin-bottom: 8px; padding: 13px 14px; }
 .status-panel-top { display: flex; align-items: center; gap: 10px; }
@@ -275,6 +276,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .power-countdown strong { color: var(--accent-strong); font-size: var(--font-display); line-height: 1; }
 .power-countdown span { font-size: var(--font-sm); }
 .popup-error { margin: 9px 0 0; color: var(--danger); font-size: var(--font-xs); }
+.popup-settings-button { margin-top: 9px; }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
 .popup-actions.split-actions { justify-content: space-between; }
 .popup-action-group { display: flex; align-items: center; gap: 7px; }
