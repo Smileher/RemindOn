@@ -248,7 +248,10 @@ struct InnerState {
     scheduler_started: AtomicBool,
     scheduler_stop: AtomicBool,
     rest_active: AtomicBool,
+    rest_round_pending: AtomicBool,
+    // rest_next tracks the current round; rest_cycle_next preserves the fixed cadence.
     rest_next: Mutex<Option<DateTime<Local>>>,
+    rest_cycle_next: Mutex<Option<DateTime<Local>>>,
     shutdown_next: Mutex<Option<DateTime<Local>>>,
 }
 
@@ -358,6 +361,47 @@ fn should_trigger_power_action(due: DateTime<Local>, now: DateTime<Local>) -> bo
     due <= now && now.signed_duration_since(due) <= Duration::minutes(1)
 }
 
+fn next_rest_after_completion(
+    cycle_next: Option<DateTime<Local>>,
+    now: DateTime<Local>,
+    interval_minutes: u32,
+) -> DateTime<Local> {
+    let interval = Duration::minutes(interval_minutes.max(1) as i64);
+    let mut next = cycle_next.unwrap_or(now + interval);
+    while next <= now {
+        next += interval;
+    }
+    next
+}
+
+fn complete_rest_round(state: &AppState) -> bool {
+    let data = state.0.data.lock().expect("配置锁被中毒");
+    let was_pending = state.0.rest_round_pending.swap(false, Ordering::SeqCst);
+    let was_active = state.0.rest_active.swap(false, Ordering::SeqCst);
+    if !was_pending && !was_active {
+        return false;
+    }
+
+    if data.settings.rest_enabled {
+        let now = Local::now();
+        let cycle_next = state
+            .0
+            .rest_cycle_next
+            .lock()
+            .expect("休息提醒锁被中毒")
+            .take();
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(next_rest_after_completion(
+            cycle_next,
+            now,
+            data.settings.rest_interval_minutes,
+        ));
+    } else {
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
+    }
+    true
+}
+
 fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     data.version = DATA_VERSION;
     data.settings.rest_interval_minutes = data.settings.rest_interval_minutes.clamp(1, 1440);
@@ -428,6 +472,34 @@ fn app_data(state: &AppState) -> AppData {
     state.0.data.lock().expect("配置锁被中毒").clone()
 }
 
+fn rest_timer_status(state: &AppState) -> RestTimerStatus {
+    let data = state.0.data.lock().expect("配置锁被中毒");
+    if !data.settings.rest_enabled {
+        return RestTimerStatus {
+            next_trigger_at: None,
+            is_resting: false,
+        };
+    }
+    if state.0.rest_active.load(Ordering::SeqCst) {
+        return RestTimerStatus {
+            next_trigger_at: None,
+            is_resting: true,
+        };
+    }
+    let mut next = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+    if next.is_none() {
+        *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
+    }
+    RestTimerStatus {
+        next_trigger_at: next.as_ref().map(DateTime::to_rfc3339),
+        is_resting: false,
+    }
+}
+
+fn emit_rest_timer_updated(app: &AppHandle, state: &AppState) {
+    let _ = app.emit_to("main", "rest-timer-updated", rest_timer_status(state));
+}
+
 fn notification_title(language: Language, event: &ReminderTriggeredEvent) -> &'static str {
     match (language, event.is_rest, event.is_shutdown) {
         (Language::ZhCn, true, _) => "RemindOn · 休息提醒",
@@ -461,7 +533,7 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
     if event.is_rest && !event.is_test && settings.notification_mode == NotificationMode::Popup {
         state.0.rest_active.store(true, Ordering::SeqCst);
         *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
-        let _ = app.emit_to("main", "rest-timer-updated", ());
+        state.0.rest_round_pending.store(true, Ordering::SeqCst);
     }
 
     if settings.notification_mode == NotificationMode::System && !requires_popup {
@@ -529,11 +601,20 @@ fn process_due(app: &AppHandle, state: &AppState) {
         }
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst) {
-                let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
-                if next_rest.is_none() {
-                    *next_rest =
-                        Some(now + Duration::minutes(data.settings.rest_interval_minutes as i64));
-                } else if next_rest.is_some_and(|value| value <= now) {
+                let due = {
+                    let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+                    if next_rest.is_none() {
+                        *next_rest = Some(
+                            now + Duration::minutes(data.settings.rest_interval_minutes as i64),
+                        );
+                        None
+                    } else if next_rest.is_some_and(|value| value <= now) {
+                        next_rest.take()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(scheduled_due) = due {
                     triggered.push(ReminderTriggeredEvent {
                         id: REST_ID.to_string(),
                         title: data.settings.rest_message.clone(),
@@ -544,18 +625,29 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         is_test: false,
                     });
                     if data.settings.notification_mode == NotificationMode::Popup {
-                        *next_rest = None;
+                        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+                        if !state.0.rest_round_pending.load(Ordering::SeqCst) {
+                            *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = Some(
+                                scheduled_due
+                                    + Duration::minutes(data.settings.rest_interval_minutes as i64),
+                            );
+                        }
+                        state.0.rest_round_pending.store(true, Ordering::SeqCst);
                         state.0.rest_active.store(true, Ordering::SeqCst);
                     } else {
-                        *next_rest = Some(
+                        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(
                             now + Duration::minutes(data.settings.rest_interval_minutes as i64),
                         );
+                        *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
+                        state.0.rest_round_pending.store(false, Ordering::SeqCst);
                     }
                 }
             }
         } else {
             state.0.rest_active.store(false, Ordering::SeqCst);
+            state.0.rest_round_pending.store(false, Ordering::SeqCst);
             *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+            *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
         }
         if data.settings.shutdown_reminder_enabled {
             let mut next_shutdown = state.0.shutdown_next.lock().expect("关机提醒锁被中毒");
@@ -619,20 +711,33 @@ fn save_data(
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
     validate_and_normalize(&mut data)?;
-    let (rest_schedule_changed, shutdown_schedule_changed) = {
+    let (rest_enabled_changed, rest_interval_changed, shutdown_schedule_changed) = {
         let current = state.0.data.lock().expect("配置锁被中毒");
         (
-            current.settings.rest_enabled != data.settings.rest_enabled
-                || current.settings.rest_interval_minutes != data.settings.rest_interval_minutes,
+            current.settings.rest_enabled != data.settings.rest_enabled,
+            current.settings.rest_interval_minutes != data.settings.rest_interval_minutes,
             current.settings.shutdown_reminder_enabled != data.settings.shutdown_reminder_enabled
                 || current.settings.shutdown_reminder_time != data.settings.shutdown_reminder_time,
         )
     };
+    let rest_round_pending = state.0.rest_round_pending.load(Ordering::SeqCst);
     write_json(&state.0.data_path, &data)?;
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
-    if rest_schedule_changed {
+    if !data.settings.rest_enabled {
         state.0.rest_active.store(false, Ordering::SeqCst);
+        state.0.rest_round_pending.store(false, Ordering::SeqCst);
         *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
+    } else if rest_enabled_changed {
+        state.0.rest_active.store(false, Ordering::SeqCst);
+        state.0.rest_round_pending.store(false, Ordering::SeqCst);
+        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
+    } else if rest_interval_changed {
+        *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
+        if !rest_round_pending {
+            *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        }
     }
     if shutdown_schedule_changed {
         *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
@@ -643,8 +748,11 @@ fn save_data(
         state.0.paused.load(Ordering::SeqCst),
     );
     sync_reminder_settings(&app, &data.settings);
-    if rest_schedule_changed {
-        let _ = app.emit_to("main", "rest-timer-updated", ());
+    if rest_enabled_changed && !data.settings.rest_enabled {
+        let _ = app.emit_to("reminder", "rest-cancelled", ());
+    }
+    if rest_enabled_changed || rest_interval_changed {
+        emit_rest_timer_updated(&app, &state);
     }
     Ok(data)
 }
@@ -677,8 +785,10 @@ fn snooze_reminder(
     let mut data = state.0.data.lock().expect("配置锁被中毒");
     let delay = Duration::seconds(seconds.max(1) as i64);
     if id == REST_ID {
-        state.0.rest_active.store(false, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(Local::now() + delay);
+        if data.settings.rest_enabled && state.0.rest_round_pending.load(Ordering::SeqCst) {
+            state.0.rest_active.store(false, Ordering::SeqCst);
+            *state.0.rest_next.lock().expect("休息提醒锁被中毒") = Some(Local::now() + delay);
+        }
     } else if id == SHUTDOWN_ID {
         *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = Some(Local::now() + delay);
     } else if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
@@ -688,7 +798,7 @@ fn snooze_reminder(
     }
     drop(data);
     if id == REST_ID {
-        let _ = app.emit_to("main", "rest-timer-updated", ());
+        emit_rest_timer_updated(&app, &state);
     }
     Ok(())
 }
@@ -696,39 +806,16 @@ fn snooze_reminder(
 #[tauri::command]
 fn dismiss_reminder(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if id == REST_ID {
-        let data = state.0.data.lock().expect("配置锁被中毒");
-        state.0.rest_active.store(false, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
-            Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
-        drop(data);
-        let _ = app.emit_to("main", "rest-timer-updated", ());
+        if complete_rest_round(state.inner()) {
+            emit_rest_timer_updated(&app, state.inner());
+        }
     }
     Ok(())
 }
 
 #[tauri::command]
 fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
-    let data = state.0.data.lock().expect("配置锁被中毒");
-    if !data.settings.rest_enabled {
-        return RestTimerStatus {
-            next_trigger_at: None,
-            is_resting: false,
-        };
-    }
-    if state.0.rest_active.load(Ordering::SeqCst) {
-        return RestTimerStatus {
-            next_trigger_at: None,
-            is_resting: true,
-        };
-    }
-    let mut next = state.0.rest_next.lock().expect("休息提醒锁被中毒");
-    if next.is_none() {
-        *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
-    }
-    RestTimerStatus {
-        next_trigger_at: next.as_ref().map(DateTime::to_rfc3339),
-        is_resting: false,
-    }
+    rest_timer_status(state.inner())
 }
 
 #[tauri::command]
@@ -860,7 +947,9 @@ fn import_data(
     write_json(&state.0.data_path, &data)?;
     *state.0.data.lock().expect("配置锁被中毒") = data.clone();
     state.0.rest_active.store(false, Ordering::SeqCst);
+    state.0.rest_round_pending.store(false, Ordering::SeqCst);
     *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+    *state.0.rest_cycle_next.lock().expect("休息提醒锁被中毒") = None;
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
     let _ = update_tray_menu(
         &app,
@@ -868,6 +957,10 @@ fn import_data(
         state.0.paused.load(Ordering::SeqCst),
     );
     sync_reminder_settings(&app, &data.settings);
+    emit_rest_timer_updated(&app, &state);
+    if !data.settings.rest_enabled {
+        let _ = app.emit_to("reminder", "rest-cancelled", ());
+    }
     Ok(data)
 }
 
@@ -973,7 +1066,9 @@ pub fn run() {
                 scheduler_started: AtomicBool::new(false),
                 scheduler_stop: AtomicBool::new(false),
                 rest_active: AtomicBool::new(false),
+                rest_round_pending: AtomicBool::new(false),
                 rest_next: Mutex::new(None),
+                rest_cycle_next: Mutex::new(None),
                 shutdown_next: Mutex::new(None),
             }));
             app.manage(state.clone());
@@ -1043,6 +1138,9 @@ pub fn run() {
                     }
                 } else if label == "reminder" {
                     api.prevent_close();
+                    if complete_rest_round(app.state::<AppState>().inner()) {
+                        emit_rest_timer_updated(&app, app.state::<AppState>().inner());
+                    }
                     if let Some(window) = app.get_webview_window("reminder") {
                         let _ = window.hide();
                     }
@@ -1150,6 +1248,37 @@ mod tests {
         assert_eq!(data.settings.language, Language::ZhCn);
         assert!(!data.settings.minimize_to_tray);
         assert_eq!(data.settings.power_action, PowerAction::Shutdown);
+    }
+
+    #[test]
+    fn rest_completion_keeps_the_original_cycle() {
+        let now = Local.with_ymd_and_hms(2026, 9, 4, 10, 10, 0).unwrap();
+        let cycle_next = Local.with_ymd_and_hms(2026, 9, 4, 10, 45, 0).unwrap();
+
+        assert_eq!(
+            next_rest_after_completion(Some(cycle_next), now, 45),
+            cycle_next
+        );
+    }
+
+    #[test]
+    fn rest_completion_skips_missed_cycles() {
+        let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 10, 0).unwrap();
+        let cycle_next = Local.with_ymd_and_hms(2026, 9, 4, 10, 45, 0).unwrap();
+        let expected = Local.with_ymd_and_hms(2026, 9, 4, 12, 15, 0).unwrap();
+
+        assert_eq!(
+            next_rest_after_completion(Some(cycle_next), now, 45),
+            expected
+        );
+    }
+
+    #[test]
+    fn rest_completion_without_cycle_starts_a_new_interval() {
+        let now = Local.with_ymd_and_hms(2026, 9, 4, 10, 10, 0).unwrap();
+        let expected = Local.with_ymd_and_hms(2026, 9, 4, 10, 55, 0).unwrap();
+
+        assert_eq!(next_rest_after_completion(None, now, 45), expected);
     }
 
     #[test]

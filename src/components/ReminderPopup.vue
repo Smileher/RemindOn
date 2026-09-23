@@ -35,6 +35,7 @@ const powerCountdown = ref(60)
 const powerError = ref('')
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
+let unlistenRestCancelled: (() => void) | undefined
 let unlistenClose: (() => void) | undefined
 let restTimer: number | undefined
 let powerTimer: number | undefined
@@ -150,6 +151,13 @@ async function snooze(seconds: number) {
   await closePopup()
 }
 
+async function cancelRest() {
+  if (!current.value?.isRest) return
+  clearRestTimer()
+  current.value = null
+  await closePopup()
+}
+
 async function executePowerAction() {
   clearPowerTimer()
   const action = current.value?.powerAction
@@ -255,6 +263,11 @@ onMounted(async () => {
   } catch {
     // The standalone Vite preview has no Tauri event bridge.
   }
+  try {
+    unlistenRestCancelled = await listen('rest-cancelled', () => void cancelRest())
+  } catch {
+    // The standalone Vite preview has no Tauri event bridge.
+  }
   unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
     event.preventDefault()
     void dismiss()
@@ -267,6 +280,7 @@ onUnmounted(() => {
   clearRestTimer()
   unlisten?.()
   unlistenSettings?.()
+  unlistenRestCancelled?.()
   unlistenClose?.()
 })
 </script>
@@ -295,7 +309,7 @@ onUnmounted(() => {
           </details>
           <button class="button" type="button" @click="snooze(snoozeSeconds)">{{ t('popup.snooze') }}</button>
         </div>
-        <button v-if="current?.isRest" class="button button-primary" type="button" @click="snooze(settings.restIntervalMinutes * 60)">{{ t('popup.remindInInterval', { minutes: settings.restIntervalMinutes }) }}</button>
+        <button v-if="current?.isRest" class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.finishRest') }}</button>
         <button v-else class="button button-primary" type="button" @click="dismiss"><Check :size="15" />{{ t('popup.done') }}</button>
       </template>
     </footer>

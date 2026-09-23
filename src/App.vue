@@ -499,6 +499,13 @@ function showRestingState() {
   nextRestTrigger.value = null
 }
 
+function applyRestTimerStatus(status: RestTimerStatus) {
+  timerRefreshToken += 1
+  restIsActive.value = status.isResting
+  nextRestTrigger.value = status.nextTriggerAt
+  now.value = Date.now()
+}
+
 async function confirmUpdate() {
   if (confirmingUpdate.value || updateBusy.value) return
   confirmingUpdate.value = true
@@ -553,21 +560,22 @@ onMounted(async () => {
       void refreshTimers()
     })
     unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', async (event) => {
-      data.value = await invoke<AppData>('load_data')
-      if (event.payload.isRest && !event.payload.isTest) {
-        try {
-          const status = await invoke<RestTimerStatus>('get_rest_timer_status')
-          if (status.isResting) {
-            showRestingState()
-            return
-          }
-        } catch {
-          // Fall through to the regular refresh when the backend is unavailable.
-        }
+      const isPopupRest = event.payload.isRest
+        && !event.payload.isTest
+        && data.value.settings.notificationMode === 'popup'
+      if (isPopupRest) showRestingState()
+      try {
+        data.value = await invoke<AppData>('load_data')
+      } catch {
+        // Keep the current data while the backend is temporarily unavailable.
       }
-      await refreshTimers()
+      // Real popup rests are already marked active by the backend. Avoid a
+      // second status read whose stale result could restore the old countdown.
+      if (!isPopupRest) await refreshTimers()
     })
-    unlistenRestTimer = await listen('rest-timer-updated', () => void refreshTimers())
+    unlistenRestTimer = await listen<RestTimerStatus>('rest-timer-updated', (event) => {
+      applyRestTimerStatus(event.payload)
+    })
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
     }, 1000)
