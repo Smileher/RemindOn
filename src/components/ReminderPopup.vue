@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { Check, ChevronDown, Clock3, Settings2 } from '@lucide/vue'
@@ -36,11 +35,13 @@ const powerError = ref('')
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
 let unlistenRestCancelled: (() => void) | undefined
+let unlistenReset: (() => void) | undefined
 let unlistenClose: (() => void) | undefined
 let restTimer: number | undefined
 let powerTimer: number | undefined
 let restStartedAt = 0
 let powerDeadline = 0
+let notificationSequence = 0
 
 const popupClass = computed(() => [
   `theme-${settings.value.theme}`,
@@ -138,28 +139,49 @@ function closeSnoozeMenuOnOutsideClick(event: MouseEvent) {
 }
 
 async function dismiss() {
+  const sequence = ++notificationSequence
   clearPowerTimer()
   clearRestTimer()
   if (current.value) await invoke('dismiss_reminder', { id: current.value.id })
+  if (sequence !== notificationSequence) return
   await closePopup()
 }
 
 async function snooze(seconds: number) {
+  const sequence = ++notificationSequence
   clearPowerTimer()
   clearRestTimer()
   if (current.value) await invoke('snooze_reminder', { id: current.value.id, seconds })
+  if (sequence !== notificationSequence) return
   await closePopup()
 }
 
 async function cancelRest() {
   if (!current.value?.isRest) return
+  notificationSequence += 1
   clearRestTimer()
   current.value = null
   await closePopup()
 }
 
+async function resetReminders() {
+  // 导入会取消当前提醒，也要阻止正在等待原生调用的旧弹窗重新显示。
+  notificationSequence += 1
+  clearPowerTimer()
+  clearRestTimer()
+  current.value = null
+  triggeredAt.value = null
+  restElapsedSeconds.value = 0
+  powerCountdown.value = 60
+  powerError.value = ''
+  restStartedAt = 0
+  powerDeadline = 0
+  await closePopup()
+}
+
 async function executePowerAction() {
   clearPowerTimer()
+  const sequence = notificationSequence
   const action = current.value?.powerAction
   if (action !== 'shutdown' && action !== 'lock' && action !== 'restart') return
   try {
@@ -170,6 +192,7 @@ async function executePowerAction() {
         okLabel: t('popup.confirmExecute'),
         cancelLabel: t('common.cancel'),
       })
+      if (sequence !== notificationSequence) return
       if (!confirmed) {
         await closePopup()
         return
@@ -208,6 +231,7 @@ function startPowerCountdown() {
 }
 
 async function handleTrigger(event: ReminderTriggeredEvent) {
+  const sequence = ++notificationSequence
   clearPowerTimer()
   clearRestTimer()
   current.value = event
@@ -215,26 +239,27 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   restElapsedSeconds.value = 0
   powerError.value = ''
   try {
-    settings.value = (await invoke<AppData>('load_data')).settings
+    const data = await invoke<AppData>('load_data')
+    if (sequence !== notificationSequence) return
+    settings.value = data.settings
   } catch {
     // Keep the last known settings if the backend is unavailable for a moment.
   }
+  if (sequence !== notificationSequence) return
   triggeredAt.value = new Date()
   try {
     await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
   } catch {
     // Theme synchronization must not prevent a due notification from opening.
   }
-  const window = getCurrentWindow()
-  await window.setAlwaysOnTop(settings.value.popupAlwaysOnTop)
-  await window.center()
-  await window.show()
-  await window.setFocus()
+  if (sequence !== notificationSequence) return
+  // 后端已显示并聚焦弹窗，异步加载内容后不再重复打开窗口。
   if (isAutomaticPower.value) startPowerCountdown()
   else if (event.isRest) startRestTimer()
 }
 
 onMounted(async () => {
+  const currentWindow = getCurrentWindow()
   document.addEventListener('click', closeSnoozeMenuOnOutsideClick)
   try {
     settings.value = (await invoke<AppData>('load_data')).settings
@@ -242,12 +267,17 @@ onMounted(async () => {
     // The standalone Vite preview has no Tauri command bridge.
   }
   try {
-    unlisten = await listen<ReminderTriggeredEvent>('reminder-triggered', (event) => void handleTrigger(event.payload))
+    unlistenReset = await currentWindow.listen('reminders-reset', () => void resetReminders())
   } catch {
     // The standalone Vite preview has no Tauri event bridge.
   }
   try {
-    unlistenSettings = await listen<AppSettings>('settings-updated', async (event) => {
+    unlisten = await currentWindow.listen<ReminderTriggeredEvent>('reminder-triggered', (event) => void handleTrigger(event.payload))
+  } catch {
+    // The standalone Vite preview has no Tauri event bridge.
+  }
+  try {
+    unlistenSettings = await currentWindow.listen<AppSettings>('settings-updated', async (event) => {
       settings.value = event.payload
       try {
         await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
@@ -264,23 +294,25 @@ onMounted(async () => {
     // The standalone Vite preview has no Tauri event bridge.
   }
   try {
-    unlistenRestCancelled = await listen('rest-cancelled', () => void cancelRest())
+    unlistenRestCancelled = await currentWindow.listen('rest-cancelled', () => void cancelRest())
   } catch {
     // The standalone Vite preview has no Tauri event bridge.
   }
-  unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
+  unlistenClose = await currentWindow.onCloseRequested((event) => {
     event.preventDefault()
     void dismiss()
   })
 })
 
 onUnmounted(() => {
+  notificationSequence += 1
   document.removeEventListener('click', closeSnoozeMenuOnOutsideClick)
   clearPowerTimer()
   clearRestTimer()
   unlisten?.()
   unlistenSettings?.()
   unlistenRestCancelled?.()
+  unlistenReset?.()
   unlistenClose?.()
 })
 </script>

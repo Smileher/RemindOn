@@ -940,24 +940,19 @@ fn import_data(
     let mut current = state.0.data.lock().expect("配置锁被中毒");
     write_json(&state.0.data_path, &data)?;
     *current = data.clone();
-    // 导入配置不能让仍未处理的休息弹窗开始下一轮计时。
-    if !data.settings.rest_enabled || !state.0.rest_active.load(Ordering::SeqCst) {
-        state.0.rest_active.store(false, Ordering::SeqCst);
-        state.0.rest_round_pending.store(false, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
-    }
+    state.0.rest_active.store(false, Ordering::SeqCst);
+    state.0.rest_round_pending.store(false, Ordering::SeqCst);
+    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    state.0.paused.store(false, Ordering::SeqCst);
     drop(current);
-    let _ = update_tray_menu(
-        &app,
-        data.settings.language,
-        state.0.paused.load(Ordering::SeqCst),
-    );
+    let _ = app.emit_to("reminder", "reminders-reset", ());
+    if let Some(window) = app.get_webview_window("reminder") {
+        let _ = window.hide();
+    }
+    let _ = update_tray_menu(&app, data.settings.language, false);
     sync_reminder_settings(&app, &data.settings);
     emit_rest_timer_updated(&app, &state);
-    if !data.settings.rest_enabled {
-        let _ = app.emit_to("reminder", "rest-cancelled", ());
-    }
     Ok(data)
 }
 
