@@ -6,9 +6,8 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import {
-  BellRing, CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
+  CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
 } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -37,8 +36,8 @@ const restIsActive = ref(false)
 const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
-const notificationPermission = ref<boolean | null>(null)
-const notificationPermissionBusy = ref(false)
+const notificationError = ref('')
+const autostartError = ref('')
 const appVersion = ref('0.8')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
@@ -50,12 +49,24 @@ const confirmingUpdate = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
+let unlistenNotificationFailure: (() => void) | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(data.value.settings.language, key, params)
+}
+
+function formatError(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    const serialized = JSON.stringify(error)
+    return serialized && serialized !== '{}' ? serialized : String(error)
+  } catch {
+    return String(error)
+  }
 }
 
 const frequencyOptions = computed<Array<{ value: EditableReminderType; label: string }>>(() => [
@@ -305,7 +316,7 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   try {
     await persist()
     await refreshTimers()
-    if (key === 'notificationMode') await refreshNotificationPermission()
+    if (key === 'notificationMode') notificationError.value = ''
     return true
   } catch (error) {
     data.value.settings = previous
@@ -317,6 +328,7 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
 }
 
 async function updateAutostart(value: boolean) {
+  autostartError.value = ''
   try {
     if (value) await enable()
     else await disable()
@@ -326,7 +338,7 @@ async function updateAutostart(value: boolean) {
     }
   } catch (error) {
     logError('update autostart', error)
-    actionMessage.value = t('status.autostartFailed')
+    autostartError.value = t('status.autostartFailed', { error: formatError(error) })
   }
 }
 
@@ -431,51 +443,17 @@ async function exportData() {
   }
 }
 
-async function refreshNotificationPermission() {
-  if (data.value.settings.notificationMode !== 'system') {
-    notificationPermission.value = null
-    return
-  }
-  try {
-    notificationPermission.value = await isPermissionGranted()
-  } catch (error) {
-    logError('check notification permission', error)
-    notificationPermission.value = null
-  }
-}
-
-async function requestNotificationPermission() {
-  if (notificationPermissionBusy.value) return
-  notificationPermissionBusy.value = true
-  actionMessage.value = ''
-  try {
-    notificationPermission.value = (await requestPermission()) === 'granted'
-    actionMessage.value = notificationPermission.value
-      ? t('status.notificationPermissionGranted')
-      : t('status.notificationPermissionDenied')
-  } catch (error) {
-    logError('request notification permission', error)
-    actionMessage.value = t('status.notificationPermissionFailed')
-  } finally {
-    notificationPermissionBusy.value = false
-  }
-}
-
 async function testNotification(kind: TestReminderKind) {
   actionMessage.value = ''
+  notificationError.value = ''
   try {
-    if (data.value.settings.notificationMode === 'system') {
-      await refreshNotificationPermission()
-      if (notificationPermission.value === false) {
-        actionMessage.value = t('status.notificationPermissionRequired')
-        return
-      }
-    }
     await persist()
     await invoke('test_reminder', { kind })
   } catch (error) {
     logError('test notification', error)
-    actionMessage.value = t('status.testFailed')
+    const message = t('status.notificationFailed', { error: formatError(error) })
+    notificationError.value = message
+    actionMessage.value = message
   }
 }
 
@@ -544,7 +522,6 @@ onMounted(async () => {
     restMessageDraft.value = data.value.settings.restMessage
     shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
     await applyNativeTheme(data.value.settings.theme)
-    await refreshNotificationPermission()
     try {
       appVersion.value = (await getVersion()).replace(/\.0$/, '')
     } catch {
@@ -576,6 +553,11 @@ onMounted(async () => {
     unlistenRestTimer = await listen<RestTimerStatus>('rest-timer-updated', (event) => {
       applyRestTimerStatus(event.payload)
     })
+    unlistenNotificationFailure = await listen<string>('notification-failed', (event) => {
+      const message = t('status.notificationFailed', { error: event.payload })
+      notificationError.value = message
+      actionMessage.value = message
+    })
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
     }, 1000)
@@ -590,6 +572,7 @@ onUnmounted(() => {
   unlisten?.()
   unlistenNavigation?.()
   unlistenRestTimer?.()
+  unlistenNotificationFailure?.()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
 })
@@ -675,11 +658,10 @@ onUnmounted(() => {
         <header class="page-header compact-header"><div><p class="eyebrow">PREFERENCES</p><h1>{{ t('settings.title') }}</h1><p class="page-subtitle">{{ t('settings.subtitle') }}</p></div></header>
         <div class="settings-group">
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.language') }}</strong><span>{{ t('settings.languageHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.language === 'zh-CN' }" type="button" @click="updateSetting('language', 'zh-CN')">{{ t('settings.zh') }}</button><button :class="{ selected: data.settings.language === 'en' }" type="button" @click="updateSetting('language', 'en')">{{ t('settings.en') }}</button></div></div>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span></div><input :checked="data.settings.autostart" type="checkbox" @change="updateAutostart(($event.target as HTMLInputElement).checked)" /></label>
+          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div><input :checked="data.settings.autostart" type="checkbox" @change="updateAutostart(($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.startHidden') }}</strong><span>{{ t('settings.startHiddenHint') }}</span></div><input :checked="data.settings.minimizeToTray" type="checkbox" @change="updateSetting('minimizeToTray', ($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div><input :checked="data.settings.popupAlwaysOnTop" type="checkbox" @change="updateSetting('popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" /></label>
-          <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationMode') }}</strong><span>{{ t('settings.notificationModeHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationMode === 'system' }" type="button" @click="updateSetting('notificationMode', 'system')">{{ t('settings.systemNotification') }}</button><button :class="{ selected: data.settings.notificationMode === 'popup' }" type="button" @click="updateSetting('notificationMode', 'popup')">{{ t('settings.softwareNotification') }}</button></div></div>
-          <div v-if="data.settings.notificationMode === 'system' && notificationPermission !== null" class="setting-card notification-permission-card"><div><strong>{{ t('settings.notificationPermission') }}</strong><span>{{ notificationPermission ? t('settings.notificationPermissionGranted') : t('settings.notificationPermissionRequired') }}</span></div><button class="button" type="button" :disabled="notificationPermissionBusy" @click="requestNotificationPermission"><BellRing :size="14" />{{ notificationPermission ? t('settings.notificationPermissionCheck') : t('settings.notificationPermissionRequest') }}</button></div>
+          <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationMode') }}</strong><span>{{ t('settings.notificationModeHint') }}</span><small v-if="notificationError" class="setting-error">{{ notificationError }}</small></div><div class="segmented"><button :class="{ selected: data.settings.notificationMode === 'system' }" type="button" @click="updateSetting('notificationMode', 'system')">{{ t('settings.systemNotification') }}</button><button :class="{ selected: data.settings.notificationMode === 'popup' }" type="button" @click="updateSetting('notificationMode', 'popup')">{{ t('settings.softwareNotification') }}</button></div></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.notificationStyle') }}</strong><span>{{ t('settings.notificationStyleHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.notificationStyle === 'compact' }" type="button" @click="updateSetting('notificationStyle', 'compact')">{{ t('settings.compact') }}</button><button :class="{ selected: data.settings.notificationStyle === 'standard' }" type="button" @click="updateSetting('notificationStyle', 'standard')">{{ t('settings.standard') }}</button><button :class="{ selected: data.settings.notificationStyle === 'prominent' }" type="button" @click="updateSetting('notificationStyle', 'prominent')">{{ t('settings.prominent') }}</button></div></div>
           <div class="setting-card setting-choice"><div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.theme === 'dark' }" type="button" @click="updateSetting('theme', 'dark')">{{ t('settings.dark') }}</button><button :class="{ selected: data.settings.theme === 'light' }" type="button" @click="updateSetting('theme', 'light')">{{ t('settings.light') }}</button><button :class="{ selected: data.settings.theme === 'system' }" type="button" @click="updateSetting('theme', 'system')">{{ t('settings.system') }}</button></div></div>
           <div class="setting-card color-setting"><div><strong>{{ t('settings.accent') }}</strong><span>{{ t('settings.accentHint') }}</span></div><div class="color-options"><button v-for="color in accentColors" :key="color" :class="['color-swatch', `swatch-${color}`, { selected: data.settings.accentColor === color }]" type="button" :aria-label="color" @click="updateSetting('accentColor', color)"></button></div></div>

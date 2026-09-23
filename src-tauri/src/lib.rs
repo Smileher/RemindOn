@@ -525,7 +525,11 @@ fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
     let _ = app.emit_to("reminder", "settings-updated", settings);
 }
 
-fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredEvent) {
+fn dispatch_trigger(
+    app: &AppHandle,
+    state: &AppState,
+    event: ReminderTriggeredEvent,
+) -> Result<(), String> {
     let settings = app_data(state).settings;
     let requires_popup = event.power_action.is_some();
 
@@ -540,12 +544,13 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
         if let Some(window) = app.get_webview_window("reminder") {
             let _ = window.hide();
         }
-        let _ = app
+        app
             .notification()
             .builder()
             .title(notification_title(settings.language, &event))
             .body(&event.title)
-            .show();
+            .show()
+            .map_err(|error| format!("系统通知发送失败：{error}"))?;
     } else if let Some(window) = app.get_webview_window("reminder") {
         let _ = window.set_title(notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
@@ -557,6 +562,7 @@ fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredE
     }
 
     let _ = app.emit_to("main", "reminder-triggered", event);
+    Ok(())
 }
 
 fn process_due(app: &AppHandle, state: &AppState) {
@@ -679,7 +685,9 @@ fn process_due(app: &AppHandle, state: &AppState) {
         }
     }
     for event in triggered {
-        dispatch_trigger(app, state, event);
+        if let Err(error) = dispatch_trigger(app, state, event) {
+            let _ = app.emit_to("main", "notification-failed", error);
+        }
     }
 }
 
@@ -929,8 +937,7 @@ fn test_reminder(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let event = test_reminder_event(&app_data(&state).settings, kind);
-    dispatch_trigger(&app, &state, event);
-    Ok(())
+    dispatch_trigger(&app, &state, event)
 }
 
 #[tauri::command]
