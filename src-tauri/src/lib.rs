@@ -446,6 +446,13 @@ fn notification_window_title(language: Language) -> &'static str {
     }
 }
 
+fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
+    if let Some(window) = app.get_webview_window("reminder") {
+        let _ = window.set_title(notification_window_title(settings.language));
+    }
+    let _ = app.emit_to("reminder", "settings-updated", settings);
+}
+
 fn dispatch_trigger(app: &AppHandle, state: &AppState, event: ReminderTriggeredEvent) {
     let settings = app_data(state).settings;
     let requires_popup = event.power_action.is_some();
@@ -634,6 +641,7 @@ fn save_data(
         data.settings.language,
         state.0.paused.load(Ordering::SeqCst),
     );
+    sync_reminder_settings(&app, &data.settings);
     if rest_schedule_changed {
         let _ = app.emit_to("main", "rest-timer-updated", ());
     }
@@ -858,6 +866,7 @@ fn import_data(
         data.settings.language,
         state.0.paused.load(Ordering::SeqCst),
     );
+    sync_reminder_settings(&app, &data.settings);
     Ok(data)
 }
 
