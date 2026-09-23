@@ -38,7 +38,7 @@ const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
 const notificationPermission = ref<boolean | null>(null)
 const notificationPermissionBusy = ref(false)
-const appVersion = ref('0.7')
+const appVersion = ref('0.8')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,

@@ -51,7 +51,7 @@ pnpm tauri:build --bundles nsis
 pnpm tauri:build --bundles app,dmg
 ```
 
-安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序 `RemindOn_0.7.0_x64_portable.exe`。macOS 构建需在对应平台验证。
+安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序 `RemindOn_0.8.0_x64_portable.exe`。macOS 构建需在对应平台验证。
 
 ## 使用说明
 
@@ -90,7 +90,7 @@ pnpm tauri:build --bundles nsis
 发布步骤：
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
-2. 执行上述检查，提交代码并推送版本标签，例如 `v0.7.0`。
+2. 执行上述检查，提交代码并推送版本标签，例如 `v0.8.0`。
 3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
 4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
 
