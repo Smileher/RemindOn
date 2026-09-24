@@ -1,0 +1,6 @@
+{
+  "npm.autoDetect": "on",
+  "npm.packageManager": "pnpm",
+  "npm.scriptRunner": "pnpm",
+  "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"]
+}

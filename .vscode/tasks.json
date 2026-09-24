@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "tasks": [
+    {
+      "label": "RemindOn: 开发运行（热更新）",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:dev"],
+      "problemMatcher": [],
+      "runOptions": { "instanceLimit": 1 },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Debug EXE",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:build", "--debug", "--no-bundle"],
+      "detail": "构建含前端资源的 Debug EXE，供 CodeLLDB 调试；不生成安装包，无热更新。",
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}
