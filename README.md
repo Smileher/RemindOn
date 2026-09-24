@@ -32,6 +32,21 @@ pnpm tauri:dev
 
 `pnpm tauri:dev` 会启动前端开发服务器和桌面窗口。单独运行 `pnpm dev` 仅启动网页界面，无法使用托盘、通知等原生能力。
 
+### 在 VS Code 中运行与调试
+
+用“文件 → 打开文件夹”打开本项目根目录（同时包含 `package.json` 和 `src-tauri/` 的目录）。先确认 VS Code 新建终端内的 `node --version`、`pnpm --version`、`cargo --version` 均可执行；安装环境后应完全退出并重新打开 VS Code。
+
+安装 Vue (Official)、rust-analyzer 和 CodeLLDB 扩展。在“运行和调试”（`Ctrl+Shift+D`）顶部下拉框中选择：
+
+- **RemindOn: 开发运行（热更新）**：按 `F5` 执行 `pnpm tauri:dev`，适合日常查看效果；不附加 Rust 调试器。前端可在应用窗口按 `Ctrl+Shift+I` 打开开发者工具，终端按 `Ctrl+C` 停止运行。
+- **RemindOn: Rust 断点调试（Debug EXE）**：按 `F5` 先构建包含前端资源的 Debug EXE，再用 CodeLLDB 启动，可在 `.rs` 文件中设置断点。此模式不使用热更新，修改后停止并重新按 `F5`。CodeLLDB 的平台组件需下载完成。
+
+`Ctrl+Shift+B` 可单独构建 Debug EXE，输出为 `src-tauri/target/debug/remindon.exe`；该任务通过 `tauri build --debug --no-bundle` 嵌入前端资源，不需要 Vite 开发服务器，也不生成安装包。它与 `tauri dev` 生成的同路径 EXE 用途不同，以最后一次构建方式为准。
+
+也可从“终端 → 运行任务”选择上述任务。资源管理器中的 NPM 脚本视图可能默认隐藏，可通过“查看 → 打开视图”搜索 `NPM` 后打开；脚本会使用 pnpm 执行。这些入口无需 Tauri 扩展识别项目。
+
+启动前请从托盘退出正在运行的安装版或便携版：本项目启用了单实例，且各版本共用提醒数据，旧进程可能接管新进程的启动请求。
+
 ## 检查与构建
 
 ```sh
