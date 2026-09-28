@@ -1,51 +1,74 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][ValidateSet('x64', 'arm64')][string]$Architecture,
-  [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version,
+  [Parameter(Mandatory = $true)][ValidatePattern('^[1-9]\d*\.\d+\.\d+\.0$')][string]$Version,
   [Parameter(Mandatory = $true)][string]$IdentityName,
   [Parameter(Mandatory = $true)][string]$Publisher,
+  [string]$PublisherDisplayName = 'ChenHe',
   [Parameter(Mandatory = $true)][string]$SourceExecutable,
   [Parameter(Mandatory = $true)][string]$IconPath,
   [Parameter(Mandatory = $true)][string]$OutputDirectory,
-  [Parameter(Mandatory = $true)][string]$CertificatePath,
-  [Parameter(Mandatory = $true)][string]$CertificatePassword
+  [string]$CertificatePath,
+  [string]$CertificatePassword
 )
 
 $ErrorActionPreference = 'Stop'
-foreach ($value in @($IdentityName, $Publisher, $SourceExecutable, $IconPath, $CertificatePath)) {
-  if ([string]::IsNullOrWhiteSpace($value) -or -not (Test-Path -LiteralPath $value)) {
-    if ($value -eq $IdentityName -or $value -eq $Publisher) { throw 'MSIX IdentityName and Publisher are required.' }
-    throw "Required MSIX input does not exist: $value"
-  }
+foreach ($value in @($IdentityName, $Publisher, $PublisherDisplayName)) {
+  if ([string]::IsNullOrWhiteSpace($value)) { throw 'MSIX identity and publisher values are required.' }
 }
-if ([string]::IsNullOrWhiteSpace($CertificatePassword)) { throw 'MSIX certificate password is required.' }
+foreach ($value in @($SourceExecutable, $IconPath)) {
+  if (-not (Test-Path -LiteralPath $value -PathType Leaf)) { throw "Required MSIX input does not exist: $value" }
+}
+foreach ($component in $Version.Split('.')) {
+  $number = [uint16]0
+  if (-not [uint16]::TryParse($component, [ref]$number)) { throw 'MSIX version components must be between 0 and 65535.' }
+}
+if ($CertificatePath) {
+  if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) { throw 'MSIX signing certificate does not exist.' }
+  if ([string]::IsNullOrWhiteSpace($CertificatePassword)) { throw 'MSIX certificate password is required.' }
+} elseif ($CertificatePassword) {
+  throw 'MSIX certificate password was provided without a certificate.'
+}
 
-$makeAppx = (Get-Command makeappx.exe -ErrorAction Stop).Source
-$signtool = (Get-Command signtool.exe -ErrorAction Stop).Source
-$root = Join-Path $env:RUNNER_TEMP "remindon-msix-$Architecture"
+$makeAppx = (Get-Command makeappx.exe -ErrorAction SilentlyContinue).Source
+if (-not $makeAppx) {
+  $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+  $makeAppx = Get-ChildItem -LiteralPath $sdkRoot -Directory | Where-Object Name -Match '^\d+\.\d+\.\d+\.\d+$' |
+    Sort-Object { [version]$_.Name } -Descending | ForEach-Object { Join-Path $_.FullName 'x64\makeappx.exe' } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+}
+if (-not $makeAppx) { throw 'Install the Windows SDK with MakeAppx.exe before packaging.' }
+$signtool = Join-Path (Split-Path $makeAppx) 'signtool.exe'
+if ($CertificatePath -and -not (Test-Path -LiteralPath $signtool -PathType Leaf)) { throw 'SignTool.exe was not found in the Windows SDK.' }
+$root = Join-Path ([IO.Path]::GetTempPath()) "remindon-msix-$Architecture-$([guid]::NewGuid())"
 $stage = Join-Path $root 'package'
-Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path (Join-Path $stage 'Assets') -Force | Out-Null
 
 Copy-Item -LiteralPath $SourceExecutable -Destination (Join-Path $stage 'RemindOn.exe')
 foreach ($name in @('StoreLogo.png', 'Square44x44Logo.png', 'Square150x150Logo.png')) {
-  Copy-Item -LiteralPath $IconPath -Destination (Join-Path $stage "Assets\$name")
+  $logo = Join-Path (Split-Path $IconPath) $name
+  if (-not (Test-Path -LiteralPath $logo -PathType Leaf)) { throw "Required MSIX logo does not exist: $logo" }
+  Copy-Item -LiteralPath $logo -Destination (Join-Path $stage "Assets\$name")
 }
 
+$IdentityName = [Security.SecurityElement]::Escape($IdentityName)
+$Publisher = [Security.SecurityElement]::Escape($Publisher)
+$PublisherDisplayName = [Security.SecurityElement]::Escape($PublisherDisplayName)
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
-<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedCapabilities">
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap rescap">
   <Identity Name="$IdentityName" Publisher="$Publisher" Version="$Version" ProcessorArchitecture="$Architecture" />
   <Properties>
     <DisplayName>RemindOn</DisplayName>
-    <PublisherDisplayName>ChenHe</PublisherDisplayName>
+    <PublisherDisplayName>$PublisherDisplayName</PublisherDisplayName>
     <Description>RemindOn desktop reminders</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
-  <Resources><Resource Language="zh-CN" /></Resources>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Resources><Resource Language="zh-CN" /><Resource Language="en-US" /></Resources>
   <Applications>
     <Application Id="RemindOn" Executable="RemindOn.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements AppListEntry="default" DisplayName="RemindOn" Description="RemindOn desktop reminders" Square44x44Logo="Assets\Square44x44Logo.png" Square150x150Logo="Assets\Square150x150Logo.png" />
+      <uap:VisualElements AppListEntry="default" DisplayName="RemindOn" Description="RemindOn desktop reminders" BackgroundColor="transparent" Square44x44Logo="Assets\Square44x44Logo.png" Square150x150Logo="Assets\Square150x150Logo.png" />
     </Application>
   </Applications>
   <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
@@ -58,8 +81,10 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $msixPath = Join-Path $OutputDirectory "RemindOn_${Version}_${Architecture}.msix"
 & $makeAppx pack /d $stage /p $msixPath /o
 if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed with exit code $LASTEXITCODE" }
-& $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword $msixPath
-if ($LASTEXITCODE -ne 0) { throw "SignTool failed with exit code $LASTEXITCODE" }
-& $signtool verify /pa $msixPath
-if ($LASTEXITCODE -ne 0) { throw "SignTool verification failed with exit code $LASTEXITCODE" }
+if ($CertificatePath) {
+  & $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword $msixPath
+  if ($LASTEXITCODE -ne 0) { throw "SignTool failed with exit code $LASTEXITCODE" }
+  & $signtool verify /pa $msixPath
+  if ($LASTEXITCODE -ne 0) { throw "SignTool verification failed with exit code $LASTEXITCODE" }
+}
 Write-Output $msixPath

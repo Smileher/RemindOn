@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Four-part Store package version, for example 0.8.0.0
+        description: Store package version with a nonzero major and zero revision, for example 1.8.0.0
         required: true
         type: string
 
@@ -27,6 +27,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
       MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
       MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
       MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
     steps:
@@ -45,21 +46,32 @@ jobs:
       - name: Validate Store identity and version
         shell: pwsh
         run: |
-          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw 'Store version must have four numeric components.' }
-          if ([string]::IsNullOrWhiteSpace($env:MSIX_IDENTITY_NAME) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER)) { throw 'Configure MSIX_IDENTITY_NAME and MSIX_PUBLISHER repository variables.' }
-          if ([string]::IsNullOrWhiteSpace($env:MSIX_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:MSIX_PFX_PASSWORD)) { throw 'Configure MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD repository secrets.' }
+          if ($env:VERSION -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw 'Store version must have a nonzero major and a zero fourth component, for example 1.8.0.0.' }
+          foreach ($component in $env:VERSION.Split('.')) {
+            $number = [uint16]0
+            if (-not [uint16]::TryParse($component, [ref]$number)) { throw 'Store version components must be between 0 and 65535.' }
+          }
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_IDENTITY_NAME) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER_DISPLAY_NAME)) { throw 'Configure MSIX_IDENTITY_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY_NAME repository variables.' }
+          if ([bool]$env:MSIX_PFX_BASE64 -ne [bool]$env:MSIX_PFX_PASSWORD) { throw 'Optional signing requires both MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD.' }
       - name: Build Store executable
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles nsis --no-sign --ci
+        run: pnpm tauri build --target ${{ matrix.target }} --no-bundle --ci -- --locked
       - name: Write signing certificate
         shell: pwsh
         run: |
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
-      - name: Package and sign MSIX
+          if ($env:MSIX_PFX_BASE64) {
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
+          }
+      - name: Package MSIX with optional local signing
         shell: pwsh
         run: |
           $source = "src-tauri\target\${{ matrix.target }}\release\remindon.exe"
           $version = $env:VERSION
-          & ./scripts/package-msix.ps1 -Architecture '${{ matrix.architecture }}' -Version $version -IdentityName $env:MSIX_IDENTITY_NAME -Publisher $env:MSIX_PUBLISHER -SourceExecutable $source -IconPath 'src-tauri\icons\128x128.png' -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" -CertificatePath "$env:RUNNER_TEMP\remindon-signing.pfx" -CertificatePassword $env:MSIX_PFX_PASSWORD
+          $signing = @{}
+          if ($env:MSIX_PFX_BASE64) {
+            $signing.CertificatePath = "$env:RUNNER_TEMP\remindon-signing.pfx"
+            $signing.CertificatePassword = $env:MSIX_PFX_PASSWORD
+          }
+          & ./scripts/package-msix.ps1 -Architecture '${{ matrix.architecture }}' -Version $version -IdentityName $env:MSIX_IDENTITY_NAME -Publisher $env:MSIX_PUBLISHER -PublisherDisplayName $env:MSIX_PUBLISHER_DISPLAY_NAME -SourceExecutable $source -IconPath 'src-tauri\icons\128x128.png' -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" @signing
       - uses: actions/upload-artifact@v4
         with:
           name: msix-${{ matrix.architecture }}
@@ -82,12 +94,19 @@ jobs:
       - name: Validate and write signing certificate
         shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:MSIX_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:MSIX_PFX_PASSWORD)) { throw 'Configure MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD repository secrets.' }
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
-      - name: Create and sign MSIX bundle
+          if ([bool]$env:MSIX_PFX_BASE64 -ne [bool]$env:MSIX_PFX_PASSWORD) { throw 'Optional signing requires both MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD.' }
+          if ($env:MSIX_PFX_BASE64) {
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
+          }
+      - name: Create MSIX bundle with optional local signing
         shell: pwsh
         run: |
-          ./scripts/bundle-msix.ps1 -Version $env:VERSION -InputDirectory "$env:GITHUB_WORKSPACE\store-input" -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" -CertificatePath "$env:RUNNER_TEMP\remindon-signing.pfx" -CertificatePassword $env:MSIX_PFX_PASSWORD
+          $signing = @{}
+          if ($env:MSIX_PFX_BASE64) {
+            $signing.CertificatePath = "$env:RUNNER_TEMP\remindon-signing.pfx"
+            $signing.CertificatePassword = $env:MSIX_PFX_PASSWORD
+          }
+          ./scripts/bundle-msix.ps1 -Version $env:VERSION -InputDirectory "$env:GITHUB_WORKSPACE\store-input" -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" @signing
       - uses: actions/upload-artifact@v4
         with:
           name: remindon-msix-store
