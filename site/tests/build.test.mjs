@@ -8,7 +8,7 @@ import { locales } from '../content.mjs'
 import { renderPage, repository } from '../template.mjs'
 
 function releaseFixture(version = '0.7.0') {
-  const names = [`RemindOn_${version}_x64-setup.exe`, `RemindOn_${version}_x64_portable.exe`, `RemindOn_${version}_aarch64.dmg`, 'RemindOn_aarch64.app.tar.gz']
+  const names = [`RemindOn_${version}_x64-setup.exe`, `RemindOn_${version}_arm64-setup.exe`, `RemindOn_${version}_x64_portable.exe`, `RemindOn_${version}_arm64_portable.exe`, `RemindOn_${version}_aarch64.dmg`, 'RemindOn_aarch64.app.tar.gz']
   return {
     tag_name: `v${version}`, draft: false, prerelease: false,
     published_at: '2026-09-10T07:18:05Z', html_url: `${repository}/releases/tag/v${version}`,
@@ -16,10 +16,10 @@ function releaseFixture(version = '0.7.0') {
   }
 }
 
-test('a new version updates all three downloads and both pages together', () => {
+test('a new version updates all five downloads and both pages together', () => {
   const release = parseRelease(releaseFixture('0.8.0'))
   assert.equal(release.version, '0.8.0')
-  assert.deepEqual(Object.keys(release.downloads), ['windows', 'portable', 'mac'])
+  assert.deepEqual(Object.keys(release.downloads), ['windows', 'windowsArm64', 'portable', 'portableArm64', 'mac'])
   for (const language of Object.keys(locales)) {
     const html = renderPage(language, release, screenshotNames)
     assert.match(html, /v0\.8\.0/)
@@ -37,7 +37,7 @@ test('a new version updates all three downloads and both pages together', () => 
 })
 
 test('missing platform package fails instead of linking a signature or update archive', () => {
-  for (const index of [0, 1, 2]) {
+  for (const index of [0, 1, 2, 3, 4]) {
     const release = releaseFixture()
     release.assets.splice(index, 1)
     assert.throws(() => parseRelease(release), /Missing or invalid release asset/)
