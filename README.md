@@ -121,7 +121,7 @@ pnpm tauri:build --bundles nsis
 
 - `GITEE_TOKEN`：Gitee 个人设置中创建的、具有 `smileher/RemindOn` Release 和附件写入权限的私人令牌。
 
-令牌只配置在 GitHub Secret 中，不提交到仓库，也不要写入 workflow 文件。Gitee 仓库必须先有默认分支；空仓库请先在 Gitee 页面创建一个最小 README。正常发布会自动同步，失败时可在 `Retry Gitee release sync` workflow 中输入已发布的 tag 重试。
+令牌只配置在 GitHub Secret 中，不提交到仓库，也不要写入 workflow 文件。Gitee 仓库必须先有默认分支；空仓库请先在 Gitee 页面创建一个最小 README。正常发布会自动同步，失败时可在 `Retry Gitee release sync` workflow 中输入已发布的 tag 重试。旧版本（例如尚无 ARM64 的 `v0.8.0`）重试时可启用 `legacy_x64`；正常发布仍要求全部架构资产。同步脚本会匿名下载镜像文件并比对 SHA-256，再上传和验证 Gitee 清单。
 
 ### Microsoft Store MSIX
 
@@ -129,10 +129,12 @@ Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.git
 
 首次构建前，在 GitHub 仓库配置以下值：
 
-- Repository variables：`MSIX_IDENTITY_NAME`、`MSIX_PUBLISHER`。它们必须与 Partner Center 现有产品的 Identity 和 Publisher 完全一致。
-- Repository secrets：`MSIX_PFX_BASE64`、`MSIX_PFX_PASSWORD`。PFX 必须与 Store 产品身份和发布签名匹配；不要提交证书文件。
+- Repository variables：`MSIX_IDENTITY_NAME`、`MSIX_PUBLISHER`、`MSIX_PUBLISHER_DISPLAY_NAME`。它们必须与 Partner Center 现有产品的包身份、Publisher 和 PublisherDisplayName 完全一致。
+- 可选 Repository secrets：`MSIX_PFX_BASE64`、`MSIX_PFX_PASSWORD`，仅用于本地签名测试，两项必须同时提供。商店上传不要求购买代码签名证书，由 Microsoft Store 在发布时重新签名；不要提交证书文件。
 
-在 Actions 中运行 `Microsoft Store MSIX`，输入四段版本号，例如 `0.8.0.0`。工作流会生成 x64 `.msix`、ARM64 `.msix` 和 `.msixbundle` artifact，之后手动上传 Partner Center。Store 包版本必须递增；普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
+在 Actions 中运行 `Microsoft Store MSIX`，输入四段版本号，例如 `1.8.0.0`：第一段非零，每段不超过 65535，第四段为 0。工作流会生成 x64 `.msix`、ARM64 `.msix` 和 `.msixbundle` artifact，之后手动上传 Partner Center。Store 包版本必须递增；普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
+
+从获取身份、Actions 一键构建、本地脚本、上传文件到网页各项填写的完整步骤，见 [Microsoft Store 首次发布指南](docs/release/microsoft-store.md)。真实 MSIX 的安装、升级、ARM64 和开机自启仍需验证，当前未接入自动提交审核。
 
 ## 项目结构
 
