@@ -39,35 +39,81 @@ test('Gitee manifest replaces every GitHub asset URL', () => {
   }
 })
 
-test('Gitee sync creates missing assets and replaces latest.json on repeat', async (context) => {
+for (const legacyX64 of [false, true]) {
+test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous downloads and does not duplicate assets`, async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'remindon-gitee-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   for (const name of names) await writeFile(join(directory, name), name)
 
-  let uploaded = []
+  const selectedNames = legacyX64 ? names.filter((name) => !name.includes('_arm64')) : names
+  const githubManifest = manifest()
+  if (legacyX64) {
+    delete githubManifest.platforms['windows-aarch64']
+    delete githubManifest.downloads['windows-aarch64-portable']
+  }
+  const uploaded = []
+  const remoteBytes = new Map()
+  let existingAssets = []
+  let releaseExists = false
+  let corruptDownload = false
   const fetchImpl = async (url, options = {}) => {
+    if (new URL(url).pathname.startsWith('/smileher/RemindOn/releases/download/')) {
+      const name = new URL(url).pathname.split('/').at(-1)
+      return new Response(corruptDownload ? 'invalid file' : remoteBytes.get(name))
+    }
     const path = new URL(url).pathname.replace('/api/v5/repos/smileher/RemindOn', '') || ''
-    if (options.method === 'POST' && path === '/releases') return Response.json({ id: 42 })
+    if (options.method === 'POST' && path === '/releases') {
+      releaseExists = true
+      return Response.json({ id: 42 })
+    }
     if (options.method === 'POST' && path.endsWith('/attach_files')) {
       const file = options.body.get('file')
       uploaded.push(file.name)
-      return Response.json({ id: uploaded.length, name: file.name, browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/${file.name}` })
+      remoteBytes.set(file.name, await file.arrayBuffer())
+      const asset = { id: uploaded.length, name: file.name, browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/${file.name}` }
+      existingAssets.push(asset)
+      return Response.json(asset)
     }
-    if (options.method === 'DELETE') return new Response(null, { status: 204 })
+    if (options.method === 'DELETE') {
+      existingAssets = existingAssets.filter((asset) => asset.id !== Number(path.split('/').at(-1)))
+      return new Response(null, { status: 204 })
+    }
     if (path === '') return Response.json({ default_branch: 'master' })
-    if (path === '/releases') return Response.json([])
-    if (path.endsWith('/attach_files')) return Response.json([])
+    if (path === '/releases') return Response.json(releaseExists ? [{ id: 42, tag_name: `v${version}` }] : [])
+    if (path.endsWith('/attach_files')) return Response.json(existingAssets)
     throw new Error(`unexpected ${options.method ?? 'GET'} ${path}`)
   }
 
-  const result = await syncGiteeRelease({
+  const options = {
     tag: `v${version}`,
-    githubRelease: { tag_name: `v${version}`, body: '' , assets: names.map((name) => ({ name })) },
-    githubManifest: manifest(),
+    githubRelease: { tag_name: `v${version}`, body: '' , assets: selectedNames.map((name) => ({ name })) },
+    githubManifest,
+    legacyX64,
     assetDir: directory,
     token: 'test-token',
     fetchImpl,
-  })
+  }
+  const result = await syncGiteeRelease(options)
   assert.equal(result.releaseId, 42)
-  assert.deepEqual(uploaded, [...names, 'latest.json'])
+  assert.deepEqual(uploaded, [...selectedNames, 'latest.json'])
+  await syncGiteeRelease(options)
+  assert.deepEqual(uploaded, [...selectedNames, 'latest.json', 'latest.json'])
+  assert.equal(existingAssets.length, selectedNames.length + 1)
+  corruptDownload = true
+  await assert.rejects(syncGiteeRelease(options), /SHA256 does not match GitHub/)
+  assert.equal(existingAssets.length, selectedNames.length + 1)
+})
+}
+
+test('normal sync still rejects missing ARM64 assets and legacy mode rejects ARM64 manifests', async () => {
+  const options = {
+    tag: `v${version}`,
+    githubRelease: { tag_name: `v${version}`, assets: names.filter((name) => !name.includes('_arm64')).map((name) => ({ name })) },
+    githubManifest: manifest(),
+    assetDir: 'unused',
+    token: 'test-token',
+    fetchImpl: () => { throw new Error('Validation must happen before network requests') },
+  }
+  await assert.rejects(syncGiteeRelease(options), /GitHub release is missing:.*arm64/)
+  await assert.rejects(syncGiteeRelease({ ...options, legacyX64: true }), /cannot be used with an ARM64/)
 })

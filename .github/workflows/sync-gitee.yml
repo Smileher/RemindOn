@@ -7,9 +7,18 @@ on:
         description: Published GitHub release tag, for example v0.8.1
         required: true
         type: string
+      legacy_x64:
+        description: Only for historical releases without Windows ARM64 assets
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+
+concurrency:
+  group: gitee-sync-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -31,4 +40,8 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           TAG: ${{ inputs.tag }}
-        run: node scripts/sync-gitee-release.mjs "$TAG" release.json assets/latest.json assets
+          LEGACY_X64: ${{ inputs.legacy_x64 }}
+        run: |
+          options=()
+          if [[ "$LEGACY_X64" == 'true' ]]; then options+=(--legacy-x64); fi
+          node scripts/sync-gitee-release.mjs "$TAG" release.json assets/latest.json assets "${options[@]}"
