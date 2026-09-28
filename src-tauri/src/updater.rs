@@ -98,6 +98,7 @@ pub async fn download_portable_update(
 
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|error| error.to_string())?;
@@ -179,6 +180,7 @@ async fn download_portable_update_from_manifest(
 
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|error| error.to_string())?;
