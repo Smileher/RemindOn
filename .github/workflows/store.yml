@@ -1,0 +1,94 @@
+name: Microsoft Store MSIX
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Four-part Store package version, for example 0.8.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            architecture: x64
+          - target: aarch64-pc-windows-msvc
+            architecture: arm64
+    runs-on: windows-latest
+    env:
+      REMINDON_STORE_BUILD: '1'
+      VERSION: ${{ inputs.version }}
+      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+      MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+      MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.19.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - name: Validate Store identity and version
+        shell: pwsh
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw 'Store version must have four numeric components.' }
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_IDENTITY_NAME) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER)) { throw 'Configure MSIX_IDENTITY_NAME and MSIX_PUBLISHER repository variables.' }
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:MSIX_PFX_PASSWORD)) { throw 'Configure MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD repository secrets.' }
+      - name: Build Store executable
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles nsis --no-sign --ci
+      - name: Write signing certificate
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
+      - name: Package and sign MSIX
+        shell: pwsh
+        run: |
+          $source = "src-tauri\target\${{ matrix.target }}\release\remindon.exe"
+          $version = $env:VERSION
+          & ./scripts/package-msix.ps1 -Architecture '${{ matrix.architecture }}' -Version $version -IdentityName $env:MSIX_IDENTITY_NAME -Publisher $env:MSIX_PUBLISHER -SourceExecutable $source -IconPath 'src-tauri\icons\128x128.png' -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" -CertificatePath "$env:RUNNER_TEMP\remindon-signing.pfx" -CertificatePassword $env:MSIX_PFX_PASSWORD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msix-${{ matrix.architecture }}
+          path: store-output/*.msix
+
+  bundle:
+    needs: package
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+      MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: msix-*
+          path: store-input
+          merge-multiple: true
+      - name: Validate and write signing certificate
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:MSIX_PFX_PASSWORD)) { throw 'Configure MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD repository secrets.' }
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\remindon-signing.pfx", [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
+      - name: Create and sign MSIX bundle
+        shell: pwsh
+        run: |
+          ./scripts/bundle-msix.ps1 -Version $env:VERSION -InputDirectory "$env:GITHUB_WORKSPACE\store-input" -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" -CertificatePath "$env:RUNNER_TEMP\remindon-signing.pfx" -CertificatePassword $env:MSIX_PFX_PASSWORD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remindon-msix-store
+          path: store-output/*.msixbundle
