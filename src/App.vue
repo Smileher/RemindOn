@@ -25,6 +25,7 @@ type EditableReminderType = Exclude<ReminderType, 'interval'>
 type AutomaticPowerAction = Extract<PowerAction, 'shutdown' | 'lock' | 'restart'>
 
 const isPopup = window.location.hash === '#/reminder'
+const isStoreBuild = typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__
 const data = ref<AppData>(defaultData())
 const currentView = ref<View>('rest')
 const showForm = ref(false)
@@ -682,7 +683,7 @@ onUnmounted(() => {
           <div class="about-product"><h1>RemindOn</h1><p>{{ t('app.tagline') }}</p></div>
           <span class="about-version">{{ t('about.version', { version: appVersion }) }}</span>
         </div>
-        <div class="update-panel" aria-live="polite">
+        <div v-if="!isStoreBuild" class="update-panel" aria-live="polite">
           <div class="update-summary"><span :class="['update-icon', { checking: updateStatus === 'checking' }]"><RotateCw :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ updateStatusText }}</strong></div></div>
           <div class="update-actions">
             <button v-if="updateStatus === 'ready'" class="button button-primary" type="button" @click="restartApp">{{ t('update.restart') }}</button>
@@ -695,6 +696,7 @@ onUnmounted(() => {
           <div v-if="fallbackAvailable" class="update-error" role="status"><span>{{ t('update.fallback', { seconds: fallbackSeconds }) }}</span><button class="button" type="button" @click="switchToMirror">{{ t('update.switchSource') }}</button><button class="button" type="button" @click="cancelMirrorFallback">{{ t('common.cancel') }}</button></div>
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
+        <div v-else class="update-panel" aria-live="polite"><div class="update-summary"><span class="update-icon"><Info :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div></div></div>
         <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>ChenHe</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>
       </section>
