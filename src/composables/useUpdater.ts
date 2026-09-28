@@ -51,7 +51,6 @@ export function useUpdater() {
     errorMessage.value = ''
     try {
       const update = pendingUpdate
-      await update.close().catch(() => {})
       if (mode.value === 'portable') {
         const path = await invoke<string>('download_portable_update_from_gitee', { expectedVersion: update.version })
         downloadedPath.value = path
