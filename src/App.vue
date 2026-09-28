@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
+import { sendNotification } from '@tauri-apps/plugin-notification'
 import {
   CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
@@ -45,6 +46,8 @@ const {
   revealDownloadedUpdate, openReleases, dispose: disposeUpdater,
 } = useUpdater()
 const confirmingUpdate = ref(false)
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000
+const UPDATE_CHECKED_AT_KEY = 'remindon.update.lastCheckedAt'
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
@@ -506,9 +509,24 @@ async function startUpdate() {
   await confirmUpdate()
 }
 
+async function checkForUpdatesInBackground() {
+  const lastCheckedAt = Number.parseInt(localStorage.getItem(UPDATE_CHECKED_AT_KEY) ?? '', 10)
+  if (Number.isFinite(lastCheckedAt) && Date.now() - lastCheckedAt < UPDATE_CHECK_INTERVAL) return
+  const successful = await checkForUpdates(true)
+  if (!successful) return
+  localStorage.setItem(UPDATE_CHECKED_AT_KEY, String(Date.now()))
+  if (newVersion.value && (document.visibilityState === 'hidden' || !document.hasFocus())) {
+    try {
+      sendNotification({ title: 'RemindOn', body: t('update.notification', { version: newVersion.value }) })
+    } catch (error) {
+      logError('send update notification', error)
+    }
+  }
+}
+
 onMounted(async () => {
   if (isPopup) return
-  void checkForUpdates(true)
+  void checkForUpdatesInBackground()
   try {
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
