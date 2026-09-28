@@ -153,14 +153,23 @@ export function useUpdater() {
     progress.value = null
     errorMessage.value = ''
 
+    let stallTimer: ReturnType<typeof setInterval> | undefined
+    let lastProgressAt = Date.now()
     try {
       let downloaded = 0
       let total = 0
+      stallTimer = setInterval(() => {
+        if (Date.now() - lastProgressAt < 15000 || !pendingUpdate) return
+        void pendingUpdate.close().catch(() => {})
+      }, 1000)
+      if (typeof stallTimer === 'object' && 'unref' in stallTimer) stallTimer.unref()
       await pendingUpdate.downloadAndInstall((event) => {
         if (event.event === 'Started') {
+          lastProgressAt = Date.now()
           total = event.data.contentLength ?? 0
           progress.value = total > 0 ? 0 : null
         } else if (event.event === 'Progress') {
+          lastProgressAt = Date.now()
           downloaded += event.data.chunkLength
           if (total > 0) progress.value = Math.min(100, Math.round(downloaded / total * 100))
         } else if (event.event === 'Finished') {
@@ -175,6 +184,8 @@ export function useUpdater() {
       logUpdaterError('install update', error)
       errorMessage.value = 'update-failed'
       scheduleMirrorFallback()
+    } finally {
+      if (stallTimer) clearInterval(stallTimer)
     }
   }
 
