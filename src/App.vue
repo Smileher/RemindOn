@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { sendNotification } from '@tauri-apps/plugin-notification'
+import { onAction, sendNotification } from '@tauri-apps/plugin-notification'
 import {
   CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
@@ -54,6 +54,7 @@ let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let unlistenNotificationFailure: (() => void) | undefined
+let unlistenUpdateAction: { unregister: () => Promise<void> } | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
@@ -519,7 +520,7 @@ async function checkForUpdatesInBackground() {
   localStorage.setItem(UPDATE_CHECKED_AT_KEY, String(Date.now()))
   if (newVersion.value && (document.visibilityState === 'hidden' || !document.hasFocus())) {
     try {
-      sendNotification({ title: 'RemindOn', body: t('update.notification', { version: newVersion.value }) })
+      sendNotification({ title: 'RemindOn', body: t('update.notification', { version: newVersion.value }), extra: { kind: 'update' } })
     } catch (error) {
       logError('send update notification', error)
     }
@@ -566,6 +567,12 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
+    unlistenUpdateAction = await onAction((notification) => {
+      if (notification.extra?.kind !== 'update') return
+      currentView.value = 'about'
+      void getCurrentWindow().show()
+      void getCurrentWindow().setFocus()
+    })
     await refreshTimers()
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
@@ -582,6 +589,7 @@ onUnmounted(() => {
   unlistenNavigation?.()
   unlistenRestTimer?.()
   unlistenNotificationFailure?.()
+  void unlistenUpdateAction?.unregister()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
 })
