@@ -43,7 +43,8 @@ const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
   checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
-  revealDownloadedUpdate, openReleases, dispose: disposeUpdater,
+  revealDownloadedUpdate, openReleases, fallbackSeconds, fallbackAvailable,
+  switchToMirror, cancelMirrorFallback, dispose: disposeUpdater,
 } = useUpdater()
 const confirmingUpdate = ref(false)
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000
@@ -691,6 +692,7 @@ onUnmounted(() => {
             <button v-if="updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
           </div>
           <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
+          <div v-if="fallbackAvailable" class="update-error" role="status"><span>{{ t('update.fallback', { seconds: fallbackSeconds }) }}</span><button class="button" type="button" @click="switchToMirror">{{ t('update.switchSource') }}</button><button class="button" type="button" @click="cancelMirrorFallback">{{ t('common.cancel') }}</button></div>
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
         <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>ChenHe</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
