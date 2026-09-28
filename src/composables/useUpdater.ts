@@ -24,22 +24,22 @@ export function useUpdater() {
   let pendingUpdate: Update | null = null
   let disposed = false
 
-  async function checkForUpdates(silent = false) {
-    if (disposed || busy.value || status.value === 'ready') return
+  async function checkForUpdates(silent = false): Promise<boolean> {
+    if (disposed || busy.value || status.value === 'ready') return false
     status.value = 'checking'
     errorMessage.value = ''
 
     try {
       mode.value = await invoke<UpdateMode>('get_update_mode')
-      if (disposed) return
+      if (disposed) return false
       if (mode.value !== 'installed' && mode.value !== 'portable') {
         status.value = 'idle'
-        return
+        return true
       }
       const update = await check({ timeout: 15000 })
       if (disposed) {
         await update?.close().catch(() => {})
-        return
+        return false
       }
       const previous = pendingUpdate
       pendingUpdate = update
@@ -48,10 +48,12 @@ export function useUpdater() {
       status.value = update ? 'available' : 'upToDate'
       // Each successful check owns a native resource, including repeated checks of the same version.
       await previous?.close().catch(() => {})
+      return true
     } catch (error) {
       status.value = silent ? (pendingUpdate ? 'available' : 'idle') : 'error'
       logUpdaterError('check for updates', error)
       if (!silent) errorMessage.value = 'update-failed'
+      return false
     }
   }
 

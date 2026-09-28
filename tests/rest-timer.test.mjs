@@ -75,6 +75,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     },
     '@tauri-apps/plugin-dialog': { ask: noop, open: noop, save: noop },
     '@tauri-apps/plugin-autostart': { disable: noop, enable: noop, isEnabled: async () => false },
+    '@tauri-apps/plugin-notification': { sendNotification: noop },
     '@lucide/vue': new Proxy({}, { get: () => ({ render: noop }) }),
     './components/ReminderPopup.vue': { default: { render: noop } },
     './assets/remindon.svg': { default: 'remindon.svg' },
@@ -100,6 +101,8 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         return modules[name]
       },
       window: { location: { hash: '' }, setInterval: () => 1, clearInterval: noop },
+      localStorage: { getItem: () => null, setItem: noop },
+      document: { visibilityState: 'visible', hasFocus: () => true },
       console,
     })
     return exports
