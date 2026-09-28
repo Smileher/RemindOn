@@ -84,10 +84,12 @@ pnpm tauri:build --bundles app,dmg
 
 ## 发布更新
 
-更新文件托管在 [GitHub Releases](https://github.com/Smileher/RemindOn/releases)，无需自建服务器。客户端读取最新正式版本的 `latest.json`，使用内置公钥校验更新包签名。检查与下载需要能够访问 GitHub；自动检查失败时保持安静，手动检查失败时会显示错误并提供下载入口。
+更新文件托管在 [GitHub Releases](https://github.com/Smileher/RemindOn/releases)，并自动同步到 [Gitee 镜像](https://gitee.com/smileher/RemindOn/releases)，无需自建服务器。客户端读取最新正式版本的 `latest.json`，使用内置公钥校验更新包签名。普通版启动后最多每 24 小时自动检查一次；检查失败保持安静，手动检查失败时会显示错误并提供下载入口。
 
 - Windows NSIS 安装版可在应用内安装更新。便携版会把版本化 EXE 下载到系统“下载”目录；下载完成后可点击“打开所在位置”，退出旧程序后自行运行或替换为新版。
+- Windows 同时发布 x64 和 ARM64 安装版、便携版。请根据系统架构选择对应文件，ARM64 版本不能安装到 x64 设备上。
 - macOS 仅发布 Apple Silicon 版本。位于 `/Applications` 或 `~/Applications` 的应用副本可自动更新；从 DMG 或其他位置运行时，会把最新版 DMG 下载到系统“下载”目录。
+- GitHub 下载连接失败或无进度时，关于页面会显示 5 秒倒计时，并允许立即切换到 Gitee；倒计时结束后自动切换。Gitee 清单与 GitHub 清单版本、签名和 SHA-256 相同，只替换下载地址。
 - 便携文件先写入 `.part` 临时文件，完成后校验 SHA-256，再改为正式文件；不会覆盖当前运行程序或同名的不同文件。
 - 开发模式不检查更新。更新只在用户确认后安装；安装和重启期间无法发送提醒，请先完成编辑或等待定时操作结束。
 - 0.6 便携版尚未包含应用内下载能力，需要首次手动升级到 0.7；此后可直接在“关于”页下载新版。提醒数据仍保存在原应用数据目录。
@@ -107,10 +109,30 @@ pnpm tauri:build --bundles nsis
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
 2. 执行上述检查，提交代码并推送版本标签，例如 `v0.8.0`。
-3. Release 工作流创建草稿，并行构建 Windows x64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
-4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
+3. Release 工作流创建草稿，并行构建 Windows x64、Windows ARM64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
+4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 GitHub `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
+5. 发布完成后，`sync-gitee` job 创建或复用同 tag 的 Gitee Release，上传 6 个二进制资产和 Gitee 版 `latest.json`。Gitee 仓库不接收源码同步。
 
 如需重跑失败的发布，可重新运行工作流，或在 Actions 中选择对应版本标签手动运行。已公开的版本不可覆盖，应递增版本号重新发布。macOS 构建使用 ad-hoc 签名，未配置 Apple Developer ID 公证；更新签名与操作系统代码签名是不同机制。
+
+### Gitee Actions 配置
+
+在 GitHub 仓库打开 `Settings → Secrets and variables → Actions → New repository secret`，新增：
+
+- `GITEE_TOKEN`：Gitee 个人设置中创建的、具有 `smileher/RemindOn` Release 和附件写入权限的私人令牌。
+
+令牌只配置在 GitHub Secret 中，不提交到仓库，也不要写入 workflow 文件。Gitee 仓库必须先有默认分支；空仓库请先在 Gitee 页面创建一个最小 README。正常发布会自动同步，失败时可在 `Retry Gitee release sync` workflow 中输入已发布的 tag 重试。
+
+### Microsoft Store MSIX
+
+Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.github/workflows/store.yml` 手动构建。它与 NSIS/便携版是独立渠道，Store 版本不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
+
+首次构建前，在 GitHub 仓库配置以下值：
+
+- Repository variables：`MSIX_IDENTITY_NAME`、`MSIX_PUBLISHER`。它们必须与 Partner Center 现有产品的 Identity 和 Publisher 完全一致。
+- Repository secrets：`MSIX_PFX_BASE64`、`MSIX_PFX_PASSWORD`。PFX 必须与 Store 产品身份和发布签名匹配；不要提交证书文件。
+
+在 Actions 中运行 `Microsoft Store MSIX`，输入四段版本号，例如 `0.8.0.0`。工作流会生成 x64 `.msix`、ARM64 `.msix` 和 `.msixbundle` artifact，之后手动上传 Partner Center。Store 包版本必须递增；普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
 
 ## 项目结构
 
