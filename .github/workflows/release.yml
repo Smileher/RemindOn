@@ -68,6 +68,11 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            asset_arch: x64
+            bundles: nsis
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            asset_arch: arm64
             bundles: nsis
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -112,9 +117,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
         run: |
-          $portable = "RemindOn_$($env:VERSION)_x64_portable.exe"
-          Copy-Item -LiteralPath 'src-tauri/target/x86_64-pc-windows-msvc/release/remindon.exe' -Destination $portable
+          $portable = "RemindOn_$($env:VERSION)_$($env:ASSET_ARCH)_portable.exe"
+          $binary = "src-tauri/target/$($env:TARGET)/release/remindon.exe"
+          Copy-Item -LiteralPath $binary -Destination $portable
           $hash = (Get-FileHash -LiteralPath $portable -Algorithm SHA256).Hash.ToLowerInvariant()
           [System.IO.File]::WriteAllText("$portable.sha256", "$hash`n", [System.Text.Encoding]::ASCII)
           gh release upload "$env:TAG" $portable "$portable.sha256" --clobber
