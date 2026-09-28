@@ -123,6 +123,8 @@ pnpm tauri:build --bundles nsis
 
 令牌只配置在 GitHub Secret 中，不提交到仓库，也不要写入 workflow 文件。Gitee 仓库必须先有默认分支；空仓库请先在 Gitee 页面创建一个最小 README。正常发布会自动同步，失败时可在 `Retry Gitee release sync` workflow 中输入已发布的 tag 重试。旧版本（例如尚无 ARM64 的 `v0.8.0`）重试时可启用 `legacy_x64`；正常发布仍要求全部架构资产。同步脚本会匿名下载镜像文件并比对 SHA-256，再上传和验证 Gitee 清单。
 
+2026-09-28 实测：`GITEE_TOKEN` 已成功创建 Gitee `v0.8.0` Release，但 GitHub Actions 三次同步均遇到连接或请求超时，Release 尚无附件。安装包上传、清单下载和客户端回退尚未验证通过；当前不能将 Gitee 镜像视为可用。运行记录见 [Gitee 同步测试](https://github.com/Smileher/RemindOn/actions/runs/36420353389)。
+
 ### Microsoft Store MSIX
 
 Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.github/workflows/store.yml` 手动构建。它与 NSIS/便携版是独立渠道，Store 版本不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
