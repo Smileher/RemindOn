@@ -1,4 +1,6 @@
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+use reqwest::Url;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use serde::Deserialize;
 use serde::Serialize;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -15,15 +17,22 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::{Emitter, Manager};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/Smileher/RemindOn/releases/latest/download/latest.json";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+const GITEE_UPDATE_MANIFEST_URL: &str =
+    "https://gitee.com/smileher/RemindOn/releases/latest/download/latest.json";
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const DOWNLOAD_PROGRESS_EVENT: &str = "portable-download-progress";
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const PORTABLE_DOWNLOAD_TARGET: &str = "windows-x86_64-portable";
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+const PORTABLE_DOWNLOAD_TARGET: &str = "windows-aarch64-portable";
 #[cfg(target_os = "macos")]
 const PORTABLE_DOWNLOAD_TARGET: &str = "darwin-aarch64-portable";
 
@@ -148,6 +157,123 @@ pub async fn download_portable_update(
     Ok(final_path.to_string_lossy().into_owned())
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[tauri::command]
+pub async fn download_portable_update_from_gitee(
+    app: tauri::AppHandle,
+    expected_version: String,
+) -> Result<String, String> {
+    download_portable_update_from_manifest(&app, &expected_version, GITEE_UPDATE_MANIFEST_URL).await
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+async fn download_portable_update_from_manifest(
+    app: &tauri::AppHandle,
+    expected_version: &str,
+    manifest_url: &str,
+) -> Result<String, String> {
+    if get_update_mode(app.clone())? != UpdateMode::Portable {
+        return Err("当前副本不是便携运行模式".to_string());
+    }
+    validate_release_version(expected_version)?;
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let manifest_bytes = client
+        .get(manifest_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| error.to_string())?
+        .bytes()
+        .await
+        .map_err(|error| error.to_string())?;
+    let manifest: UpdateManifest =
+        serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
+    if manifest.version != expected_version {
+        return Err("更新版本已经变化，请重新检查更新".to_string());
+    }
+    let asset = manifest
+        .downloads
+        .get(PORTABLE_DOWNLOAD_TARGET)
+        .ok_or_else(|| "当前平台没有可下载的便携更新".to_string())?;
+    validate_download_asset(expected_version, asset)?;
+
+    let download_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
+    let expected_hash = asset.sha256.to_ascii_lowercase();
+    let final_path = available_download_path(&download_dir, &asset.file_name);
+    let part_path = partial_download_path(&final_path);
+    if part_path.exists() {
+        fs::remove_file(&part_path).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = download_to_file(&client, app, asset, &part_path).await {
+        let _ = fs::remove_file(&part_path);
+        return Err(error);
+    }
+    if checksum_file(&part_path)? != expected_hash {
+        let _ = fs::remove_file(&part_path);
+        return Err("下载文件校验失败，请重新下载".to_string());
+    }
+    fs::rename(&part_path, &final_path).map_err(|error| {
+        let _ = fs::remove_file(&part_path);
+        error.to_string()
+    })?;
+    Ok(final_path.to_string_lossy().into_owned())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[tauri::command]
+pub async fn install_update_from_gitee(
+    app: tauri::AppHandle,
+    expected_version: String,
+) -> Result<(), String> {
+    validate_release_version(&expected_version)?;
+    let endpoint = Url::parse(GITEE_UPDATE_MANIFEST_URL).map_err(|error| error.to_string())?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| error.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Gitee 没有可用的更新".to_string())?;
+    if update.version != expected_version {
+        return Err("Gitee 更新版本不匹配".to_string());
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[tauri::command]
+pub async fn download_portable_update_from_gitee(
+    _app: tauri::AppHandle,
+    _expected_version: String,
+) -> Result<String, String> {
+    Err("当前平台不支持便携更新".to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[tauri::command]
+pub async fn install_update_from_gitee(
+    _app: tauri::AppHandle,
+    _expected_version: String,
+) -> Result<(), String> {
+    Err("当前平台不支持应用内更新".to_string())
+}
+
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[tauri::command]
 pub async fn download_portable_update(
@@ -176,9 +302,14 @@ fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Resu
     if asset.file_name != expected_download_file_name(version) {
         return Err("更新文件名无效".to_string());
     }
-    let expected_prefix =
-        format!("https://github.com/Smileher/RemindOn/releases/download/v{version}/");
-    if !asset.url.starts_with(&expected_prefix) {
+    let url = Url::parse(&asset.url).map_err(|_| "更新下载地址无效".to_string())?;
+    let valid_host = matches!(url.host_str(), Some("github.com" | "gitee.com"));
+    let expected_prefix = format!("/Smileher/RemindOn/releases/download/v{version}/");
+    let expected_gitee_prefix = format!("/smileher/RemindOn/releases/download/v{version}/");
+    if !valid_host
+        || (!url.path().starts_with(&expected_prefix)
+            && !url.path().starts_with(&expected_gitee_prefix))
+    {
         return Err("更新下载地址无效".to_string());
     }
     if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -189,7 +320,11 @@ fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Resu
 
 #[cfg(target_os = "windows")]
 fn expected_download_file_name(version: &str) -> String {
-    format!("RemindOn_{version}_x64_portable.exe")
+    if cfg!(target_arch = "aarch64") {
+        format!("RemindOn_{version}_arm64_portable.exe")
+    } else {
+        format!("RemindOn_{version}_x64_portable.exe")
+    }
 }
 
 #[cfg(target_os = "macos")]

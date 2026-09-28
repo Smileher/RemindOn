@@ -20,9 +20,54 @@ export function useUpdater() {
   const progress = ref<number | null>(null)
   const downloadedPath = ref('')
   const errorMessage = ref('')
+  const fallbackSeconds = ref(0)
+  const fallbackAvailable = computed(() => fallbackSeconds.value > 0)
   const busy = computed(() => ['checking', 'downloading', 'installing'].includes(status.value))
   let pendingUpdate: Update | null = null
   let disposed = false
+  let fallbackTimer: ReturnType<typeof setInterval> | undefined
+
+  function cancelMirrorFallback() {
+    if (fallbackTimer) clearInterval(fallbackTimer)
+    fallbackTimer = undefined
+    fallbackSeconds.value = 0
+  }
+
+  function scheduleMirrorFallback() {
+    cancelMirrorFallback()
+    fallbackSeconds.value = 5
+    fallbackTimer = setInterval(() => {
+      fallbackSeconds.value -= 1
+      if (fallbackSeconds.value <= 0) void switchToMirror()
+    }, 1000)
+    if (typeof fallbackTimer === 'object' && 'unref' in fallbackTimer) fallbackTimer.unref()
+  }
+
+  async function switchToMirror() {
+    cancelMirrorFallback()
+    if (disposed || busy.value || !pendingUpdate) return
+    status.value = 'downloading'
+    progress.value = null
+    errorMessage.value = ''
+    try {
+      const update = pendingUpdate
+      await update.close().catch(() => {})
+      if (mode.value === 'portable') {
+        const path = await invoke<string>('download_portable_update_from_gitee', { expectedVersion: update.version })
+        downloadedPath.value = path
+        progress.value = 100
+        status.value = 'downloaded'
+      } else if (mode.value === 'installed') {
+        await invoke('install_update_from_gitee', { expectedVersion: update.version })
+        status.value = 'ready'
+        await restartApp()
+      }
+    } catch (error) {
+      status.value = 'error'
+      logUpdaterError('switch to Gitee update', error)
+      errorMessage.value = 'update-failed'
+    }
+  }
 
   async function checkForUpdates(silent = false): Promise<boolean> {
     if (disposed || busy.value || status.value === 'ready') return false
@@ -82,6 +127,7 @@ export function useUpdater() {
         status.value = 'error'
         logUpdaterError('download portable update', error)
         errorMessage.value = 'update-failed'
+        scheduleMirrorFallback()
       }
     } finally {
       unlistenProgress?.()
@@ -128,6 +174,7 @@ export function useUpdater() {
       status.value = 'error'
       logUpdaterError('install update', error)
       errorMessage.value = 'update-failed'
+      scheduleMirrorFallback()
     }
   }
 
@@ -154,6 +201,7 @@ export function useUpdater() {
 
   function dispose() {
     disposed = true
+    cancelMirrorFallback()
     const update = pendingUpdate
     pendingUpdate = null
     void update?.close().catch(() => {})
@@ -162,6 +210,7 @@ export function useUpdater() {
   return {
     mode, status, newVersion, progress, downloadedPath, errorMessage, busy,
     checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
+    fallbackSeconds, fallbackAvailable, switchToMirror, cancelMirrorFallback,
     revealDownloadedUpdate, openReleases, dispose,
   }
 }

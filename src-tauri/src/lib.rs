@@ -1056,7 +1056,9 @@ pub fn run() {
             export_data,
             open_power_settings,
             updater::get_update_mode,
-            updater::download_portable_update
+            updater::download_portable_update,
+            updater::download_portable_update_from_gitee,
+            updater::install_update_from_gitee
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
