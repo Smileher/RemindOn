@@ -71,6 +71,7 @@ export function useUpdater() {
 
   async function checkForUpdates(silent = false): Promise<boolean> {
     if (disposed || busy.value || status.value === 'ready') return false
+    if (typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__) return true
     status.value = 'checking'
     errorMessage.value = ''
 
