@@ -16,6 +16,7 @@ export function createUpdaterManifest(version, release, signatures, checksums) {
   if (release.tag_name !== `v${version}`) throw new Error('Release tag does not match the application version')
   const packages = {
     'windows-x86_64': `RemindOn_${version}_x64-setup.exe`,
+    'windows-aarch64': `RemindOn_${version}_arm64-setup.exe`,
     'darwin-aarch64': 'RemindOn_aarch64.app.tar.gz',
   }
   const platforms = {}
@@ -30,6 +31,7 @@ export function createUpdaterManifest(version, release, signatures, checksums) {
   }
   const portablePackages = {
     'windows-x86_64-portable': `RemindOn_${version}_x64_portable.exe`,
+    'windows-aarch64-portable': `RemindOn_${version}_arm64_portable.exe`,
     'darwin-aarch64-portable': `RemindOn_${version}_aarch64.dmg`,
   }
   const downloads = {}
