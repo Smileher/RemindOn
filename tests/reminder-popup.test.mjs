@@ -56,8 +56,14 @@ async function mountPopup({ label = 'reminder', active = null } = {}) {
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return readData()
         if (command === 'get_active_reminder') return active
-        if (command === 'execute_power_action') return true
-        if (['dismiss_reminder', 'snooze_reminder'].includes(command)) return
+        if (command === 'execute_power_action') {
+          listeners.get('reminder-closed')?.callback({ payload: args.sessionId })
+          return true
+        }
+        if (['dismiss_reminder', 'snooze_reminder'].includes(command)) {
+          listeners.get('reminder-closed')?.callback({ payload: args.sessionId })
+          return
+        }
         throw new Error(`Unexpected command: ${command}`)
       },
     },
@@ -82,7 +88,6 @@ async function mountPopup({ label = 'reminder', active = null } = {}) {
     window: {
       setInterval: (callback) => { const id = nextInterval++; intervals.set(id, callback); return id },
       clearInterval: (id) => intervals.delete(id),
-      requestAnimationFrame: (callback) => callback(),
       addEventListener: (name, callback) => windowListeners.set(name, callback),
       removeEventListener: (name) => windowListeners.delete(name),
     },
@@ -148,7 +153,7 @@ test('import reset clears the current rest and its elapsed timer', async () => {
   assert.equal(popup.state.triggeredAt.value, null)
   assert.equal(popup.state.restElapsedSeconds.value, 0)
   assert.equal(popup.intervals.size, 0)
-  assert.equal(popup.calls.at(-1), 'hide')
+  assert.ok(!popup.calls.includes('hide'))
 })
 
 test('import reset cancels the pending automatic power countdown', async () => {
@@ -217,12 +222,13 @@ test('an old power confirmation cannot execute after import reset', async () => 
   assert.ok(!popup.calls.includes('execute_power_action'))
 })
 
-test('Escape dismisses the active reminder and hides the popup', async () => {
+test('Escape dismisses the active reminder without a duplicate frontend hide', async () => {
   const popup = await mountPopup()
   await popup.state.handleTrigger(restEvent)
   await popup.keydown({ key: 'Escape' })
   assert.ok(popup.calls.includes('dismiss_reminder'))
-  assert.equal(popup.calls.at(-1), 'hide')
+  assert.ok(!popup.calls.includes('hide'))
+  assert.equal(popup.state.current.value, null)
   assert.equal(popup.intervals.size, 0)
 })
 
@@ -251,7 +257,13 @@ test('a backend close event clears matching popup state and timers', async () =>
   await popup.emitTo('reminder', 'reminder-closed', powerEvent.sessionId)
   assert.equal(popup.state.current.value, null)
   assert.equal(popup.intervals.size, 0)
-  assert.equal(popup.calls.at(-1), 'hide')
+  assert.ok(!popup.calls.includes('hide'))
+})
+
+test('fade-in state is ready before the native popup is shown', async () => {
+  const popup = await mountPopup()
+  popup.setNative('show', () => assert.equal(popup.state.popupAnimating.value, true))
+  await popup.state.handleTrigger(restEvent)
 })
 
 test('a newly created monitor popup restores the active reminder on mount', async () => {
