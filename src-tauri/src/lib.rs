@@ -514,22 +514,32 @@ fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, 
     }
 }
 
-fn hide_reminder_window(window: &WebviewWindow) {
+fn exit_reminder_fullscreen(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     if window.label() == REMINDER_LABEL {
         let _ = window.set_simple_fullscreen(false);
     }
     #[cfg(not(target_os = "macos"))]
-    {
-        // Windows 退出原生全屏时可能重新显示已隐藏的窗口，因此必须先退出再隐藏。
-        let _ = window.set_fullscreen(false);
-    }
+    let _ = window.set_fullscreen(false);
+}
+
+fn hide_reminder_window(window: &WebviewWindow) {
+    let _ = window.hide();
+    exit_reminder_fullscreen(window);
     let _ = window.hide();
 }
 
 fn hide_reminder_windows(app: &AppHandle) {
-    for window in reminder_windows(app) {
-        hide_reminder_window(&window);
+    let windows = reminder_windows(app);
+    // 先同时隐藏所有屏幕，再清理全屏状态，避免多屏窗口依次退场。
+    for window in &windows {
+        let _ = window.hide();
+    }
+    for window in &windows {
+        exit_reminder_fullscreen(window);
+    }
+    for window in windows {
+        let _ = window.hide();
     }
 }
 
@@ -546,16 +556,16 @@ fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) ->
         Ordering::SeqCst,
         Ordering::SeqCst,
     );
-    emit_to_reminder_windows(app, "reminder-closed", session_id);
     hide_reminder_windows(app);
+    emit_to_reminder_windows(app, "reminder-closed", session_id);
     true
 }
 
 fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
     *state.0.active_reminder.lock().expect("提醒会话锁被中毒") = None;
     state.0.power_action_session.store(0, Ordering::SeqCst);
-    emit_to_reminder_windows(app, event, ());
     hide_reminder_windows(app);
+    emit_to_reminder_windows(app, event, ());
 }
 
 fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
@@ -565,8 +575,8 @@ fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
     }
     *active = None;
     drop(active);
-    emit_to_reminder_windows(app, "rest-cancelled", ());
     hide_reminder_windows(app);
+    emit_to_reminder_windows(app, "rest-cancelled", ());
 }
 
 fn active_reminder_matches(state: &AppState, id: &str, session_id: u64) -> bool {
@@ -588,8 +598,8 @@ fn activate_reminder_session(app: &AppHandle, state: &AppState, event: ReminderT
         .expect("提醒会话锁被中毒")
         .replace(event);
     if let Some(previous) = previous {
-        emit_to_reminder_windows(app, "reminder-closed", previous.session_id);
         hide_reminder_windows(app);
+        emit_to_reminder_windows(app, "reminder-closed", previous.session_id);
     }
 }
 

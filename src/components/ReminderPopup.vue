@@ -144,38 +144,37 @@ function closeSnoozeMenuOnOutsideClick(event: MouseEvent) {
 }
 
 async function dismiss() {
-  const sequence = ++notificationSequence
+  notificationSequence += 1
   const notification = current.value
   clearPowerTimer()
   clearRestTimer()
   if (notification) {
     await invoke('dismiss_reminder', { id: notification.id, sessionId: notification.sessionId })
+  } else {
+    await closePopup()
   }
-  if (sequence !== notificationSequence) return
-  await closePopup()
 }
 
 async function snooze(seconds: number) {
-  const sequence = ++notificationSequence
+  notificationSequence += 1
   const notification = current.value
   clearPowerTimer()
   clearRestTimer()
   if (notification) {
     await invoke('snooze_reminder', { id: notification.id, seconds, sessionId: notification.sessionId })
+  } else {
+    await closePopup()
   }
-  if (sequence !== notificationSequence) return
-  await closePopup()
 }
 
-async function cancelRest() {
+function cancelRest() {
   if (!current.value?.isRest) return
   notificationSequence += 1
   clearRestTimer()
   current.value = null
-  await closePopup()
 }
 
-async function resetReminders() {
+function resetReminders() {
   // 导入会取消当前提醒，也要阻止正在等待原生调用的旧弹窗重新显示。
   notificationSequence += 1
   clearPowerTimer()
@@ -187,7 +186,6 @@ async function resetReminders() {
   powerError.value = ''
   restStartedAt = 0
   powerDeadline = 0
-  await closePopup()
 }
 
 async function executePowerAction() {
@@ -212,7 +210,6 @@ async function executePowerAction() {
     const executed = await invoke<boolean>('execute_power_action', { action, sessionId: current.value?.sessionId })
     if (!executed) return
     if (sequence !== notificationSequence) return
-    await closePopup()
   } catch (error) {
     logError('execute power action', error)
     powerError.value = t('popup.actionFailed', { action: powerVerb.value })
@@ -273,11 +270,11 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   popupAnimating.value = false
   await nextTick()
   if (sequence !== notificationSequence) return
+  popupAnimating.value = true
+  await nextTick()
+  if (sequence !== notificationSequence) return
   await currentWindow.show()
   if (isController) await currentWindow.setFocus()
-  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
-  if (sequence !== notificationSequence) return
-  popupAnimating.value = true
 }
 
 function handleEscape(event: KeyboardEvent) {
@@ -287,13 +284,12 @@ function handleEscape(event: KeyboardEvent) {
   else void closePopup()
 }
 
-async function handleClosed(sessionId: number) {
+function handleClosed(sessionId: number) {
   if (current.value?.sessionId !== sessionId) return
   notificationSequence += 1
   clearPowerTimer()
   clearRestTimer()
   current.value = null
-  await closePopup()
 }
 
 onMounted(async () => {
