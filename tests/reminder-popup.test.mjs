@@ -226,6 +226,13 @@ test('Escape dismisses the active reminder and hides the popup', async () => {
   assert.equal(popup.intervals.size, 0)
 })
 
+test('Escape still hides a popup whose reminder state was already cleared', async () => {
+  const popup = await mountPopup()
+  await popup.keydown({ key: 'Escape' })
+  assert.ok(!popup.calls.includes('dismiss_reminder'))
+  assert.equal(popup.calls.at(-1), 'hide')
+})
+
 test('popup header shows the Escape shortcut hint', () => {
   assert.match(descriptor.template.content, /class="popup-escape-hint">ESC<\/kbd>/)
 })
