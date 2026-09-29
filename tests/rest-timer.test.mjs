@@ -51,7 +51,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   }
   const modules = {
     vue: { ...vue, onMounted: (callback) => { mounted = callback }, onUnmounted: noop },
-    '@tauri-apps/api/app': { getVersion: async () => '0.8.0', setTheme: async () => {} },
+    '@tauri-apps/api/app': { getVersion: async () => '0.9.0', setTheme: async () => {} },
     '@tauri-apps/api/core': {
       invoke: async (command) => {
         calls.push(command)

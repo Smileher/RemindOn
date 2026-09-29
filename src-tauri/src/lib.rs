@@ -3,22 +3,29 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalSize, RunEvent,
+    State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_notification::NotificationExt;
 
 mod updater;
 
-const DATA_VERSION: u32 = 3;
+const DATA_VERSION: u32 = 4;
 const REST_ID: &str = "__rest__";
 const TEST_REST_ID: &str = "__test_rest__";
 const SHUTDOWN_ID: &str = "__shutdown__";
 const TRAY_ID: &str = "main-tray";
+const REMINDER_LABEL: &str = "reminder";
+const REMINDER_MONITOR_PREFIX: &str = "reminder-monitor-";
+const REMINDER_WINDOW_WIDTH: f64 = 520.0;
+const REMINDER_WINDOW_HEIGHT: f64 = 320.0;
 
 fn default_rest_message() -> String {
     "休息时间到了，该休息一下了。".to_string()
@@ -44,6 +51,8 @@ pub struct AppSettings {
     pub autostart: bool,
     pub minimize_to_tray: bool,
     pub popup_always_on_top: bool,
+    #[serde(default)]
+    pub popup_fullscreen: bool,
     pub rest_enabled: bool,
     pub rest_interval_minutes: u32,
     #[serde(default = "default_rest_message")]
@@ -128,6 +137,7 @@ impl Default for AppSettings {
             autostart: false,
             minimize_to_tray: false,
             popup_always_on_top: true,
+            popup_fullscreen: false,
             rest_enabled: false,
             rest_interval_minutes: 45,
             rest_message: default_rest_message(),
@@ -199,6 +209,7 @@ impl Default for AppData {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReminderTriggeredEvent {
+    session_id: u64,
     id: String,
     title: String,
     #[serde(rename = "type")]
@@ -222,6 +233,9 @@ struct InnerState {
     paused: AtomicBool,
     scheduler_started: AtomicBool,
     scheduler_stop: AtomicBool,
+    next_reminder_session: AtomicU64,
+    power_action_session: AtomicU64,
+    active_reminder: Mutex<Option<ReminderTriggeredEvent>>,
     // 休息状态的读取和切换统一持有 data 锁，避免设置保存与弹窗状态交错。
     rest_active: AtomicBool,
     rest_round_pending: AtomicBool,
@@ -483,11 +497,244 @@ fn notification_window_title(language: Language) -> &'static str {
     }
 }
 
-fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
-    if let Some(window) = app.get_webview_window("reminder") {
-        let _ = window.set_title(notification_window_title(settings.language));
+fn is_reminder_window_label(label: &str) -> bool {
+    label == REMINDER_LABEL || label.starts_with(REMINDER_MONITOR_PREFIX)
+}
+
+fn reminder_windows(app: &AppHandle) -> Vec<WebviewWindow> {
+    app.webview_windows()
+        .into_values()
+        .filter(|window| is_reminder_window_label(window.label()))
+        .collect()
+}
+
+fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, payload: S) {
+    for window in reminder_windows(app) {
+        let _ = app.emit_to(window.label(), event, payload.clone());
     }
-    let _ = app.emit_to("reminder", "settings-updated", settings);
+}
+
+fn hide_reminder_windows(app: &AppHandle) {
+    for window in reminder_windows(app) {
+        #[cfg(target_os = "macos")]
+        if window.label() == REMINDER_LABEL {
+            let _ = window.set_simple_fullscreen(false);
+        }
+        let _ = window.hide();
+    }
+}
+
+fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) -> bool {
+    let mut active = state.0.active_reminder.lock().expect("提醒会话锁被中毒");
+    if active.as_ref().map(|event| event.session_id) != Some(session_id) {
+        return false;
+    }
+    *active = None;
+    drop(active);
+    let _ = state.0.power_action_session.compare_exchange(
+        session_id,
+        0,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+    emit_to_reminder_windows(app, "reminder-closed", session_id);
+    hide_reminder_windows(app);
+    true
+}
+
+fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
+    *state.0.active_reminder.lock().expect("提醒会话锁被中毒") = None;
+    state.0.power_action_session.store(0, Ordering::SeqCst);
+    emit_to_reminder_windows(app, event, ());
+    hide_reminder_windows(app);
+}
+
+fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
+    let mut active = state.0.active_reminder.lock().expect("提醒会话锁被中毒");
+    if !active.as_ref().is_some_and(|event| event.is_rest) {
+        return;
+    }
+    *active = None;
+    drop(active);
+    emit_to_reminder_windows(app, "rest-cancelled", ());
+    hide_reminder_windows(app);
+}
+
+fn active_reminder_matches(state: &AppState, id: &str, session_id: u64) -> bool {
+    state
+        .0
+        .active_reminder
+        .lock()
+        .expect("提醒会话锁被中毒")
+        .as_ref()
+        .is_some_and(|event| event.session_id == session_id && event.id == id)
+}
+
+fn activate_reminder_session(app: &AppHandle, state: &AppState, event: ReminderTriggeredEvent) {
+    state.0.power_action_session.store(0, Ordering::SeqCst);
+    let previous = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("提醒会话锁被中毒")
+        .replace(event);
+    if let Some(previous) = previous {
+        emit_to_reminder_windows(app, "reminder-closed", previous.session_id);
+        hide_reminder_windows(app);
+    }
+}
+
+fn same_monitor(left: &Monitor, right: &Monitor) -> bool {
+    left.position() == right.position() && left.size() == right.size()
+}
+
+fn ordered_monitors(app: &AppHandle) -> Vec<Monitor> {
+    let Ok(mut monitors) = app.available_monitors() else {
+        return Vec::new();
+    };
+    if let Ok(Some(primary)) = app.primary_monitor() {
+        if let Some(index) = monitors
+            .iter()
+            .position(|monitor| same_monitor(monitor, &primary))
+        {
+            monitors.swap(0, index);
+        }
+    }
+    monitors
+}
+
+fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
+    #[cfg(target_os = "macos")]
+    let _ = window.set_simple_fullscreen(false);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.set_fullscreen(false);
+    let _ = window.set_title(notification_window_title(settings.language));
+    let _ = window.set_always_on_top(settings.popup_always_on_top);
+    let _ = window.set_decorations(true);
+    let _ = window.set_resizable(false);
+    let _ = window.set_maximizable(false);
+    let _ = window.set_skip_taskbar(false);
+    let _ = window.set_size(LogicalSize::new(
+        REMINDER_WINDOW_WIDTH,
+        REMINDER_WINDOW_HEIGHT,
+    ));
+    let _ = window.center();
+    let _ = window.unminimize();
+}
+
+fn configure_fullscreen_reminder(
+    window: &WebviewWindow,
+    monitor: &Monitor,
+    settings: &AppSettings,
+    is_controller: bool,
+) {
+    #[cfg(not(target_os = "macos"))]
+    let _ = is_controller;
+    let _ = window.set_title(notification_window_title(settings.language));
+    let _ = window.set_always_on_top(settings.popup_always_on_top);
+    let _ = window.set_decorations(false);
+    let _ = window.set_resizable(false);
+    let _ = window.set_maximizable(false);
+    let _ = window.set_skip_taskbar(true);
+    let _ = window.set_position(PhysicalPosition::new(
+        monitor.position().x,
+        monitor.position().y,
+    ));
+
+    #[cfg(target_os = "macos")]
+    if is_controller {
+        let _ = window.set_simple_fullscreen(true);
+        return;
+    }
+
+    let _ = window.set_size(PhysicalSize::new(
+        monitor.size().width,
+        monitor.size().height,
+    ));
+    let _ = window.unminimize();
+}
+
+fn spawn_fullscreen_reminder_window(
+    app: AppHandle,
+    label: String,
+    monitor: Monitor,
+    settings: AppSettings,
+) {
+    thread::spawn(move || {
+        let Ok(window) =
+            WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html#/reminder".into()))
+                .title(notification_window_title(settings.language))
+                .visible(false)
+                .decorations(false)
+                .resizable(false)
+                .maximizable(false)
+                .skip_taskbar(true)
+                .always_on_top(settings.popup_always_on_top)
+                .build()
+        else {
+            return;
+        };
+        configure_fullscreen_reminder(&window, &monitor, &settings, false);
+    });
+}
+
+fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<String> {
+    if !settings.popup_fullscreen {
+        for window in reminder_windows(app) {
+            if window.label() != REMINDER_LABEL {
+                let _ = window.hide();
+            }
+        }
+        if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
+            configure_windowed_reminder(&window, settings);
+            return vec![REMINDER_LABEL.to_string()];
+        }
+        return Vec::new();
+    }
+
+    let monitors = ordered_monitors(app);
+    if monitors.is_empty() {
+        if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
+            configure_windowed_reminder(&window, settings);
+            return vec![REMINDER_LABEL.to_string()];
+        }
+        return Vec::new();
+    }
+
+    let labels = monitors
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            if index == 0 {
+                REMINDER_LABEL.to_string()
+            } else {
+                format!("{REMINDER_MONITOR_PREFIX}{index}")
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for window in reminder_windows(app) {
+        if !labels.iter().any(|label| label == window.label()) {
+            let _ = window.hide();
+        }
+    }
+
+    for (index, (label, monitor)) in labels.iter().zip(monitors).enumerate() {
+        if let Some(window) = app.get_webview_window(label) {
+            configure_fullscreen_reminder(&window, &monitor, settings, index == 0);
+        } else if index > 0 {
+            spawn_fullscreen_reminder_window(app.clone(), label.clone(), monitor, settings.clone());
+        }
+    }
+    labels
+}
+
+fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
+    for window in reminder_windows(app) {
+        let _ = window.set_title(notification_window_title(settings.language));
+        let _ = window.set_always_on_top(settings.popup_always_on_top);
+        let _ = app.emit_to(window.label(), "settings-updated", settings);
+    }
 }
 
 fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Option<AppSettings> {
@@ -516,28 +763,25 @@ fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Opt
 fn dispatch_trigger(
     app: &AppHandle,
     state: &AppState,
-    event: ReminderTriggeredEvent,
+    mut event: ReminderTriggeredEvent,
 ) -> Result<(), String> {
     let Some(settings) = prepare_notification(state, &event) else {
         return Ok(());
     };
     emit_rest_timer_updated(app, state);
-    if let Some(window) = app.get_webview_window("reminder") {
-        let _ = window.set_title(notification_window_title(settings.language));
-        let _ = window.set_always_on_top(settings.popup_always_on_top);
-        let _ = window.center();
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = app.emit_to("reminder", "reminder-triggered", event.clone());
+    event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
+    activate_reminder_session(app, state, event.clone());
+    for label in prepare_reminder_windows(app, &settings) {
+        if app.get_webview_window(&label).is_some() {
+            let _ = app.emit_to(&label, "reminder-triggered", event.clone());
+        }
     }
 
     // 主窗口必须先收到事件，即使可选的系统通知发送失败，也不能留下过期倒计时。
     let _ = app.emit_to("main", "reminder-triggered", event.clone());
 
     if settings.system_notification_enabled {
-        app
-            .notification()
+        app.notification()
             .builder()
             .title(notification_title(settings.language, &event))
             .body(&event.title)
@@ -568,6 +812,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                 continue;
             }
             triggered.push(ReminderTriggeredEvent {
+                session_id: 0,
                 id: reminder.id.clone(),
                 title: reminder.title.clone(),
                 reminder_type: reminder.reminder_type.clone(),
@@ -605,6 +850,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
                 };
                 if due.is_some() {
                     triggered.push(ReminderTriggeredEvent {
+                        session_id: 0,
                         id: REST_ID.to_string(),
                         title: data.settings.rest_message.clone(),
                         reminder_type: ReminderType::Interval,
@@ -628,6 +874,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
             } else if let Some(due) = next_shutdown.as_ref().filter(|value| **value <= now) {
                 if should_trigger_power_action(due.clone(), now) {
                     triggered.push(ReminderTriggeredEvent {
+                        session_id: 0,
                         id: SHUTDOWN_ID.to_string(),
                         title: data.settings.shutdown_reminder_message.clone(),
                         reminder_type: ReminderType::Daily,
@@ -712,7 +959,7 @@ fn save_data(
     );
     sync_reminder_settings(&app, &data.settings);
     if rest_enabled_changed && !data.settings.rest_enabled {
-        let _ = app.emit_to("reminder", "rest-cancelled", ());
+        cancel_active_rest_reminder(&app, state.inner());
     }
     if rest_enabled_changed || rest_interval_changed {
         emit_rest_timer_updated(&app, &state);
@@ -742,13 +989,18 @@ fn set_scheduler_paused(paused: bool, state: State<'_, AppState>) -> Result<(), 
 fn snooze_reminder(
     id: String,
     seconds: u32,
+    session_id: u64,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if !active_reminder_matches(state.inner(), &id, session_id) {
+        return Ok(());
+    }
     if id == REST_ID || id == TEST_REST_ID {
         if snooze_rest_round(state.inner(), seconds) {
             emit_rest_timer_updated(&app, &state);
         }
+        close_reminder_session(&app, state.inner(), session_id);
         return Ok(());
     }
     let mut data = state.0.data.lock().expect("配置锁被中毒");
@@ -760,17 +1012,54 @@ fn snooze_reminder(
         reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
         write_json(&state.0.data_path, &data)?;
     }
+    drop(data);
+    close_reminder_session(&app, state.inner(), session_id);
     Ok(())
 }
 
 #[tauri::command]
-fn dismiss_reminder(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+fn dismiss_reminder(
+    id: String,
+    session_id: u64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !active_reminder_matches(state.inner(), &id, session_id) {
+        return Ok(());
+    }
     if id == REST_ID || id == TEST_REST_ID {
         if complete_rest_round(state.inner()) {
             emit_rest_timer_updated(&app, state.inner());
         }
     }
+    close_reminder_session(&app, state.inner(), session_id);
     Ok(())
+}
+
+#[tauri::command]
+fn get_active_reminder(
+    window: WebviewWindow,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Option<ReminderTriggeredEvent> {
+    let active = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("提醒会话锁被中毒")
+        .clone()?;
+    if window.label() == REMINDER_LABEL {
+        return Some(active);
+    }
+    if !app_data(state.inner()).settings.popup_fullscreen {
+        return None;
+    }
+    let valid = ordered_monitors(&app)
+        .iter()
+        .enumerate()
+        .skip(1)
+        .any(|(index, _)| window.label() == format!("{REMINDER_MONITOR_PREFIX}{index}"));
+    valid.then_some(active)
 }
 
 #[tauri::command]
@@ -806,13 +1095,12 @@ fn windows_power_command(action: &PowerAction, system_root: &Path) -> (PathBuf, 
     }
 }
 
-#[tauri::command]
-fn execute_power_action(action: PowerAction) -> Result<(), String> {
+fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let system_root = std::env::var_os("SystemRoot")
             .ok_or_else(|| "无法确定 Windows 系统目录".to_string())?;
-        let (program, args) = windows_power_command(&action, &PathBuf::from(system_root));
+        let (program, args) = windows_power_command(action, &PathBuf::from(system_root));
         Command::new(program)
             .args(args)
             .spawn()
@@ -822,7 +1110,7 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        if action == PowerAction::Lock {
+        if *action == PowerAction::Lock {
             Command::new(
                 "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession",
             )
@@ -831,7 +1119,7 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
             .map_err(|error| format!("无法锁定电脑：{error}"))?;
             return Ok(());
         }
-        let script = if action == PowerAction::Shutdown {
+        let script = if *action == PowerAction::Shutdown {
             "tell application \"System Events\" to shut down"
         } else {
             "tell application \"System Events\" to restart"
@@ -847,9 +1135,50 @@ fn execute_power_action(action: PowerAction) -> Result<(), String> {
     Err("当前系统不支持此自动操作".to_string())
 }
 
+#[tauri::command]
+fn execute_power_action(
+    action: PowerAction,
+    session_id: u64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let matches = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("提醒会话锁被中毒")
+        .as_ref()
+        .is_some_and(|event| {
+            event.session_id == session_id && event.power_action.as_ref() == Some(&action)
+        });
+    if !matches {
+        return Ok(false);
+    }
+    if state
+        .0
+        .power_action_session
+        .compare_exchange(0, session_id, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(false);
+    }
+    if let Err(error) = execute_power_action_impl(&action) {
+        let _ = state.0.power_action_session.compare_exchange(
+            session_id,
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        return Err(error);
+    }
+    close_reminder_session(&app, state.inner(), session_id);
+    Ok(true)
+}
+
 fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> ReminderTriggeredEvent {
     match kind {
         TestReminderKind::Event => ReminderTriggeredEvent {
+            session_id: 0,
             id: "__test_event__".to_string(),
             title: match settings.language {
                 Language::ZhCn => "这是一条测试通知".to_string(),
@@ -862,6 +1191,7 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             is_test: true,
         },
         TestReminderKind::Rest => ReminderTriggeredEvent {
+            session_id: 0,
             id: TEST_REST_ID.to_string(),
             title: settings.rest_message.clone(),
             reminder_type: ReminderType::Interval,
@@ -871,6 +1201,7 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             is_test: true,
         },
         TestReminderKind::Power => ReminderTriggeredEvent {
+            session_id: 0,
             id: "__test_power__".to_string(),
             title: settings.shutdown_reminder_message.clone(),
             reminder_type: ReminderType::Daily,
@@ -912,10 +1243,7 @@ fn import_data(
     *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
     state.0.paused.store(false, Ordering::SeqCst);
     drop(current);
-    let _ = app.emit_to("reminder", "reminders-reset", ());
-    if let Some(window) = app.get_webview_window("reminder") {
-        let _ = window.hide();
-    }
+    reset_reminder_session(&app, state.inner(), "reminders-reset");
     let _ = update_tray_menu(&app, data.settings.language, false);
     sync_reminder_settings(&app, &data.settings);
     emit_rest_timer_updated(&app, &state);
@@ -1023,6 +1351,9 @@ pub fn run() {
                 paused: AtomicBool::new(false),
                 scheduler_started: AtomicBool::new(false),
                 scheduler_stop: AtomicBool::new(false),
+                next_reminder_session: AtomicU64::new(0),
+                power_action_session: AtomicU64::new(0),
+                active_reminder: Mutex::new(None),
                 rest_active: AtomicBool::new(false),
                 rest_round_pending: AtomicBool::new(false),
                 rest_next: Mutex::new(None),
@@ -1048,6 +1379,7 @@ pub fn run() {
             set_scheduler_paused,
             snooze_reminder,
             dismiss_reminder,
+            get_active_reminder,
             get_rest_timer_status,
             get_next_shutdown_trigger,
             execute_power_action,
@@ -1095,12 +1427,21 @@ pub fn run() {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.hide();
                     }
-                } else if label == "reminder" {
+                } else if is_reminder_window_label(&label) {
                     api.prevent_close();
-                    if complete_rest_round(app.state::<AppState>().inner()) {
-                        emit_rest_timer_updated(&app, app.state::<AppState>().inner());
-                    }
-                    if let Some(window) = app.get_webview_window("reminder") {
+                    let state = app.state::<AppState>();
+                    let active = state
+                        .0
+                        .active_reminder
+                        .lock()
+                        .expect("提醒会话锁被中毒")
+                        .clone();
+                    if let Some(active) = active {
+                        if active.is_rest && complete_rest_round(state.inner()) {
+                            emit_rest_timer_updated(&app, state.inner());
+                        }
+                        close_reminder_session(&app, state.inner(), active.session_id);
+                    } else if let Some(window) = app.get_webview_window(&label) {
                         let _ = window.hide();
                     }
                 }
@@ -1122,6 +1463,9 @@ mod tests {
             paused: AtomicBool::new(false),
             scheduler_started: AtomicBool::new(false),
             scheduler_stop: AtomicBool::new(false),
+            next_reminder_session: AtomicU64::new(0),
+            power_action_session: AtomicU64::new(0),
+            active_reminder: Mutex::new(None),
             rest_active: AtomicBool::new(false),
             rest_round_pending: AtomicBool::new(false),
             rest_next: Mutex::new(None),
@@ -1233,6 +1577,42 @@ mod tests {
         assert_eq!(data.settings.language, Language::ZhCn);
         assert!(!data.settings.minimize_to_tray);
         assert_eq!(data.settings.power_action, PowerAction::Shutdown);
+        assert!(!data.settings.popup_fullscreen);
+    }
+
+    #[test]
+    fn legacy_settings_without_fullscreen_option_remain_windowed() {
+        let mut value = serde_json::to_value(AppData::default()).unwrap();
+        value["version"] = serde_json::json!(3);
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("popupFullscreen");
+        let mut data: AppData = serde_json::from_value(value).unwrap();
+
+        assert!(!data.settings.popup_fullscreen);
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.version, 4);
+    }
+
+    #[test]
+    fn reminder_sessions_reject_stale_ids() {
+        let state = rest_state(true);
+        let mut event = rest_event(&state, false);
+        event.session_id = 7;
+        *state.0.active_reminder.lock().unwrap() = Some(event);
+
+        assert!(active_reminder_matches(&state, REST_ID, 7));
+        assert!(!active_reminder_matches(&state, REST_ID, 6));
+        assert!(!active_reminder_matches(&state, "other", 7));
+    }
+
+    #[test]
+    fn reminder_window_labels_do_not_match_unrelated_windows() {
+        assert!(is_reminder_window_label(REMINDER_LABEL));
+        assert!(is_reminder_window_label("reminder-monitor-1"));
+        assert!(!is_reminder_window_label("main"));
+        assert!(!is_reminder_window_label("reminder-preview"));
     }
 
     #[test]
