@@ -39,9 +39,11 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   settingsData.settings.restEnabled = enabled
   settingsData.settings.restIntervalMinutes = 1
   const listeners = new Map()
+  const windowListeners = new Map()
   const calls = []
   let mounted
   let focused
+  let hideCount = 0
   let readStatus = async () => status
   function emitTo(target, name, payload) {
     const listener = listeners.get(name)
@@ -69,6 +71,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     },
     '@tauri-apps/api/window': {
       getCurrentWindow: () => ({
+        hide: async () => { hideCount += 1 },
         onFocusChanged: async (callback) => { focused = callback; return noop },
         listen: async (name, callback) => { listeners.set(name, { target: 'main', callback }); return noop },
       }),
@@ -100,7 +103,13 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         assert.ok(Object.hasOwn(modules, name), `Unexpected module: ${name}`)
         return modules[name]
       },
-      window: { location: { hash: '' }, setInterval: () => 1, clearInterval: noop },
+      window: {
+        location: { hash: '' },
+        setInterval: () => 1,
+        clearInterval: noop,
+        addEventListener: (name, callback) => { windowListeners.set(name, callback) },
+        removeEventListener: (name) => { windowListeners.delete(name) },
+      },
       localStorage: { getItem: () => null, setItem: noop },
       document: { visibilityState: 'visible', hasFocus: () => true },
       console,
@@ -117,11 +126,23 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     emit: (name, payload) => emitTo('main', name, payload),
     emitTo,
     focus: (isFocused) => focused({ payload: isFocused }),
+    keydown: (event) => windowListeners.get('keydown')?.(event),
+    getHideCount: () => hideCount,
     render: () => renderToString(vue.createSSRApp({
       setup: () => state, render, components: { BellRing: { render: noop } },
     })),
   }
 }
+
+test('Escape hides the main window to the tray', async () => {
+  const app = await mountApp()
+  app.keydown({ key: 'Enter', repeat: false })
+  app.keydown({ key: 'Escape', repeat: true })
+  assert.equal(app.getHideCount(), 0)
+  app.keydown({ key: 'Escape', repeat: false })
+  await new Promise(setImmediate)
+  assert.equal(app.getHideCount(), 1)
+})
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {
   const app = await mountApp({ enabled: false, status: { isResting: false, nextTriggerAt: null } })

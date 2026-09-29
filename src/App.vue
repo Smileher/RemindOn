@@ -527,8 +527,14 @@ async function checkForUpdatesInBackground() {
   }
 }
 
+function handleMainWindowEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || event.repeat) return
+  void getCurrentWindow().hide()
+}
+
 onMounted(async () => {
   if (isPopup) return
+  window.addEventListener('keydown', handleMainWindowEscape)
   void checkForUpdatesInBackground()
   try {
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
@@ -584,6 +590,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleMainWindowEscape)
   disposeUpdater()
   unlisten?.()
   unlistenNavigation?.()
