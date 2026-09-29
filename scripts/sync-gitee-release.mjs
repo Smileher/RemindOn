@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const api = 'https://gitee.com/api/v5/repos/smileher/RemindOn'
+const requestTimeoutMs = 10 * 60 * 1000
 const assetNames = (version, legacyX64) => [
   `RemindOn_${version}_x64-setup.exe`,
   ...(!legacyX64 ? [`RemindOn_${version}_arm64-setup.exe`] : []),
@@ -16,12 +17,13 @@ const assetNames = (version, legacyX64) => [
 async function request(fetchImpl, token, path, { method = 'GET', body } = {}) {
   const url = new URL(`${api}${path}`)
   if (method === 'GET' || method === 'DELETE') url.searchParams.set('access_token', token)
-  const response = await fetchImpl(url, { method, body, signal: AbortSignal.timeout(120000) })
+  const response = await fetchImpl(url, { method, body, signal: AbortSignal.timeout(requestTimeoutMs) })
   if (!response.ok) throw new Error(`Gitee API ${method} ${path} returned HTTP ${response.status}`)
   return response.status === 204 ? null : response.json()
 }
 
 async function upload(fetchImpl, token, releaseId, name, bytes) {
+  console.log(`Uploading Gitee asset: ${name} (${bytes.byteLength} bytes)`)
   const body = new FormData()
   body.set('access_token', token)
   body.set('file', new Blob([bytes], { type: 'application/octet-stream' }), name)
@@ -82,7 +84,7 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     }
     const url = assets.get(name)?.browser_download_url
     if (!url || new URL(url).protocol !== 'https:') throw new Error(`Gitee download URL is missing or invalid: ${name}`)
-    const downloaded = await fetchImpl(url, { signal: AbortSignal.timeout(120000) })
+    const downloaded = await fetchImpl(url, { signal: AbortSignal.timeout(requestTimeoutMs) })
     if (!downloaded.ok) throw new Error(`Gitee anonymous download failed for ${name}: HTTP ${downloaded.status}`)
     const expected = createHash('sha256').update(bytes).digest('hex')
     const actual = createHash('sha256').update(Buffer.from(await downloaded.arrayBuffer())).digest('hex')
@@ -95,7 +97,7 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     await request(fetchImpl, token, `/releases/${release.id}/attach_files/${previousManifest.id}`, { method: 'DELETE' })
   }
   const uploadedManifest = await upload(fetchImpl, token, release.id, 'latest.json', manifestBytes)
-  const downloadedManifest = await fetchImpl(uploadedManifest.browser_download_url, { signal: AbortSignal.timeout(120000) })
+  const downloadedManifest = await fetchImpl(uploadedManifest.browser_download_url, { signal: AbortSignal.timeout(requestTimeoutMs) })
   if (!downloadedManifest.ok || !manifestBytes.equals(Buffer.from(await downloadedManifest.arrayBuffer()))) {
     throw new Error('Gitee latest.json is not anonymously downloadable or does not match the generated manifest')
   }
