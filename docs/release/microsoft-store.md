@@ -175,7 +175,7 @@ Windows SDK 工具由脚本自动查找。打包时 MakeAppx 会执行 Manifest 
 - 子类别：如页面要求，选最接近提醒、时间管理的现有选项。
 - 网站：可以填写项目官网 `https://smileher.github.io/RemindOn/`。
 - 支持地址：可以填写项目 Issues 地址 `https://github.com/Smileher/RemindOn/issues`，也可以使用自己的支持邮箱。
-- 隐私政策：填写可公开访问的专门隐私政策 URL。当前项目尚无已核实的隐私政策页面，不要用一个不存在的 `/privacy` 地址，也不要把 GitHub 仓库主页当作隐私政策。
+- 隐私政策：填写本项目公开的隐私政策页面：<https://github.com/Smileher/RemindOn/blob/master/docs/privacy-policy.md>。该页面包含中文和英文版本。提交前确认链接在未登录 GitHub 的浏览器中也能打开。
 - 系统要求：说明 Windows 10 1809 或更高版本、x64 或 ARM64、需要 Microsoft Edge WebView2 Runtime。MSIX 当前不负责下载 WebView2；尤其要在干净 Windows 10 环境验证。
 
 隐私政策应描述实际版本的数据行为，例如提醒设置保存于本地、导入导出由用户操作，以及是否存在联网、统计或广告。应与真正提交的包和第三方组件一致。
