@@ -39,8 +39,8 @@
 
 1. 打开 <https://github.com/Smileher/RemindOn>。
 2. 点击 `Settings → Secrets and variables → Actions`。
-3. 切换到 **Variables** 页签，不是 Secrets。
-4. 点击 `New repository variable`，分别添加上一节的三个变量。
+3. 切换到 **Secrets** 页签。
+4. 点击 `New repository secret`，分别添加上一节的三个 Secret。当前工作流从 Secrets 读取这些值，名称必须完全一致。
 
 仅为上传 Microsoft Store 构建时，**不用配置** `MSIX_PFX_BASE64` 和 `MSIX_PFX_PASSWORD`。商店会在审核通过后重新签名，不要求你购买 CA 代码签名证书。
 

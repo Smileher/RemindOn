@@ -25,9 +25,9 @@ jobs:
     env:
       REMINDON_STORE_BUILD: '1'
       VERSION: ${{ inputs.version }}
-      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
-      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
-      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+      MSIX_IDENTITY_NAME: ${{ secrets.MSIX_IDENTITY_NAME }}
+      MSIX_PUBLISHER: ${{ secrets.MSIX_PUBLISHER }}
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.MSIX_PUBLISHER_DISPLAY_NAME }}
       MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
       MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
     steps:
@@ -51,7 +51,7 @@ jobs:
             $number = [uint16]0
             if (-not [uint16]::TryParse($component, [ref]$number)) { throw 'Store version components must be between 0 and 65535.' }
           }
-          if ([string]::IsNullOrWhiteSpace($env:MSIX_IDENTITY_NAME) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER_DISPLAY_NAME)) { throw 'Configure MSIX_IDENTITY_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY_NAME repository variables.' }
+          if ([string]::IsNullOrWhiteSpace($env:MSIX_IDENTITY_NAME) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER) -or [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER_DISPLAY_NAME)) { throw 'Configure MSIX_IDENTITY_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY_NAME repository secrets.' }
           if ([bool]$env:MSIX_PFX_BASE64 -ne [bool]$env:MSIX_PFX_PASSWORD) { throw 'Optional signing requires both MSIX_PFX_BASE64 and MSIX_PFX_PASSWORD.' }
       - name: Build Store executable
         run: pnpm tauri build --target ${{ matrix.target }} --no-bundle --ci -- --locked
