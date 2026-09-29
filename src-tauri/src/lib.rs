@@ -43,6 +43,10 @@ fn default_system_notification_enabled() -> bool {
     true
 }
 
+fn default_popup_fullscreen() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -51,7 +55,7 @@ pub struct AppSettings {
     pub autostart: bool,
     pub minimize_to_tray: bool,
     pub popup_always_on_top: bool,
-    #[serde(default)]
+    #[serde(default = "default_popup_fullscreen")]
     pub popup_fullscreen: bool,
     pub rest_enabled: bool,
     pub rest_interval_minutes: u32,
@@ -137,7 +141,7 @@ impl Default for AppSettings {
             autostart: false,
             minimize_to_tray: false,
             popup_always_on_top: true,
-            popup_fullscreen: false,
+            popup_fullscreen: true,
             rest_enabled: false,
             rest_interval_minutes: 45,
             rest_message: default_rest_message(),
@@ -514,32 +518,22 @@ fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, 
     }
 }
 
-fn exit_reminder_fullscreen(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    if window.label() == REMINDER_LABEL {
-        let _ = window.set_simple_fullscreen(false);
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window.set_fullscreen(false);
-}
-
 fn hide_reminder_window(window: &WebviewWindow) {
-    let _ = window.hide();
-    exit_reminder_fullscreen(window);
     let _ = window.hide();
 }
 
 fn hide_reminder_windows(app: &AppHandle) {
     let windows = reminder_windows(app);
-    // 先同时隐藏所有屏幕，再清理全屏状态，避免多屏窗口依次退场。
+    // 正常关闭只隐藏窗口，避免 Windows 异步退出原生全屏时重新显示空窗口。
     for window in &windows {
         let _ = window.hide();
     }
-    for window in &windows {
-        exit_reminder_fullscreen(window);
-    }
+    #[cfg(target_os = "macos")]
     for window in windows {
-        let _ = window.hide();
+        if window.label() == REMINDER_LABEL {
+            let _ = window.set_simple_fullscreen(false);
+            let _ = window.hide();
+        }
     }
 }
 
@@ -623,6 +617,7 @@ fn ordered_monitors(app: &AppHandle) -> Vec<Monitor> {
 }
 
 fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
+    let _ = window.hide();
     #[cfg(target_os = "macos")]
     let _ = window.set_simple_fullscreen(false);
     #[cfg(not(target_os = "macos"))]
@@ -639,6 +634,7 @@ fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
     ));
     let _ = window.center();
     let _ = window.unminimize();
+    let _ = window.hide();
 }
 
 fn configure_fullscreen_reminder(
@@ -648,9 +644,18 @@ fn configure_fullscreen_reminder(
     is_controller: bool,
 ) {
     #[cfg(not(target_os = "macos"))]
-    {
-        let _ = is_controller;
+    let reuse_native_fullscreen = window.is_fullscreen().unwrap_or(false)
+        && window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .as_ref()
+            .is_some_and(|current| same_monitor(current, monitor));
+    #[cfg(not(target_os = "macos"))]
+    if !reuse_native_fullscreen {
+        let _ = window.hide();
         let _ = window.set_fullscreen(false);
+        let _ = window.hide();
     }
     let _ = window.set_title(notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
@@ -658,25 +663,44 @@ fn configure_fullscreen_reminder(
     let _ = window.set_resizable(false);
     let _ = window.set_maximizable(false);
     let _ = window.set_skip_taskbar(true);
-    let _ = window.set_position(PhysicalPosition::new(
-        monitor.position().x,
-        monitor.position().y,
-    ));
 
     #[cfg(target_os = "macos")]
-    if is_controller {
-        let _ = window.set_simple_fullscreen(true);
-        return;
+    {
+        let _ = window.set_position(PhysicalPosition::new(
+            monitor.position().x,
+            monitor.position().y,
+        ));
+        if is_controller {
+            let _ = window.set_simple_fullscreen(true);
+            let _ = window.hide();
+            return;
+        }
+        let _ = window.set_size(PhysicalSize::new(
+            monitor.size().width,
+            monitor.size().height,
+        ));
+        let _ = window.unminimize();
+        let _ = window.hide();
     }
 
-    let _ = window.set_size(PhysicalSize::new(
-        monitor.size().width,
-        monitor.size().height,
-    ));
-    let _ = window.unminimize();
-
     #[cfg(not(target_os = "macos"))]
-    let _ = window.set_fullscreen(true);
+    {
+        let _ = is_controller;
+        if !reuse_native_fullscreen {
+            let _ = window.set_position(PhysicalPosition::new(
+                monitor.position().x,
+                monitor.position().y,
+            ));
+            let _ = window.set_size(PhysicalSize::new(
+                monitor.size().width,
+                monitor.size().height,
+            ));
+            let _ = window.unminimize();
+            let _ = window.set_fullscreen(true);
+        }
+        // 原生全屏切换可能自行显示窗口，内容准备完成前必须保持隐藏。
+        let _ = window.hide();
+    }
 }
 
 fn spawn_fullscreen_reminder_window(
@@ -1072,11 +1096,16 @@ fn get_active_reminder(
         .active_reminder
         .lock()
         .expect("提醒会话锁被中毒")
-        .clone()?;
+        .clone();
+    let Some(active) = active else {
+        hide_reminder_window(&window);
+        return None;
+    };
     if window.label() == REMINDER_LABEL {
         return Some(active);
     }
     if !app_data(state.inner()).settings.popup_fullscreen {
+        hide_reminder_window(&window);
         return None;
     }
     let valid = ordered_monitors(&app)
@@ -1084,7 +1113,12 @@ fn get_active_reminder(
         .enumerate()
         .skip(1)
         .any(|(index, _)| window.label() == format!("{REMINDER_MONITOR_PREFIX}{index}"));
-    valid.then_some(active)
+    if valid {
+        Some(active)
+    } else {
+        hide_reminder_window(&window);
+        None
+    }
 }
 
 #[tauri::command]
@@ -1300,9 +1334,10 @@ fn tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri::Result
     let about = MenuItemBuilder::with_id("about", about_text).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", quit_text).build(app)?;
     MenuBuilder::new(app)
-        .items(&[&show, &pause, &about])
+        .items(&[&show, &pause])
         .separator()
         .item(&quit)
+        .item(&about)
         .build()
 }
 
@@ -1602,11 +1637,11 @@ mod tests {
         assert_eq!(data.settings.language, Language::ZhCn);
         assert!(!data.settings.minimize_to_tray);
         assert_eq!(data.settings.power_action, PowerAction::Shutdown);
-        assert!(!data.settings.popup_fullscreen);
+        assert!(data.settings.popup_fullscreen);
     }
 
     #[test]
-    fn legacy_settings_without_fullscreen_option_remain_windowed() {
+    fn legacy_settings_without_fullscreen_option_use_fullscreen_default() {
         let mut value = serde_json::to_value(AppData::default()).unwrap();
         value["version"] = serde_json::json!(3);
         value["settings"]
@@ -1615,7 +1650,7 @@ mod tests {
             .remove("popupFullscreen");
         let mut data: AppData = serde_json::from_value(value).unwrap();
 
-        assert!(!data.settings.popup_fullscreen);
+        assert!(data.settings.popup_fullscreen);
         validate_and_normalize(&mut data).unwrap();
         assert_eq!(data.version, 4);
     }
