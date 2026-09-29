@@ -273,9 +273,11 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   popupAnimating.value = false
   await nextTick()
   if (sequence !== notificationSequence) return
-  popupAnimating.value = true
   await currentWindow.show()
   if (isController) await currentWindow.setFocus()
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+  if (sequence !== notificationSequence) return
+  popupAnimating.value = true
 }
 
 function handleEscape(event: KeyboardEvent) {
@@ -369,6 +371,7 @@ onUnmounted(() => {
   <main :class="['popup-shell', ...popupClass]">
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
+      <kbd class="popup-escape-hint">ESC</kbd>
     </header>
     <section class="popup-content">
       <p v-if="current?.isRest" class="rest-elapsed">{{ restElapsed }}</p>
