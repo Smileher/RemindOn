@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import https from 'node:https'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -24,12 +25,58 @@ async function request(fetchImpl, token, path, { method = 'GET', body } = {}) {
 
 async function upload(fetchImpl, token, releaseId, name, bytes) {
   console.log(`Uploading Gitee asset: ${name} (${bytes.byteLength} bytes)`)
+  if (fetchImpl === fetch) {
+    return uploadWithHttps(token, releaseId, name, bytes)
+  }
   const body = new FormData()
   body.set('access_token', token)
   body.set('file', new Blob([bytes], { type: 'application/octet-stream' }), name)
   const asset = await request(fetchImpl, token, `/releases/${releaseId}/attach_files`, { method: 'POST', body })
   if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
   return asset
+}
+
+function uploadWithHttps(token, releaseId, name, bytes) {
+  const boundary = `----RemindOn-${Date.now().toString(36)}`
+  const prefix = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="access_token"\r\n\r\n${token}\r\n` +
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name.replace(/"/g, '')}"\r\n` +
+      'Content-Type: application/octet-stream\r\n\r\n',
+    'utf8',
+  )
+  const suffix = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+  const body = Buffer.concat([prefix, Buffer.from(bytes), suffix])
+  const url = new URL(`${api}/releases/${releaseId}/attach_files`)
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
+      timeout: requestTimeoutMs,
+    }, (response) => {
+      const chunks = []
+      response.on('data', (chunk) => chunks.push(chunk))
+      response.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Gitee API POST /releases/${releaseId}/attach_files returned HTTP ${response.statusCode}`))
+          return
+        }
+        try {
+          const asset = JSON.parse(text)
+          if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
+          resolve(asset)
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
+    request.on('timeout', () => request.destroy(new Error(`Gitee upload timed out: ${name}`)))
+    request.on('error', reject)
+    request.end(body)
+  })
 }
 
 export function createGiteeManifest(githubManifest, giteeAssets) {
