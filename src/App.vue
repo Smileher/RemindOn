@@ -606,12 +606,17 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
-    unlistenUpdateAction = await onAction((notification) => {
-      if (notification.extra?.kind !== 'update') return
-      currentView.value = 'about'
-      void getCurrentWindow().show()
-      void getCurrentWindow().setFocus()
-    })
+    try {
+      unlistenUpdateAction = await onAction((notification) => {
+        if (notification.extra?.kind !== 'update') return
+        currentView.value = 'about'
+        void getCurrentWindow().show()
+        void getCurrentWindow().setFocus()
+      })
+    } catch (error) {
+      // Some desktop notification backends do not support action listeners.
+      logError('listen for update notification action', error)
+    }
     await refreshTimers()
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
