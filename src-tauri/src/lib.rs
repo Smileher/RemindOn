@@ -1317,26 +1317,22 @@ fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
     fs::write(path, content).map_err(|error| format!("写出导出文件失败：{error}"))
 }
 
-fn tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri::Result<Menu<tauri::Wry>> {
-    let (show_text, pause_text, resume_text, about_text, quit_text) = match language {
-        Language::ZhCn => ("打开 RemindOn", "暂停提醒", "恢复提醒", "关于", "退出"),
-        Language::En => (
-            "Open RemindOn",
-            "Pause reminders",
-            "Resume reminders",
-            "About",
-            "Quit",
-        ),
+fn tray_menu(
+    app: &AppHandle,
+    language: Language,
+    _paused: bool,
+) -> tauri::Result<Menu<tauri::Wry>> {
+    let (show_text, quit_text, about_text) = match language {
+        Language::ZhCn => ("打开", "关闭", "关于"),
+        Language::En => ("Open", "Close", "About"),
     };
     let show = MenuItemBuilder::with_id("show", show_text).build(app)?;
-    let pause = MenuItemBuilder::with_id("pause", if paused { resume_text } else { pause_text })
-        .build(app)?;
     let about = MenuItemBuilder::with_id("about", about_text).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", quit_text).build(app)?;
     MenuBuilder::new(app)
-        .items(&[&show, &pause])
-        .separator()
+        .item(&show)
         .item(&quit)
+        .separator()
         .item(&about)
         .build()
 }
