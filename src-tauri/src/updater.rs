@@ -92,7 +92,7 @@ pub async fn download_portable_update(
     expected_version: String,
 ) -> Result<String, String> {
     if get_update_mode(app.clone())? != UpdateMode::Portable {
-        return Err("当前副本不是便携运行模式".to_string());
+        return Err("The current copy is not running in portable mode".to_string());
     }
     validate_release_version(&expected_version)?;
 
@@ -114,12 +114,12 @@ pub async fn download_portable_update(
     let manifest: UpdateManifest =
         serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
     if manifest.version != expected_version {
-        return Err("更新版本已经变化，请重新检查更新".to_string());
+        return Err("The available version changed; check for updates again".to_string());
     }
     let asset = manifest
         .downloads
         .get(PORTABLE_DOWNLOAD_TARGET)
-        .ok_or_else(|| "当前平台没有可下载的便携更新".to_string())?;
+        .ok_or_else(|| "No portable update is available for the current platform".to_string())?;
     validate_download_asset(&expected_version, asset)?;
 
     let download_dir = app
@@ -149,7 +149,7 @@ pub async fn download_portable_update(
     let downloaded_hash = checksum_file(&part_path)?;
     if downloaded_hash != expected_hash {
         let _ = fs::remove_file(&part_path);
-        return Err("下载文件校验失败，请重新下载".to_string());
+        return Err("The downloaded file failed verification; download it again".to_string());
     }
     if let Err(error) = fs::rename(&part_path, &final_path) {
         let _ = fs::remove_file(&part_path);
@@ -174,7 +174,7 @@ async fn download_portable_update_from_manifest(
     manifest_url: &str,
 ) -> Result<String, String> {
     if get_update_mode(app.clone())? != UpdateMode::Portable {
-        return Err("当前副本不是便携运行模式".to_string());
+        return Err("The current copy is not running in portable mode".to_string());
     }
     validate_release_version(expected_version)?;
 
@@ -196,12 +196,12 @@ async fn download_portable_update_from_manifest(
     let manifest: UpdateManifest =
         serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
     if manifest.version != expected_version {
-        return Err("更新版本已经变化，请重新检查更新".to_string());
+        return Err("The available version changed; check for updates again".to_string());
     }
     let asset = manifest
         .downloads
         .get(PORTABLE_DOWNLOAD_TARGET)
-        .ok_or_else(|| "当前平台没有可下载的便携更新".to_string())?;
+        .ok_or_else(|| "No portable update is available for the current platform".to_string())?;
     validate_download_asset(expected_version, asset)?;
 
     let download_dir = app
@@ -221,7 +221,7 @@ async fn download_portable_update_from_manifest(
     }
     if checksum_file(&part_path)? != expected_hash {
         let _ = fs::remove_file(&part_path);
-        return Err("下载文件校验失败，请重新下载".to_string());
+        return Err("The downloaded file failed verification; download it again".to_string());
     }
     fs::rename(&part_path, &final_path).map_err(|error| {
         let _ = fs::remove_file(&part_path);
@@ -248,9 +248,9 @@ pub async fn install_update_from_gitee(
         .check()
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Gitee 没有可用的更新".to_string())?;
+        .ok_or_else(|| "No update is available from Gitee".to_string())?;
     if update.version != expected_version {
-        return Err("Gitee 更新版本不匹配".to_string());
+        return Err("The Gitee update version does not match".to_string());
     }
     update
         .download_and_install(|_, _| {}, || {})
@@ -264,7 +264,7 @@ pub async fn download_portable_update_from_gitee(
     _app: tauri::AppHandle,
     _expected_version: String,
 ) -> Result<String, String> {
-    Err("当前平台不支持便携更新".to_string())
+    Err("The current platform does not support portable updates".to_string())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -273,7 +273,7 @@ pub async fn install_update_from_gitee(
     _app: tauri::AppHandle,
     _expected_version: String,
 ) -> Result<(), String> {
-    Err("当前平台不支持应用内更新".to_string())
+    Err("The current platform does not support in-app updates".to_string())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -282,7 +282,7 @@ pub async fn download_portable_update(
     _app: tauri::AppHandle,
     _expected_version: String,
 ) -> Result<String, String> {
-    Err("当前平台不支持便携更新".to_string())
+    Err("The current platform does not support portable updates".to_string())
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -295,16 +295,16 @@ fn validate_release_version(version: &str) -> Result<(), String> {
     {
         Ok(())
     } else {
-        Err("更新版本格式无效".to_string())
+        Err("Invalid update version format".to_string())
     }
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Result<(), String> {
     if asset.file_name != expected_download_file_name(version) {
-        return Err("更新文件名无效".to_string());
+        return Err("Invalid update file name".to_string());
     }
-    let url = Url::parse(&asset.url).map_err(|_| "更新下载地址无效".to_string())?;
+    let url = Url::parse(&asset.url).map_err(|_| "Invalid update download URL".to_string())?;
     let valid_host = matches!(url.host_str(), Some("github.com" | "gitee.com"));
     let expected_prefix = format!("/Smileher/RemindOn/releases/download/v{version}/");
     let expected_gitee_prefix = format!("/smileher/RemindOn/releases/download/v{version}/");
@@ -312,10 +312,10 @@ fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Resu
         || (!url.path().starts_with(&expected_prefix)
             && !url.path().starts_with(&expected_gitee_prefix))
     {
-        return Err("更新下载地址无效".to_string());
+        return Err("Invalid update download URL".to_string());
     }
     if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("更新文件校验值无效".to_string());
+        return Err("Invalid update file checksum".to_string());
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-import { locales } from './content.mjs'
+import { languageLabels, locales } from './content.mjs'
 
 export const basePath = '/RemindOn/'
 export const origin = 'https://smileher.github.io'
@@ -78,7 +78,7 @@ export function renderPage(language, release, screenshots) {
       <a class="brand" href="${basePath}${t.path}" aria-label="RemindOn"><img src="${logo}" width="36" height="36" alt=""><span>RemindOn<span class="brand-dot">.</span></span></a>
       <nav class="main-nav" aria-label="${e(t.navigation)}">${['features', 'download', 'faq'].map((id, i) => `<a href="#${id}">${e(t.nav[i])}</a>`).join('')}</nav>
       <div class="theme-controls" role="group" aria-label="${e(t.theme)}" hidden>${['system', 'light', 'dark'].map((theme, i) => `<button type="button" data-theme-value="${theme}" aria-label="${e(t.themes[i])}" title="${e(t.themes[i])}" aria-pressed="${theme === 'system'}">${icon(theme)}</button>`).join('')}</div>
-      <nav class="language-nav" aria-label="${e(t.language)}"><a href="${basePath}" lang="zh-CN" hreflang="zh-CN"${language === 'zh' ? ' aria-current="page"' : ''}>中文</a><span aria-hidden="true">/</span><a href="${basePath}en/" lang="en" hreflang="en"${language === 'en' ? ' aria-current="page"' : ''}>EN</a></nav>
+      <nav class="language-nav" aria-label="${e(t.language)}"><a href="${basePath}" lang="zh-CN" hreflang="zh-CN"${language === 'zh' ? ' aria-current="page"' : ''}>${e(languageLabels.zh)}</a><span aria-hidden="true">/</span><a href="${basePath}en/" lang="en" hreflang="en"${language === 'en' ? ' aria-current="page"' : ''}>${e(languageLabels.en)}</a></nav>
     </div>
   </header>
   <main id="main">

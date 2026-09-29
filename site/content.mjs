@@ -1,3 +1,8 @@
+export const languageLabels = {
+  zh: '中文',
+  en: 'EN',
+}
+
 export const locales = {
   zh: {
     lang: 'zh-CN', locale: 'zh_CN', path: '',
