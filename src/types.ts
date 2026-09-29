@@ -22,6 +22,7 @@ export interface AppSettings {
   autostart: boolean
   minimizeToTray: boolean
   popupAlwaysOnTop: boolean
+  popupFullscreen: boolean
   restEnabled: boolean
   restIntervalMinutes: number
   restMessage: string
@@ -41,6 +42,7 @@ export interface AppData {
 }
 
 export interface ReminderTriggeredEvent {
+  sessionId: number
   id: string
   title: string
   type: ReminderType
@@ -56,12 +58,13 @@ export interface RestTimerStatus {
 }
 
 export const defaultData = (): AppData => ({
-  version: 3,
+  version: 4,
   settings: {
     language: 'zh-CN',
     autostart: false,
     minimizeToTray: false,
     popupAlwaysOnTop: true,
+    popupFullscreen: false,
     restEnabled: false,
     restIntervalMinutes: 45,
     restMessage: '休息时间到了，该休息一下了。',

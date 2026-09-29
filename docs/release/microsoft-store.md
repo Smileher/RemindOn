@@ -6,8 +6,8 @@
 
 | 产物 | 用途 | 上传到哪里 |
 | --- | --- | --- |
-| `RemindOn_0.8.0_x64-setup.exe` | 普通 NSIS 安装版 | GitHub / Gitee Release |
-| `RemindOn_0.8.0_x64_portable.exe` | 普通便携版 | GitHub / Gitee Release |
+| `RemindOn_0.9.0_x64-setup.exe` | 普通 NSIS 安装版 | GitHub / Gitee Release |
+| `RemindOn_0.9.0_x64_portable.exe` | 普通便携版 | GitHub / Gitee Release |
 | `RemindOn_1.8.0.0_x64.msix` | 商店版 x64 单架构包 | 可单独上传 Partner Center |
 | `RemindOn_1.8.0.0_arm64.msix` | 商店版 ARM64 单架构包 | 可单独上传 Partner Center |
 | `RemindOn_1.8.0.0_bundle.msixbundle` | 含 x64、ARM64 的商店版集合 | **推荐上传这一文件** |
@@ -57,7 +57,7 @@
 
 因此之前的 `0.8.0.0` 示例应改正。本指南采用 **`1.8.0.0`** 演示首次上传，前提是当前产品没有更高的已有版本。后续可以用 `1.8.1.0`、`1.9.0.0`；这只是示例，不是流水线自动映射规则。
 
-应用自身的产品版本仍然可以是 `0.8.0`。普通版的 `v0.8.0` tag 和商店的 `1.8.0.0` MSIX 包版本用途不同。手动商店工作流的 version 输入只设置 MSIX 版本，不会修改 `package.json`、Cargo 或应用内显示的版本。
+应用自身的产品版本仍然可以是 `0.9.0`。普通版的 `v0.9.0` tag 和商店的 `1.8.0.0` MSIX 包版本用途不同。手动商店工作流的 version 输入只设置 MSIX 版本，不会修改 `package.json`、Cargo 或应用内显示的版本。
 
 ## 5. 推荐：在 GitHub Actions 一键构建
 

@@ -18,23 +18,25 @@ const scriptCode = ts.transpileModule(script.content, {
 }).outputText
 const noop = () => {}
 const settle = () => new Promise(setImmediate)
-const restEvent = { id: '__rest__', title: '休息时间到了', isRest: true, isTest: false }
-const powerEvent = { id: '__shutdown__', title: '锁定电脑', isShutdown: true, powerAction: 'lock', isTest: false }
+const restEvent = { sessionId: 1, id: '__rest__', title: '休息时间到了', type: 'interval', isRest: true, isShutdown: false, isTest: false }
+const powerEvent = { sessionId: 2, id: '__shutdown__', title: '锁定电脑', type: 'daily', isRest: false, isShutdown: true, powerAction: 'lock', isTest: false }
 
-async function mountPopup() {
+async function mountPopup({ label = 'reminder', active = null } = {}) {
   const data = defaultData()
   const listeners = new Map()
   const intervals = new Map()
   const calls = []
   const nativeHandlers = new Map()
   const invokeHandlers = new Map()
+  const windowListeners = new Map()
   let mounted
   let nextInterval = 1
   let clockNow = Date.now()
   let readData = async () => structuredClone(data)
   let confirmAction = async () => true
   const nativeWindow = {
-    listen: async (name, callback) => { listeners.set(name, { target: 'reminder', callback }); return noop },
+    label,
+    listen: async (name, callback) => { listeners.set(name, { target: label, callback }); return noop },
     onCloseRequested: async () => noop,
   }
   for (const name of ['hide', 'setAlwaysOnTop', 'center', 'show', 'setFocus']) {
@@ -49,11 +51,13 @@ async function mountPopup() {
       setTheme: async () => { calls.push('setTheme'); await nativeHandlers.get('setTheme')?.() },
     },
     '@tauri-apps/api/core': {
-      invoke: async (command) => {
+      invoke: async (command, args) => {
         calls.push(command)
-        if (invokeHandlers.has(command)) return invokeHandlers.get(command)()
+        if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return readData()
-        if (['execute_power_action', 'dismiss_reminder', 'snooze_reminder'].includes(command)) return
+        if (command === 'get_active_reminder') return active
+        if (command === 'execute_power_action') return true
+        if (['dismiss_reminder', 'snooze_reminder'].includes(command)) return
         throw new Error(`Unexpected command: ${command}`)
       },
     },
@@ -78,6 +82,8 @@ async function mountPopup() {
     window: {
       setInterval: (callback) => { const id = nextInterval++; intervals.set(id, callback); return id },
       clearInterval: (id) => intervals.delete(id),
+      addEventListener: (name, callback) => windowListeners.set(name, callback),
+      removeEventListener: (name) => windowListeners.delete(name),
     },
     document: { addEventListener: noop, removeEventListener: noop },
     localStorage: { getItem: () => null, setItem: noop },
@@ -92,6 +98,10 @@ async function mountPopup() {
     setNative: (name, callback) => nativeHandlers.set(name, callback),
     setInvoke: (name, callback) => invokeHandlers.set(name, callback),
     setConfirm: (callback) => { confirmAction = callback },
+    keydown: async (event) => {
+      windowListeners.get('keydown')?.({ repeat: false, preventDefault: noop, ...event })
+      await settle()
+    },
     emitTo: async (target, name, payload) => {
       const listener = listeners.get(name)
       if (listener && (listener.target === null || listener.target === target)) {
@@ -204,4 +214,37 @@ test('an old power confirmation cannot execute after import reset', async () => 
   resolveConfirmation(true)
   await executing
   assert.ok(!popup.calls.includes('execute_power_action'))
+})
+
+test('Escape dismisses the active reminder and hides the popup', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(restEvent)
+  await popup.keydown({ key: 'Escape' })
+  assert.ok(popup.calls.includes('dismiss_reminder'))
+  assert.equal(popup.calls.at(-1), 'hide')
+  assert.equal(popup.intervals.size, 0)
+})
+
+test('a secondary fullscreen popup never executes the automatic power action', async () => {
+  const popup = await mountPopup({ label: 'reminder-monitor-1' })
+  await popup.state.handleTrigger(powerEvent)
+  await popup.advance(60_000)
+  assert.ok(!popup.calls.includes('execute_power_action'))
+  assert.equal(popup.intervals.size, 0)
+})
+
+test('a backend close event clears matching popup state and timers', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(powerEvent)
+  await popup.emitTo('reminder', 'reminder-closed', powerEvent.sessionId)
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.intervals.size, 0)
+  assert.equal(popup.calls.at(-1), 'hide')
+})
+
+test('a newly created monitor popup restores the active reminder on mount', async () => {
+  const popup = await mountPopup({ label: 'reminder-monitor-1', active: restEvent })
+  assert.equal(popup.state.current.value.sessionId, restEvent.sessionId)
+  assert.equal(popup.intervals.size, 1)
+  assert.ok(popup.calls.includes('show'))
 })
