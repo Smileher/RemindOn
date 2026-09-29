@@ -15,6 +15,7 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 
+mod i18n;
 mod updater;
 
 const DATA_VERSION: u32 = 4;
@@ -28,7 +29,7 @@ const REMINDER_WINDOW_WIDTH: f64 = 520.0;
 const REMINDER_WINDOW_HEIGHT: f64 = 320.0;
 
 fn default_rest_message() -> String {
-    "休息时间到了，该休息一下了。".to_string()
+    i18n::default_rest_message(Language::ZhCn).to_string()
 }
 
 fn default_shutdown_time() -> String {
@@ -36,7 +37,7 @@ fn default_shutdown_time() -> String {
 }
 
 fn default_shutdown_message() -> String {
-    "即将自动关闭电脑。".to_string()
+    i18n::default_power_message(Language::ZhCn, &PowerAction::Shutdown).to_string()
 }
 
 fn default_system_notification_enabled() -> bool {
@@ -254,17 +255,18 @@ fn data_path(app: &AppHandle) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_config_dir()
-        .map_err(|error| format!("无法取得配置目录：{error}"))?;
-    fs::create_dir_all(&directory).map_err(|error| format!("无法创建配置目录：{error}"))?;
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
     Ok(directory.join("remindon.json"))
 }
 
 fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
-    let content =
-        serde_json::to_string_pretty(data).map_err(|error| format!("序列化配置失败：{error}"))?;
+    let content = serde_json::to_string_pretty(data)
+        .map_err(|error| format!("Failed to serialize settings: {error}"))?;
     // Windows cannot replace an existing file with std::fs::rename, so keep this
     // small local configuration write straightforward and portable.
-    fs::write(path, content).map_err(|error| format!("保存配置失败：{error}"))
+    fs::write(path, content).map_err(|error| format!("Failed to save settings: {error}"))
 }
 
 fn corrupt_backup_path(path: &Path) -> PathBuf {
@@ -279,13 +281,16 @@ fn load_json(path: &Path) -> Result<AppData, String> {
     if !path.exists() {
         return Ok(AppData::default());
     }
-    let content = fs::read_to_string(path).map_err(|error| format!("读取配置失败：{error}"))?;
+    let content =
+        fs::read_to_string(path).map_err(|error| format!("Failed to read settings: {error}"))?;
     match serde_json::from_str::<AppData>(&content) {
         Ok(data) => Ok(data),
         Err(error) => {
             let backup = corrupt_backup_path(path);
             fs::rename(path, &backup).map_err(|rename_error| {
-                format!("配置格式无效（{error}），且无法保留损坏文件：{rename_error}")
+                format!(
+                    "Settings are invalid ({error}) and the corrupted file could not be preserved: {rename_error}"
+                )
             })?;
             Ok(AppData::default())
         }
@@ -295,11 +300,12 @@ fn load_json(path: &Path) -> Result<AppData, String> {
 fn parse_datetime(value: &str) -> Result<DateTime<Local>, String> {
     DateTime::parse_from_rfc3339(value)
         .map(|datetime| datetime.with_timezone(&Local))
-        .map_err(|error| format!("时间格式无效：{error}"))
+        .map_err(|error| format!("Invalid date-time format: {error}"))
 }
 
 fn parse_time(value: &str) -> Result<NaiveTime, String> {
-    NaiveTime::parse_from_str(value, "%H:%M").map_err(|_| "提醒时间必须是 HH:MM".to_string())
+    NaiveTime::parse_from_str(value, "%H:%M")
+        .map_err(|_| "Reminder time must use HH:MM format".to_string())
 }
 
 fn local_datetime(date: NaiveDate, time: NaiveTime) -> Result<DateTime<Local>, String> {
@@ -307,7 +313,7 @@ fn local_datetime(date: NaiveDate, time: NaiveTime) -> Result<DateTime<Local>, S
         .from_local_datetime(&date.and_time(time))
         .earliest()
         .or_else(|| Local.from_local_datetime(&date.and_time(time)).latest())
-        .ok_or_else(|| "无法计算本地提醒时间".to_string())
+        .ok_or_else(|| "Failed to resolve the local reminder time".to_string())
 }
 
 fn next_daily(time: &str, after: DateTime<Local>) -> Result<String, String> {
@@ -325,7 +331,7 @@ fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String,
     let time = reminder
         .time
         .as_deref()
-        .ok_or_else(|| "重复提醒缺少 time".to_string())?;
+        .ok_or_else(|| "Repeating reminder is missing time".to_string())?;
     let parsed_time = parse_time(time)?;
 
     for offset in 0..=370 {
@@ -346,7 +352,7 @@ fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String,
             }
         }
     }
-    Err("无法计算下一次提醒时间".to_string())
+    Err("Failed to calculate the next reminder time".to_string())
 }
 
 fn should_trigger_power_action(due: DateTime<Local>, now: DateTime<Local>) -> bool {
@@ -354,23 +360,31 @@ fn should_trigger_power_action(due: DateTime<Local>, now: DateTime<Local>) -> bo
 }
 
 fn complete_rest_round(state: &AppState) -> bool {
-    let data = state.0.data.lock().expect("配置锁被中毒");
+    let data = state.0.data.lock().expect("settings lock poisoned");
     // 稍后提醒已关闭本次弹窗；重复关闭或关闭其他通知不能覆盖延后的时间。
     if !state.0.rest_active.swap(false, Ordering::SeqCst) {
         return false;
     }
     state.0.rest_round_pending.store(false, Ordering::SeqCst);
     if data.settings.rest_enabled {
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") =
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") =
             Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
     } else {
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = None;
     }
     true
 }
 
 fn snooze_rest_round(state: &AppState, seconds: u32) -> bool {
-    let data = state.0.data.lock().expect("配置锁被中毒");
+    let data = state.0.data.lock().expect("settings lock poisoned");
     if !state.0.rest_active.swap(false, Ordering::SeqCst) {
         return false;
     }
@@ -378,7 +392,11 @@ fn snooze_rest_round(state: &AppState, seconds: u32) -> bool {
         .0
         .rest_round_pending
         .store(data.settings.rest_enabled, Ordering::SeqCst);
-    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = data
+    *state
+        .0
+        .rest_next
+        .lock()
+        .expect("break reminder lock poisoned") = data
         .settings
         .rest_enabled
         .then(|| Local::now() + Duration::seconds(seconds.max(1) as i64));
@@ -389,26 +407,28 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     data.version = DATA_VERSION;
     data.settings.rest_interval_minutes = data.settings.rest_interval_minutes.clamp(1, 1440);
     if data.settings.rest_message.trim().is_empty() {
-        data.settings.rest_message = default_rest_message();
+        data.settings.rest_message = i18n::default_rest_message(data.settings.language).to_string();
     }
     if data.settings.shutdown_reminder_message.trim().is_empty() {
-        data.settings.shutdown_reminder_message = default_shutdown_message();
+        data.settings.shutdown_reminder_message =
+            i18n::default_power_message(data.settings.language, &data.settings.power_action)
+                .to_string();
     }
     parse_time(&data.settings.shutdown_reminder_time)?;
     let now = Local::now();
     for reminder in &mut data.reminders {
         if reminder.id.trim().is_empty() {
-            return Err("提醒缺少 id".to_string());
+            return Err("Reminder is missing id".to_string());
         }
         if reminder.title.trim().is_empty() {
-            return Err("提醒内容不能为空".to_string());
+            return Err("Reminder text cannot be empty".to_string());
         }
         match reminder.reminder_type {
             ReminderType::Once => {
                 let trigger = reminder
                     .trigger_at
                     .as_deref()
-                    .ok_or_else(|| "单次提醒缺少 triggerAt".to_string())?;
+                    .ok_or_else(|| "One-time reminder is missing triggerAt".to_string())?;
                 parse_datetime(trigger)?;
                 reminder.next_trigger_at = Some(trigger.to_string());
             }
@@ -416,7 +436,7 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                 let time = reminder
                     .time
                     .as_deref()
-                    .ok_or_else(|| "重复提醒缺少 time".to_string())?;
+                    .ok_or_else(|| "Repeating reminder is missing time".to_string())?;
                 parse_time(time)?;
                 reminder.weekdays.sort_unstable();
                 reminder.weekdays.dedup();
@@ -426,7 +446,7 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                     && (reminder.weekdays.is_empty()
                         || reminder.weekdays.iter().any(|day| !(1..=7).contains(day)))
                 {
-                    return Err("每周提醒至少需要选择一天".to_string());
+                    return Err("Weekly reminder must include at least one weekday".to_string());
                 }
                 if reminder.reminder_type == ReminderType::Monthly
                     && (reminder.month_days.is_empty()
@@ -435,7 +455,7 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                             .iter()
                             .any(|day| !(1..=31).contains(day)))
                 {
-                    return Err("每月提醒至少需要选择一个日期".to_string());
+                    return Err("Monthly reminder must include at least one date".to_string());
                 }
                 if reminder.next_trigger_at.is_none() {
                     reminder.next_trigger_at = Some(next_recurring(reminder, now)?);
@@ -452,11 +472,11 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
 }
 
 fn app_data(state: &AppState) -> AppData {
-    state.0.data.lock().expect("配置锁被中毒").clone()
+    state.0.data.lock().expect("settings lock poisoned").clone()
 }
 
 fn rest_timer_status(state: &AppState) -> RestTimerStatus {
-    let data = state.0.data.lock().expect("配置锁被中毒");
+    let data = state.0.data.lock().expect("settings lock poisoned");
     if state.0.rest_active.load(Ordering::SeqCst) {
         return RestTimerStatus {
             next_trigger_at: None,
@@ -469,7 +489,11 @@ fn rest_timer_status(state: &AppState) -> RestTimerStatus {
             is_resting: false,
         };
     }
-    let mut next = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+    let mut next = state
+        .0
+        .rest_next
+        .lock()
+        .expect("break reminder lock poisoned");
     if next.is_none() {
         *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
     }
@@ -481,24 +505,6 @@ fn rest_timer_status(state: &AppState) -> RestTimerStatus {
 
 fn emit_rest_timer_updated(app: &AppHandle, state: &AppState) {
     let _ = app.emit_to("main", "rest-timer-updated", rest_timer_status(state));
-}
-
-fn notification_title(language: Language, event: &ReminderTriggeredEvent) -> &'static str {
-    match (language, event.is_rest, event.is_shutdown) {
-        (Language::ZhCn, true, _) => "RemindOn · 休息提醒",
-        (Language::ZhCn, _, true) => "RemindOn · 定时操作",
-        (Language::ZhCn, _, _) => "RemindOn · 事件提醒",
-        (Language::En, true, _) => "RemindOn · Break reminder",
-        (Language::En, _, true) => "RemindOn · Scheduled action",
-        (Language::En, _, _) => "RemindOn · Reminder",
-    }
-}
-
-fn notification_window_title(language: Language) -> &'static str {
-    match language {
-        Language::ZhCn => "RemindOn 通知",
-        Language::En => "RemindOn Notification",
-    }
 }
 
 fn is_reminder_window_label(label: &str) -> bool {
@@ -538,7 +544,11 @@ fn hide_reminder_windows(app: &AppHandle) {
 }
 
 fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) -> bool {
-    let mut active = state.0.active_reminder.lock().expect("提醒会话锁被中毒");
+    let mut active = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("reminder session lock poisoned");
     if active.as_ref().map(|event| event.session_id) != Some(session_id) {
         return false;
     }
@@ -556,14 +566,22 @@ fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) ->
 }
 
 fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
-    *state.0.active_reminder.lock().expect("提醒会话锁被中毒") = None;
+    *state
+        .0
+        .active_reminder
+        .lock()
+        .expect("reminder session lock poisoned") = None;
     state.0.power_action_session.store(0, Ordering::SeqCst);
     hide_reminder_windows(app);
     emit_to_reminder_windows(app, event, ());
 }
 
 fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
-    let mut active = state.0.active_reminder.lock().expect("提醒会话锁被中毒");
+    let mut active = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("reminder session lock poisoned");
     if !active.as_ref().is_some_and(|event| event.is_rest) {
         return;
     }
@@ -578,7 +596,7 @@ fn active_reminder_matches(state: &AppState, id: &str, session_id: u64) -> bool 
         .0
         .active_reminder
         .lock()
-        .expect("提醒会话锁被中毒")
+        .expect("reminder session lock poisoned")
         .as_ref()
         .is_some_and(|event| event.session_id == session_id && event.id == id)
 }
@@ -589,7 +607,7 @@ fn activate_reminder_session(app: &AppHandle, state: &AppState, event: ReminderT
         .0
         .active_reminder
         .lock()
-        .expect("提醒会话锁被中毒")
+        .expect("reminder session lock poisoned")
         .replace(event);
     if let Some(previous) = previous {
         hide_reminder_windows(app);
@@ -622,7 +640,7 @@ fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
     let _ = window.set_simple_fullscreen(false);
     #[cfg(not(target_os = "macos"))]
     let _ = window.set_fullscreen(false);
-    let _ = window.set_title(notification_window_title(settings.language));
+    let _ = window.set_title(i18n::notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
     let _ = window.set_decorations(true);
     let _ = window.set_resizable(false);
@@ -657,7 +675,7 @@ fn configure_fullscreen_reminder(
         let _ = window.set_fullscreen(false);
         let _ = window.hide();
     }
-    let _ = window.set_title(notification_window_title(settings.language));
+    let _ = window.set_title(i18n::notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
     let _ = window.set_decorations(false);
     let _ = window.set_resizable(false);
@@ -712,7 +730,7 @@ fn spawn_fullscreen_reminder_window(
     thread::spawn(move || {
         let Ok(window) =
             WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html#/reminder".into()))
-                .title(notification_window_title(settings.language))
+                .title(i18n::notification_window_title(settings.language))
                 .visible(false)
                 .decorations(false)
                 .resizable(false)
@@ -780,14 +798,14 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
 
 fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
     for window in reminder_windows(app) {
-        let _ = window.set_title(notification_window_title(settings.language));
+        let _ = window.set_title(i18n::notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
         let _ = app.emit_to(window.label(), "settings-updated", settings);
     }
 }
 
 fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Option<AppSettings> {
-    let data = state.0.data.lock().expect("配置锁被中毒");
+    let data = state.0.data.lock().expect("settings lock poisoned");
     let settings = &data.settings;
     // 到期事件生成后若用户关闭了休息提醒，不再重新激活已取消的弹窗。
     if event.is_rest && !event.is_test && !settings.rest_enabled {
@@ -797,12 +815,20 @@ fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Opt
     // 测试和定时休息弹窗使用相同的暂停及完成逻辑。
     if event.is_rest {
         state.0.rest_active.store(true, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = None;
         state.0.rest_round_pending.store(true, Ordering::SeqCst);
     } else if state.0.rest_active.swap(false, Ordering::SeqCst) {
         // 共用窗口替换了休息通知，相当于关闭该休息；已稍后提醒的轮次不受影响。
         state.0.rest_round_pending.store(false, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = settings
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = settings
             .rest_enabled
             .then(|| Local::now() + Duration::minutes(settings.rest_interval_minutes as i64));
     }
@@ -832,10 +858,12 @@ fn dispatch_trigger(
     if settings.system_notification_enabled {
         app.notification()
             .builder()
-            .title(notification_title(settings.language, &event))
+            .title(i18n::notification_title(settings.language, &event))
             .body(&event.title)
             .show()
-            .map_err(|error| format!("系统通知发送失败：{error}"))?;
+            .map_err(|error| {
+                i18n::notification_send_failed(settings.language, &error.to_string())
+            })?;
     }
 
     Ok(())
@@ -846,7 +874,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
     let mut triggered = Vec::new();
     let mut changed = false;
     {
-        let mut data = state.0.data.lock().expect("配置锁被中毒");
+        let mut data = state.0.data.lock().expect("settings lock poisoned");
         for reminder in &mut data.reminders {
             if !reminder.enabled {
                 continue;
@@ -885,7 +913,11 @@ fn process_due(app: &AppHandle, state: &AppState) {
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst) {
                 let due = {
-                    let mut next_rest = state.0.rest_next.lock().expect("休息提醒锁被中毒");
+                    let mut next_rest = state
+                        .0
+                        .rest_next
+                        .lock()
+                        .expect("break reminder lock poisoned");
                     if next_rest.is_none() {
                         *next_rest = Some(
                             now + Duration::minutes(data.settings.rest_interval_minutes as i64),
@@ -908,14 +940,22 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         power_action: None,
                         is_test: false,
                     });
-                    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+                    *state
+                        .0
+                        .rest_next
+                        .lock()
+                        .expect("break reminder lock poisoned") = None;
                     state.0.rest_round_pending.store(true, Ordering::SeqCst);
                     state.0.rest_active.store(true, Ordering::SeqCst);
                 }
             }
         }
         if data.settings.shutdown_reminder_enabled {
-            let mut next_shutdown = state.0.shutdown_next.lock().expect("关机提醒锁被中毒");
+            let mut next_shutdown = state
+                .0
+                .shutdown_next
+                .lock()
+                .expect("scheduled action lock poisoned");
             if next_shutdown.is_none() {
                 *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
                     .ok()
@@ -938,7 +978,11 @@ fn process_due(app: &AppHandle, state: &AppState) {
                     .and_then(|value| parse_datetime(&value).ok());
             }
         } else {
-            *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+            *state
+                .0
+                .shutdown_next
+                .lock()
+                .expect("scheduled action lock poisoned") = None;
         }
         if changed {
             let _ = write_json(&state.0.data_path, &data);
@@ -979,7 +1023,7 @@ fn save_data(
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
     validate_and_normalize(&mut data)?;
-    let mut current = state.0.data.lock().expect("配置锁被中毒");
+    let mut current = state.0.data.lock().expect("settings lock poisoned");
     let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
     let rest_interval_changed =
         current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
@@ -991,14 +1035,26 @@ fn save_data(
     if rest_enabled_changed && !data.settings.rest_enabled {
         state.0.rest_active.store(false, Ordering::SeqCst);
         state.0.rest_round_pending.store(false, Ordering::SeqCst);
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = None;
     } else if (rest_enabled_changed || rest_interval_changed)
         && !state.0.rest_round_pending.load(Ordering::SeqCst)
     {
-        *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = None;
     }
     if shutdown_schedule_changed {
-        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+        *state
+            .0
+            .shutdown_next
+            .lock()
+            .expect("scheduled action lock poisoned") = None;
     }
     drop(current);
     let _ = update_tray_menu(
@@ -1052,10 +1108,14 @@ fn snooze_reminder(
         close_reminder_session(&app, state.inner(), session_id);
         return Ok(());
     }
-    let mut data = state.0.data.lock().expect("配置锁被中毒");
+    let mut data = state.0.data.lock().expect("settings lock poisoned");
     let delay = Duration::seconds(seconds.max(1) as i64);
     if id == SHUTDOWN_ID {
-        *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = Some(Local::now() + delay);
+        *state
+            .0
+            .shutdown_next
+            .lock()
+            .expect("scheduled action lock poisoned") = Some(Local::now() + delay);
     } else if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
         reminder.enabled = true;
         reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
@@ -1095,7 +1155,7 @@ fn get_active_reminder(
         .0
         .active_reminder
         .lock()
-        .expect("提醒会话锁被中毒")
+        .expect("reminder session lock poisoned")
         .clone();
     let Some(active) = active else {
         hide_reminder_window(&window);
@@ -1128,11 +1188,15 @@ fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
 
 #[tauri::command]
 fn get_next_shutdown_trigger(state: State<'_, AppState>) -> Option<String> {
-    let data = state.0.data.lock().expect("配置锁被中毒");
+    let data = state.0.data.lock().expect("settings lock poisoned");
     if !data.settings.shutdown_reminder_enabled {
         return None;
     }
-    let mut next = state.0.shutdown_next.lock().expect("关机提醒锁被中毒");
+    let mut next = state
+        .0
+        .shutdown_next
+        .lock()
+        .expect("scheduled action lock poisoned");
     if next.is_none() {
         *next = next_daily(&data.settings.shutdown_reminder_time, Local::now())
             .ok()
@@ -1158,12 +1222,12 @@ fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let system_root = std::env::var_os("SystemRoot")
-            .ok_or_else(|| "无法确定 Windows 系统目录".to_string())?;
+            .ok_or_else(|| "Failed to resolve the Windows system directory".to_string())?;
         let (program, args) = windows_power_command(action, &PathBuf::from(system_root));
         Command::new(program)
             .args(args)
             .spawn()
-            .map_err(|error| format!("无法执行系统操作：{error}"))?;
+            .map_err(|error| format!("Failed to execute the system action: {error}"))?;
         return Ok(());
     }
 
@@ -1175,7 +1239,7 @@ fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
             )
             .arg("-suspend")
             .spawn()
-            .map_err(|error| format!("无法锁定电脑：{error}"))?;
+            .map_err(|error| format!("Failed to lock the computer: {error}"))?;
             return Ok(());
         }
         let script = if *action == PowerAction::Shutdown {
@@ -1186,12 +1250,12 @@ fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
         Command::new("/usr/bin/osascript")
             .args(["-e", script])
             .spawn()
-            .map_err(|error| format!("无法执行系统操作：{error}"))?;
+            .map_err(|error| format!("Failed to execute the system action: {error}"))?;
         return Ok(());
     }
 
     #[allow(unreachable_code)]
-    Err("当前系统不支持此自动操作".to_string())
+    Err("The current platform does not support this scheduled action".to_string())
 }
 
 #[tauri::command]
@@ -1205,7 +1269,7 @@ fn execute_power_action(
         .0
         .active_reminder
         .lock()
-        .expect("提醒会话锁被中毒")
+        .expect("reminder session lock poisoned")
         .as_ref()
         .is_some_and(|event| {
             event.session_id == session_id && event.power_action.as_ref() == Some(&action)
@@ -1239,10 +1303,7 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
         TestReminderKind::Event => ReminderTriggeredEvent {
             session_id: 0,
             id: "__test_event__".to_string(),
-            title: match settings.language {
-                Language::ZhCn => "这是一条测试通知".to_string(),
-                Language::En => "This is a test notification".to_string(),
-            },
+            title: i18n::test_notification(settings.language).to_string(),
             reminder_type: ReminderType::Once,
             is_rest: false,
             is_shutdown: false,
@@ -1288,18 +1349,26 @@ fn import_data(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
-    let content =
-        fs::read_to_string(&path).map_err(|error| format!("读取导入文件失败：{error}"))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read the import file: {error}"))?;
     let mut data: AppData =
-        serde_json::from_str(&content).map_err(|error| format!("导入文件格式无效：{error}"))?;
+        serde_json::from_str(&content).map_err(|error| format!("Invalid import file: {error}"))?;
     validate_and_normalize(&mut data)?;
-    let mut current = state.0.data.lock().expect("配置锁被中毒");
+    let mut current = state.0.data.lock().expect("settings lock poisoned");
     write_json(&state.0.data_path, &data)?;
     *current = data.clone();
     state.0.rest_active.store(false, Ordering::SeqCst);
     state.0.rest_round_pending.store(false, Ordering::SeqCst);
-    *state.0.rest_next.lock().expect("休息提醒锁被中毒") = None;
-    *state.0.shutdown_next.lock().expect("关机提醒锁被中毒") = None;
+    *state
+        .0
+        .rest_next
+        .lock()
+        .expect("break reminder lock poisoned") = None;
+    *state
+        .0
+        .shutdown_next
+        .lock()
+        .expect("scheduled action lock poisoned") = None;
     state.0.paused.store(false, Ordering::SeqCst);
     drop(current);
     reset_reminder_session(&app, state.inner(), "reminders-reset");
@@ -1312,9 +1381,9 @@ fn import_data(
 #[tauri::command]
 fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let data = app_data(&state);
-    let content =
-        serde_json::to_string_pretty(&data).map_err(|error| format!("序列化导出失败：{error}"))?;
-    fs::write(path, content).map_err(|error| format!("写出导出文件失败：{error}"))
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|error| format!("Failed to serialize the export: {error}"))?;
+    fs::write(path, content).map_err(|error| format!("Failed to write the export file: {error}"))
 }
 
 fn tray_menu(
@@ -1322,10 +1391,7 @@ fn tray_menu(
     language: Language,
     _paused: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
-    let (show_text, quit_text, about_text) = match language {
-        Language::ZhCn => ("打开", "关闭", "关于"),
-        Language::En => ("Open", "Close", "About"),
-    };
+    let (show_text, quit_text, about_text) = i18n::tray_labels(language);
     let show = MenuItemBuilder::with_id("show", show_text).build(app)?;
     let about = MenuItemBuilder::with_id("about", about_text).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", quit_text).build(app)?;
@@ -1361,7 +1427,7 @@ fn show_about(app: &AppHandle) {
 fn open_power_settings(app: AppHandle) -> Result<(), String> {
     show_main_window(&app);
     app.emit_to("main", "navigate-to", "power")
-        .map_err(|error| format!("无法打开定时操作设置：{error}"))
+        .map_err(|error| format!("Failed to open scheduled action settings: {error}"))
 }
 
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
@@ -1456,7 +1522,13 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 let paused = !state.0.paused.load(Ordering::SeqCst);
                 state.0.paused.store(paused, Ordering::SeqCst);
-                let language = state.0.data.lock().expect("配置锁被中毒").settings.language;
+                let language = state
+                    .0
+                    .data
+                    .lock()
+                    .expect("settings lock poisoned")
+                    .settings
+                    .language;
                 let _ = update_tray_menu(app, language, paused);
             }
             "about" => show_about(app),
@@ -1464,7 +1536,7 @@ pub fn run() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("RemindOn 初始化失败")
+        .expect("RemindOn initialization failed")
         .run(|app, event| {
             if let RunEvent::ExitRequested { .. } = event {
                 app.state::<AppState>()
@@ -1490,7 +1562,7 @@ pub fn run() {
                         .0
                         .active_reminder
                         .lock()
-                        .expect("提醒会话锁被中毒")
+                        .expect("reminder session lock poisoned")
                         .clone();
                     if let Some(active) = active {
                         if active.is_rest && complete_rest_round(state.inner()) {
@@ -1804,7 +1876,13 @@ mod tests {
     #[test]
     fn appended_system_rest_notifications_keep_the_interval_running() {
         let state = rest_state(true);
-        state.0.data.lock().unwrap().settings.system_notification_enabled = true;
+        state
+            .0
+            .data
+            .lock()
+            .unwrap()
+            .settings
+            .system_notification_enabled = true;
         let before = rest_timer_status(&state).next_trigger_at;
         prepare_notification(&state, &rest_event(&state, true)).unwrap();
 

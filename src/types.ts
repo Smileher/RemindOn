@@ -1,3 +1,5 @@
+import { translate } from './i18n.ts'
+
 export type ReminderType = 'once' | 'daily' | 'weekly' | 'monthly' | 'interval'
 export type Theme = 'dark' | 'light' | 'system'
 export type Language = 'zh-CN' | 'en'
@@ -67,14 +69,14 @@ export const defaultData = (): AppData => ({
     popupFullscreen: true,
     restEnabled: false,
     restIntervalMinutes: 45,
-    restMessage: '休息时间到了，该休息一下了。',
+    restMessage: translate('zh-CN', 'rest.defaultMessage'),
     systemNotificationEnabled: true,
     theme: 'dark',
     accentColor: 'mint',
     shutdownReminderEnabled: false,
     powerAction: 'shutdown',
     shutdownReminderTime: '23:30',
-    shutdownReminderMessage: '时间不早了，记得关闭电脑。',
+    shutdownReminderMessage: translate('zh-CN', 'power.defaultShutdownMessage'),
   },
   reminders: [],
 })

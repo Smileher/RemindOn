@@ -16,7 +16,7 @@ import donationCode from './assets/donate.png'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
+import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -206,12 +206,12 @@ function formatRule(reminder: Reminder) {
   }
   if (reminder.type === 'weekly') {
     const prefix = t('rule.weekPrefix')
-    const separator = data.value.settings.language === 'zh-CN' ? '、' : ', '
+    const separator = t('common.listSeparator')
     const days = (reminder.weekdays || []).map((day) => `${prefix}${weekdayOptions.value[day - 1]?.label || day}`).join(separator)
     return `${days} ${reminder.time}`
   }
   if (reminder.type === 'monthly') {
-    return t('rule.monthly', { days: (reminder.monthDays || []).join(data.value.settings.language === 'zh-CN' ? '、' : ', '), time: reminder.time || '' })
+    return t('rule.monthly', { days: (reminder.monthDays || []).join(t('common.listSeparator')), time: reminder.time || '' })
   }
   return `${typeLabels.value[reminder.type]} ${reminder.time}`
 }
@@ -347,22 +347,55 @@ async function updateAutostart(value: boolean) {
   }
 }
 
+function localizedDefaultMessages(language: Language) {
+  return {
+    rest: translate(language, 'rest.defaultMessage'),
+    shutdown: translate(language, 'power.defaultShutdownMessage'),
+    lock: translate(language, 'power.defaultLockMessage'),
+    restart: translate(language, 'power.defaultRestartMessage'),
+  }
+}
+
+async function updateLanguage(language: Language) {
+  const previous = data.value.settings
+  const currentDefaults = localizedDefaultMessages(previous.language)
+  const nextDefaults = localizedDefaultMessages(language)
+  const currentPowerDefault = currentDefaults[previous.powerAction]
+  const nextPowerDefault = nextDefaults[previous.powerAction]
+  data.value.settings = {
+    ...previous,
+    language,
+    restMessage: previous.restMessage === currentDefaults.rest ? nextDefaults.rest : previous.restMessage,
+    shutdownReminderMessage: previous.shutdownReminderMessage === currentPowerDefault
+      ? nextPowerDefault
+      : previous.shutdownReminderMessage,
+  }
+  restMessageDraft.value = data.value.settings.restMessage
+  shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
+  try {
+    await persist()
+    await refreshTimers()
+  } catch (error) {
+    data.value.settings = previous
+    restMessageDraft.value = previous.restMessage
+    shutdownMessageDraft.value = previous.shutdownReminderMessage
+    logError('save language', error)
+    actionMessage.value = t('status.saveFailed')
+  }
+}
+
 async function updatePowerAction(value: AutomaticPowerAction) {
   const previous = data.value.settings
-  const defaults = [
-    translate('zh-CN', 'power.defaultShutdownMessage'),
-    translate('zh-CN', 'power.defaultLockMessage'),
-    translate('zh-CN', 'power.defaultRestartMessage'),
-    translate('en', 'power.defaultShutdownMessage'),
-    translate('en', 'power.defaultLockMessage'),
-    translate('en', 'power.defaultRestartMessage'),
-  ]
-  const messageKey = `power.default${value[0].toUpperCase()}${value.slice(1)}Message` as MessageKey
+  const localizedDefaults = localizedDefaultMessages(previous.language)
+  const defaults = (['zh-CN', 'en'] as const).flatMap((language) => {
+    const messages = localizedDefaultMessages(language)
+    return [messages.shutdown, messages.lock, messages.restart]
+  })
   data.value.settings = {
     ...previous,
     powerAction: value,
     shutdownReminderMessage: defaults.includes(previous.shutdownReminderMessage)
-      ? t(messageKey)
+      ? localizedDefaults[value]
       : previous.shutdownReminderMessage,
   }
   shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
@@ -681,7 +714,7 @@ onUnmounted(() => {
       <section v-else-if="currentView === 'settings'" class="page-section narrow-section">
         <header class="page-header compact-header"><div><p class="eyebrow">PREFERENCES</p><h1>{{ t('settings.title') }}</h1><p class="page-subtitle">{{ t('settings.subtitle') }}</p></div></header>
         <div class="settings-group">
-          <div class="setting-card setting-choice"><div><strong>{{ t('settings.language') }}</strong><span>{{ t('settings.languageHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.language === 'zh-CN' }" type="button" @click="updateSetting('language', 'zh-CN')">{{ t('settings.zh') }}</button><button :class="{ selected: data.settings.language === 'en' }" type="button" @click="updateSetting('language', 'en')">{{ t('settings.en') }}</button></div></div>
+          <div class="setting-card setting-choice"><div><strong>{{ t('settings.language') }}</strong><span>{{ t('settings.languageHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.language === 'zh-CN' }" type="button" @click="updateLanguage('zh-CN')">{{ t('settings.zh') }}</button><button :class="{ selected: data.settings.language === 'en' }" type="button" @click="updateLanguage('en')">{{ t('settings.en') }}</button></div></div>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div><input :checked="data.settings.autostart" type="checkbox" @change="updateAutostart(($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.startHidden') }}</strong><span>{{ t('settings.startHiddenHint') }}</span></div><input :checked="data.settings.minimizeToTray" type="checkbox" @change="updateSetting('minimizeToTray', ($event.target as HTMLInputElement).checked)" /></label>
           <label class="setting-card setting-toggle"><div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div><input :checked="data.settings.popupAlwaysOnTop" type="checkbox" @change="updateSetting('popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" /></label>
