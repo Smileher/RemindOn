@@ -21,6 +21,10 @@ const settle = () => new Promise(setImmediate)
 const restEvent = { sessionId: 1, id: '__rest__', title: '休息时间到了', type: 'interval', isRest: true, isShutdown: false, isTest: false }
 const powerEvent = { sessionId: 2, id: '__shutdown__', title: '锁定电脑', type: 'daily', isRest: false, isShutdown: true, powerAction: 'lock', isTest: false }
 
+test('new settings enable fullscreen reminders by default', () => {
+  assert.equal(defaultData().settings.popupFullscreen, true)
+})
+
 async function mountPopup({ label = 'reminder', active = null } = {}) {
   const data = defaultData()
   const listeners = new Map()
@@ -264,6 +268,14 @@ test('fade-in state is ready before the native popup is shown', async () => {
   const popup = await mountPopup()
   popup.setNative('show', () => assert.equal(popup.state.popupAnimating.value, true))
   await popup.state.handleTrigger(restEvent)
+})
+
+test('each reminder replaces the popup root so fade-in animation restarts', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(restEvent)
+  const firstKey = popup.state.popupAnimationKey.value
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 3 })
+  assert.equal(popup.state.popupAnimationKey.value, firstKey + 1)
 })
 
 test('a newly created monitor popup restores the active reminder on mount', async () => {

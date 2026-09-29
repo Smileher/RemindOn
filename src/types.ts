@@ -64,7 +64,7 @@ export const defaultData = (): AppData => ({
     autostart: false,
     minimizeToTray: false,
     popupAlwaysOnTop: true,
-    popupFullscreen: false,
+    popupFullscreen: true,
     restEnabled: false,
     restIntervalMinutes: 45,
     restMessage: '休息时间到了，该休息一下了。',

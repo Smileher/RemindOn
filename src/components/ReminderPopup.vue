@@ -35,6 +35,7 @@ const restElapsedSeconds = ref(0)
 const powerCountdown = ref(60)
 const powerError = ref('')
 const popupAnimating = ref(false)
+const popupAnimationKey = ref(0)
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
 let unlistenRestCancelled: (() => void) | undefined
@@ -267,9 +268,7 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   if (sequence !== notificationSequence) return
   if (isAutomaticPower.value) startPowerCountdown()
   else if (event.isRest) startRestTimer()
-  popupAnimating.value = false
-  await nextTick()
-  if (sequence !== notificationSequence) return
+  popupAnimationKey.value += 1
   popupAnimating.value = true
   await nextTick()
   if (sequence !== notificationSequence) return
@@ -365,7 +364,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main :class="['popup-shell', ...popupClass]">
+  <main :key="popupAnimationKey" :class="['popup-shell', ...popupClass]">
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
       <kbd class="popup-escape-hint">ESC</kbd>
