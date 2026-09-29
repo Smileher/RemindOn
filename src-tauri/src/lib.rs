@@ -514,15 +514,22 @@ fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, 
     }
 }
 
+fn hide_reminder_window(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    if window.label() == REMINDER_LABEL {
+        let _ = window.set_simple_fullscreen(false);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows 退出原生全屏时可能重新显示已隐藏的窗口，因此必须先退出再隐藏。
+        let _ = window.set_fullscreen(false);
+    }
+    let _ = window.hide();
+}
+
 fn hide_reminder_windows(app: &AppHandle) {
     for window in reminder_windows(app) {
-        #[cfg(target_os = "macos")]
-        if window.label() == REMINDER_LABEL {
-            let _ = window.set_simple_fullscreen(false);
-        }
-        let _ = window.hide();
-        #[cfg(not(target_os = "macos"))]
-        let _ = window.set_fullscreen(false);
+        hide_reminder_window(&window);
     }
 }
 
@@ -690,9 +697,7 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
     if !settings.popup_fullscreen {
         for window in reminder_windows(app) {
             if window.label() != REMINDER_LABEL {
-                let _ = window.hide();
-                #[cfg(not(target_os = "macos"))]
-                let _ = window.set_fullscreen(false);
+                hide_reminder_window(&window);
             }
         }
         if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
@@ -725,9 +730,7 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
 
     for window in reminder_windows(app) {
         if !labels.iter().any(|label| label == window.label()) {
-            let _ = window.hide();
-            #[cfg(not(target_os = "macos"))]
-            let _ = window.set_fullscreen(false);
+            hide_reminder_window(&window);
         }
     }
 

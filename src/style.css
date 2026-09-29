@@ -287,9 +287,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-fullscreen .popup-content h1 { max-width: 760px; font-size: 32px; }
 .popup-fullscreen .rest-elapsed { font-size: 28px; }
 .popup-fullscreen .power-countdown strong { font-size: 42px; }
-.popup-fullscreen .popup-actions { min-height: 92px; padding: 16px 28px 30px; }
-.popup-fullscreen .popup-actions .button, .popup-fullscreen .snooze-picker summary { min-height: 44px; }
-.popup-fullscreen .snooze-picker summary { height: 44px; }
+.popup-fullscreen .popup-actions { padding: 16px 28px 42px; }
 .popup-action-group { display: flex; align-items: center; gap: 7px; }
 .snooze-picker { position: relative; width: 142px; color: var(--text); }
 .snooze-picker summary { display: grid; grid-template-columns: 15px 1fr 15px; align-items: center; gap: 6px; height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: var(--muted); background: var(--page-bg); cursor: pointer; list-style: none; outline: none; }

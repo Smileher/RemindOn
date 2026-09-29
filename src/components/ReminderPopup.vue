@@ -281,9 +281,10 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
 }
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.repeat || !current.value) return
+  if (event.key !== 'Escape' || event.repeat) return
   event.preventDefault()
-  void dismiss()
+  if (current.value) void dismiss()
+  else void closePopup()
 }
 
 async function handleClosed(sessionId: number) {
