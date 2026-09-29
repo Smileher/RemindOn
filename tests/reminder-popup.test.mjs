@@ -82,6 +82,7 @@ async function mountPopup({ label = 'reminder', active = null } = {}) {
     window: {
       setInterval: (callback) => { const id = nextInterval++; intervals.set(id, callback); return id },
       clearInterval: (id) => intervals.delete(id),
+      requestAnimationFrame: (callback) => callback(),
       addEventListener: (name, callback) => windowListeners.set(name, callback),
       removeEventListener: (name) => windowListeners.delete(name),
     },
@@ -223,6 +224,10 @@ test('Escape dismisses the active reminder and hides the popup', async () => {
   assert.ok(popup.calls.includes('dismiss_reminder'))
   assert.equal(popup.calls.at(-1), 'hide')
   assert.equal(popup.intervals.size, 0)
+})
+
+test('popup header shows the Escape shortcut hint', () => {
+  assert.match(descriptor.template.content, /class="popup-escape-hint">ESC<\/kbd>/)
 })
 
 test('a secondary fullscreen popup never executes the automatic power action', async () => {

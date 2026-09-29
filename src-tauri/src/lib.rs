@@ -521,6 +521,8 @@ fn hide_reminder_windows(app: &AppHandle) {
             let _ = window.set_simple_fullscreen(false);
         }
         let _ = window.hide();
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.set_fullscreen(false);
     }
 }
 
@@ -629,7 +631,10 @@ fn configure_fullscreen_reminder(
     is_controller: bool,
 ) {
     #[cfg(not(target_os = "macos"))]
-    let _ = is_controller;
+    {
+        let _ = is_controller;
+        let _ = window.set_fullscreen(false);
+    }
     let _ = window.set_title(notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
     let _ = window.set_decorations(false);
@@ -652,6 +657,9 @@ fn configure_fullscreen_reminder(
         monitor.size().height,
     ));
     let _ = window.unminimize();
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.set_fullscreen(true);
 }
 
 fn spawn_fullscreen_reminder_window(
@@ -683,6 +691,8 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
         for window in reminder_windows(app) {
             if window.label() != REMINDER_LABEL {
                 let _ = window.hide();
+                #[cfg(not(target_os = "macos"))]
+                let _ = window.set_fullscreen(false);
             }
         }
         if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
@@ -716,6 +726,8 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
     for window in reminder_windows(app) {
         if !labels.iter().any(|label| label == window.label()) {
             let _ = window.hide();
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.set_fullscreen(false);
         }
     }
 
