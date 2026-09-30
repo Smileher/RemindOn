@@ -56,7 +56,7 @@ export const locales = {
       { question: 'Mac 安装时提示无法验证开发者怎么办？', paragraphs: ['目前 Mac 版使用 ad-hoc 签名，尚未进行 Apple Developer ID 公证。请先确认安装包来自本项目的 GitHub Releases，再按 macOS 提示在“系统设置 → 隐私与安全性”中允许打开。', '建议将 RemindOn 拖入“应用程序”后运行。当前提供 Apple Silicon（M 系列芯片）版本，不提供 Intel Mac 安装包。'] },
       { question: '定时操作到点会立即执行吗？', paragraphs: ['不会立即执行。软件先显示 60 秒倒计时，倒计时内可以取消操作。因电脑休眠等原因错过计划时间超过 1 分钟时，会跳过本次操作。'] },
     ],
-    footerTagline: '记得重要的事，也记得自己。', source: 'GitHub 仓库', issues: '问题反馈', author: '由 ChenHe 制作',
+    footerTagline: '记得重要的事，也记得自己。', source: 'GitHub 仓库', issues: '问题反馈', author: '由 Smileher 制作',
   },
   en: {
     lang: 'en', locale: 'en_US', path: 'en/',
@@ -109,6 +109,6 @@ export const locales = {
       { question: 'What if macOS cannot verify the developer?', paragraphs: ['The Mac app currently uses ad-hoc signing and is not notarized with an Apple Developer ID. First verify that the download came from this project’s GitHub Releases, then follow macOS instructions in System Settings → Privacy & Security to allow it to open.', 'Drag RemindOn into Applications before running it. The current release supports Apple Silicon (M-series chips); an Intel Mac installer is not provided.'] },
       { question: 'Do scheduled actions happen immediately?', paragraphs: ['No. A 60-second countdown appears first, giving you time to cancel. If an action is missed by more than one minute, for example because the computer was asleep, that occurrence is skipped.'] },
     ],
-    footerTagline: 'Remember what matters. Yourself included.', source: 'GitHub', issues: 'Report an issue', author: 'Made by ChenHe',
+    footerTagline: 'Remember what matters. Yourself included.', source: 'GitHub', issues: 'Report an issue', author: 'Made by Smileher',
   },
 }

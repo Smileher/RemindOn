@@ -54,8 +54,8 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": ["nsis", "dmg"],
-    "publisher": "ChenHe",
-    "copyright": "Copyright © 2026 ChenHe",
+    "publisher": "Smileher",
+    "copyright": "Copyright © 2026 Smileher",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

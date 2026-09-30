@@ -146,4 +146,4 @@ src-tauri/src/   Rust 调度器、数据存储、通知及系统集成
 src-tauri/       Tauri 配置、权限声明与应用图标
 ```
 
-作者：ChenHe
+作者：Smileher
