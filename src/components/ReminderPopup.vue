@@ -105,7 +105,8 @@ const restElapsed = computed(() => t('popup.rested', {
 async function closePopup() {
   snoozeMenu.value?.removeAttribute('open')
   popupAnimating.value = false
-  await currentWindow.hide()
+  if (typeof currentWindow.destroy === 'function') await currentWindow.destroy()
+  else await currentWindow.hide()
 }
 
 function clearPowerTimer() {

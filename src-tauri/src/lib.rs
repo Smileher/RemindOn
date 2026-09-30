@@ -524,22 +524,15 @@ fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, 
     }
 }
 
-fn hide_reminder_window(window: &WebviewWindow) {
-    let _ = window.hide();
+fn destroy_reminder_window(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    let _ = window.set_simple_fullscreen(false);
+    let _ = window.destroy();
 }
 
-fn hide_reminder_windows(app: &AppHandle) {
-    let windows = reminder_windows(app);
-    // 正常关闭只隐藏窗口，避免 Windows 异步退出原生全屏时重新显示空窗口。
-    for window in &windows {
-        let _ = window.hide();
-    }
-    #[cfg(target_os = "macos")]
-    for window in windows {
-        if window.label() == REMINDER_LABEL {
-            let _ = window.set_simple_fullscreen(false);
-            let _ = window.hide();
-        }
+fn destroy_reminder_windows(app: &AppHandle) {
+    for window in reminder_windows(app) {
+        destroy_reminder_window(&window);
     }
 }
 
@@ -560,8 +553,8 @@ fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) ->
         Ordering::SeqCst,
         Ordering::SeqCst,
     );
-    hide_reminder_windows(app);
     emit_to_reminder_windows(app, "reminder-closed", session_id);
+    destroy_reminder_windows(app);
     true
 }
 
@@ -572,8 +565,8 @@ fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
         .lock()
         .expect("reminder session lock poisoned") = None;
     state.0.power_action_session.store(0, Ordering::SeqCst);
-    hide_reminder_windows(app);
     emit_to_reminder_windows(app, event, ());
+    destroy_reminder_windows(app);
 }
 
 fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
@@ -587,8 +580,8 @@ fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
     }
     *active = None;
     drop(active);
-    hide_reminder_windows(app);
     emit_to_reminder_windows(app, "rest-cancelled", ());
+    destroy_reminder_windows(app);
 }
 
 fn active_reminder_matches(state: &AppState, id: &str, session_id: u64) -> bool {
@@ -610,8 +603,8 @@ fn activate_reminder_session(app: &AppHandle, state: &AppState, event: ReminderT
         .expect("reminder session lock poisoned")
         .replace(event);
     if let Some(previous) = previous {
-        hide_reminder_windows(app);
         emit_to_reminder_windows(app, "reminder-closed", previous.session_id);
+        destroy_reminder_windows(app);
     }
 }
 
@@ -721,38 +714,34 @@ fn configure_fullscreen_reminder(
     }
 }
 
-fn spawn_fullscreen_reminder_window(
-    app: AppHandle,
+fn create_reminder_window(
+    app: &AppHandle,
     label: String,
-    monitor: Monitor,
     settings: AppSettings,
-) {
-    thread::spawn(move || {
-        let Ok(window) =
-            WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html#/reminder".into()))
-                .title(i18n::notification_window_title(settings.language))
-                .visible(false)
-                .decorations(false)
-                .resizable(false)
-                .maximizable(false)
-                .skip_taskbar(true)
-                .always_on_top(settings.popup_always_on_top)
-                .build()
-        else {
-            return;
-        };
-        configure_fullscreen_reminder(&window, &monitor, &settings, false);
-    });
+) -> Result<WebviewWindow, String> {
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html#/reminder".into()))
+        .title(i18n::notification_window_title(settings.language))
+        .visible(false)
+        .decorations(false)
+        .resizable(false)
+        .maximizable(false)
+        .skip_taskbar(true)
+        .always_on_top(settings.popup_always_on_top)
+        .build()
+        .map_err(|error| format!("Failed to create reminder window: {error}"))
 }
 
 fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<String> {
     if !settings.popup_fullscreen {
         for window in reminder_windows(app) {
             if window.label() != REMINDER_LABEL {
-                hide_reminder_window(&window);
+                destroy_reminder_window(&window);
             }
         }
-        if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
+        let window = app
+            .get_webview_window(REMINDER_LABEL)
+            .or_else(|| create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok());
+        if let Some(window) = window {
             configure_windowed_reminder(&window, settings);
             return vec![REMINDER_LABEL.to_string()];
         }
@@ -761,7 +750,10 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
 
     let monitors = ordered_monitors(app);
     if monitors.is_empty() {
-        if let Some(window) = app.get_webview_window(REMINDER_LABEL) {
+        let window = app
+            .get_webview_window(REMINDER_LABEL)
+            .or_else(|| create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok());
+        if let Some(window) = window {
             configure_windowed_reminder(&window, settings);
             return vec![REMINDER_LABEL.to_string()];
         }
@@ -782,15 +774,16 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
 
     for window in reminder_windows(app) {
         if !labels.iter().any(|label| label == window.label()) {
-            hide_reminder_window(&window);
+            destroy_reminder_window(&window);
         }
     }
 
     for (index, (label, monitor)) in labels.iter().zip(monitors).enumerate() {
-        if let Some(window) = app.get_webview_window(label) {
+        let window = app
+            .get_webview_window(label)
+            .or_else(|| create_reminder_window(app, label.clone(), settings.clone()).ok());
+        if let Some(window) = window {
             configure_fullscreen_reminder(&window, &monitor, settings, index == 0);
-        } else if index > 0 {
-            spawn_fullscreen_reminder_window(app.clone(), label.clone(), monitor, settings.clone());
         }
     }
     labels
@@ -1158,14 +1151,14 @@ fn get_active_reminder(
         .expect("reminder session lock poisoned")
         .clone();
     let Some(active) = active else {
-        hide_reminder_window(&window);
+        destroy_reminder_window(&window);
         return None;
     };
     if window.label() == REMINDER_LABEL {
         return Some(active);
     }
     if !app_data(state.inner()).settings.popup_fullscreen {
-        hide_reminder_window(&window);
+        destroy_reminder_window(&window);
         return None;
     }
     let valid = ordered_monitors(&app)
@@ -1176,7 +1169,7 @@ fn get_active_reminder(
     if valid {
         Some(active)
     } else {
-        hide_reminder_window(&window);
+        destroy_reminder_window(&window);
         None
     }
 }
@@ -1570,7 +1563,7 @@ pub fn run() {
                         }
                         close_reminder_session(&app, state.inner(), active.session_id);
                     } else if let Some(window) = app.get_webview_window(&label) {
-                        let _ = window.hide();
+                        destroy_reminder_window(&window);
                     }
                 }
             }

@@ -21,20 +21,6 @@
         "resizable": true,
         "center": true,
         "visible": false
-      },
-      {
-        "label": "reminder",
-        "title": "RemindOn",
-        "url": "index.html#/reminder",
-        "width": 520,
-        "height": 320,
-        "resizable": false,
-        "maximizable": false,
-        "center": true,
-        "decorations": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": false,
-        "visible": false
       }
     ],
     "security": {
