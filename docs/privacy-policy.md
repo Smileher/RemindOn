@@ -2,7 +2,7 @@
 
 **生效日期：2026 年 9 月 29 日**
 
-本隐私政策适用于 RemindOn Windows 和 macOS 桌面应用，包括 Microsoft Store 版本、普通安装版和便携版。RemindOn 由 ChenHe 维护。
+本隐私政策适用于 RemindOn Windows 和 macOS 桌面应用，包括 Microsoft Store 版本、普通安装版和便携版。RemindOn 由 Smileher 维护。
 
 ## 1. 我们收集什么
 
@@ -47,7 +47,7 @@ RemindOn 可以使用操作系统提供的系统托盘、通知、开机自启�
 
 **Effective date: September 29, 2026**
 
-This policy applies to the RemindOn desktop application for Windows and macOS, including the Microsoft Store version, the regular installer, and the portable version. RemindOn is maintained by ChenHe.
+This policy applies to the RemindOn desktop application for Windows and macOS, including the Microsoft Store version, the regular installer, and the portable version. RemindOn is maintained by Smileher.
 
 ## 1. Information we collect
 

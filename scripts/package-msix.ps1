@@ -4,7 +4,7 @@ param(
   [Parameter(Mandatory = $true)][ValidatePattern('^[1-9]\d*\.\d+\.\d+\.0$')][string]$Version,
   [Parameter(Mandatory = $true)][string]$IdentityName,
   [Parameter(Mandatory = $true)][string]$Publisher,
-  [string]$PublisherDisplayName = 'ChenHe',
+  [string]$PublisherDisplayName = 'Smileher',
   [Parameter(Mandatory = $true)][string]$SourceExecutable,
   [Parameter(Mandatory = $true)][string]$IconPath,
   [Parameter(Mandatory = $true)][string]$OutputDirectory,

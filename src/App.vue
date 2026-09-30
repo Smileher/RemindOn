@@ -751,7 +751,7 @@ onUnmounted(() => {
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
         <div v-else class="update-panel" aria-live="polite"><div class="update-summary"><span class="update-icon"><Info :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div></div></div>
-        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>ChenHe</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
+        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>Smileher</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>
       </section>
     </main>
