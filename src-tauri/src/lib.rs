@@ -1450,12 +1450,6 @@ fn show_main_window(app: &AppHandle) {
     let _ = ensure_main_window(app, None);
 }
 
-fn hide_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-}
-
 fn show_about(app: &AppHandle) {
     let _ = ensure_main_window(app, Some("about"));
 }
@@ -1592,11 +1586,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("RemindOn initialization failed")
         .run(|app, event| {
-            if let RunEvent::ExitRequested { .. } = event {
-                app.state::<AppState>()
-                    .0
-                    .scheduler_stop
-                    .store(true, Ordering::SeqCst);
+            if let RunEvent::ExitRequested { code, ref api, .. } = event {
+                if code.is_none() {
+                    // Keep the tray-only process alive after the last WebView is destroyed.
+                    api.prevent_exit();
+                } else {
+                    app.state::<AppState>()
+                        .0
+                        .scheduler_stop
+                        .store(true, Ordering::SeqCst);
+                }
             }
             if let RunEvent::WindowEvent {
                 label,
@@ -1606,7 +1605,9 @@ pub fn run() {
             {
                 if label == "main" {
                     api.prevent_close();
-                    hide_main_window(&app);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.destroy();
+                    }
                 } else if is_reminder_window_label(&label) {
                     api.prevent_close();
                     let state = app.state::<AppState>();
