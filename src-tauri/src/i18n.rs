@@ -2,8 +2,8 @@ use crate::{Language, PowerAction, ReminderTriggeredEvent};
 
 pub fn default_rest_message(language: Language) -> &'static str {
     match language {
-        Language::ZhCn => "休息时间到了，该休息一下了。",
-        Language::En => "It is time to take a break.",
+        Language::ZhCn => "休息时间到了，该休息一下了，不要卷。",
+        Language::En => "It is time to take a break. Do not overwork yourself.",
     }
 }
 
