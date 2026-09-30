@@ -1450,6 +1450,12 @@ fn show_main_window(app: &AppHandle) {
     let _ = ensure_main_window(app, None);
 }
 
+fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
 fn show_about(app: &AppHandle) {
     let _ = ensure_main_window(app, Some("about"));
 }
@@ -1600,9 +1606,7 @@ pub fn run() {
             {
                 if label == "main" {
                     api.prevent_close();
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.destroy();
-                    }
+                    hide_main_window(&app);
                 } else if is_reminder_window_label(&label) {
                     api.prevent_close();
                     let state = app.state::<AppState>();
