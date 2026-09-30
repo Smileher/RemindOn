@@ -25,7 +25,7 @@ test('a new version updates GitHub downloads and the Store entry on both pages',
     assert.match(html, /v0\.8\.0/)
     assert.doesNotMatch(html, /v0\.7\.0|app\.tar\.gz/)
     for (const asset of Object.values(release.downloads)) assert.ok(html.includes(`href="${asset.url}"`))
-    assert.match(html, /apps\.microsoft\.com\/search\?query=RemindOn/)
+    assert.match(html, /apps\.microsoft\.com\/detail\/9P9K31N2CJBW/)
     assert.equal((html.match(/class="platform-card"/g) || []).length, 2)
     assert.match(html, new RegExp(`overview-${language}-dark.webp`))
     assert.match(html, new RegExp(`overview-${language}-light.webp`))
