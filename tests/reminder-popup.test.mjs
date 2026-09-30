@@ -25,7 +25,49 @@ test('new settings enable fullscreen reminders by default', () => {
   assert.equal(defaultData().settings.popupFullscreen, true)
 })
 
-async function mountPopup({ label = 'reminder', active = null } = {}) {
+test('a late initial read cannot replace a newer trigger', async () => {
+  const popup = await mountPopup({ readActive: async (listeners) => {
+    listeners.get('reminder-triggered').callback({ payload: powerEvent })
+    return restEvent
+  } })
+  await settle()
+  assert.equal(popup.state.current.value.sessionId, powerEvent.sessionId)
+  assert.equal(popup.calls.filter((name) => name === 'show').length, 1)
+})
+
+test('closing during the initial read prevents a stale popup from opening', async () => {
+  const popup = await mountPopup({ readActive: async (listeners) => {
+    listeners.get('reminder-closed').callback({ payload: restEvent.sessionId })
+    return restEvent
+  } })
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.calls.includes('show'), false)
+  assert.equal(popup.intervals.size, 0)
+})
+
+test('a cached popup ignores duplicate and older sessions after closing', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(powerEvent)
+  await popup.state.dismiss()
+  await popup.state.handleTrigger(restEvent)
+  await popup.state.handleTrigger(powerEvent)
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.calls.filter((name) => name === 'show').length, 1)
+  assert.equal(popup.intervals.size, 0)
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 3 })
+  assert.equal(popup.calls.filter((name) => name === 'show').length, 2)
+})
+
+test('a rejected native show clears the pending notification and timers', async () => {
+  const popup = await mountPopup()
+  popup.setInvoke('show_reminder', async () => false)
+  await popup.state.handleTrigger(powerEvent)
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.intervals.size, 0)
+  assert.equal(popup.calls.includes('show'), false)
+})
+
+async function mountPopup({ label = 'reminder', active = null, readActive } = {}) {
   const data = defaultData()
   const listeners = new Map()
   const intervals = new Map()
@@ -59,7 +101,13 @@ async function mountPopup({ label = 'reminder', active = null } = {}) {
         calls.push(command)
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return readData()
-        if (command === 'get_active_reminder') return active
+        if (command === 'get_active_reminder') return readActive ? readActive(listeners) : active
+        if (command === 'hide_idle_window') return nativeWindow.hide()
+        if (command === 'show_reminder') {
+          assert.equal(typeof args.sessionId, 'number')
+          await nativeWindow.show()
+          return true
+        }
         if (command === 'execute_power_action') {
           listeners.get('reminder-closed')?.callback({ payload: args.sessionId })
           return true
@@ -253,6 +301,27 @@ test('a secondary fullscreen popup never executes the automatic power action', a
   await popup.advance(60_000)
   assert.ok(!popup.calls.includes('execute_power_action'))
   assert.equal(popup.intervals.size, 0)
+})
+
+test('the cached windowed popup remains a controller after a mode switch', async () => {
+  const popup = await mountPopup({ label: 'reminder-windowed', active: powerEvent })
+  assert.equal(popup.state.current.value.sessionId, powerEvent.sessionId)
+  await popup.advance(60_000)
+  assert.equal(popup.calls.filter((name) => name === 'execute_power_action').length, 1)
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.intervals.size, 0)
+})
+
+test('switching back to a cached fullscreen popup only accepts the newer session', async () => {
+  const popup = await mountPopup({ active: restEvent })
+  await popup.emitTo('reminder', 'reminder-closed', restEvent.sessionId)
+  await popup.emitTo('reminder', 'reminder-closed', powerEvent.sessionId)
+  await popup.state.handleTrigger(restEvent)
+  assert.equal(popup.state.current.value, null)
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 3 })
+  assert.equal(popup.state.current.value.sessionId, 3)
+  assert.equal(popup.calls.filter((name) => name === 'show').length, 2)
+  assert.equal(popup.intervals.size, 1)
 })
 
 test('a backend close event clears matching popup state and timers', async () => {

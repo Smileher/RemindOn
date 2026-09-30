@@ -511,7 +511,7 @@ function applyRestTimerStatus(status: RestTimerStatus) {
 
 function handleMainWindowEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.repeat) return
-  void getCurrentWindow().hide()
+  void invoke('hide_idle_window').catch((error) => logError('hide main window', error))
 }
 
 onMounted(async () => {

@@ -58,6 +58,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
       invoke: async (command) => {
         calls.push(command)
         if (command === 'load_data') return structuredClone(settingsData)
+        if (command === 'hide_idle_window') { hideCount += 1; return }
         if (command === 'get_rest_timer_status') {
           assert.ok(listeners.has('rest-timer-updated'), 'subscribe before reading initial status')
           return readStatus()

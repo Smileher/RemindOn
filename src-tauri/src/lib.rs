@@ -1,12 +1,13 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -24,11 +25,13 @@ const TEST_REST_ID: &str = "__test_rest__";
 const SHUTDOWN_ID: &str = "__shutdown__";
 const TRAY_ID: &str = "main-tray";
 const REMINDER_LABEL: &str = "reminder";
+const WINDOWED_REMINDER_LABEL: &str = "reminder-windowed";
 const REMINDER_MONITOR_PREFIX: &str = "reminder-monitor-";
 const REMINDER_WINDOW_WIDTH: f64 = 520.0;
 const REMINDER_WINDOW_HEIGHT: f64 = 320.0;
 const MAIN_WINDOW_WIDTH: f64 = 780.0;
 const MAIN_WINDOW_HEIGHT: f64 = 540.0;
+const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
 
 fn default_rest_message() -> String {
     i18n::default_rest_message(Language::ZhCn).to_string()
@@ -249,6 +252,11 @@ struct InnerState {
     rest_next: Mutex<Option<DateTime<Local>>>,
     shutdown_next: Mutex<Option<DateTime<Local>>>,
     pending_navigation: Mutex<Option<String>>,
+    // All native window work is serialized off the UI thread, including destruction.
+    window_operations: Mutex<()>,
+    window_cache: Mutex<WindowCache>,
+    reminder_targets: Mutex<HashSet<String>>,
+    main_ready: AtomicBool,
     update_state: Mutex<updater::UpdateRuntimeState>,
     update_progress: Mutex<Option<updater::UpdateProgress>>,
 }
@@ -513,7 +521,9 @@ fn emit_rest_timer_updated(app: &AppHandle, state: &AppState) {
 }
 
 fn is_reminder_window_label(label: &str) -> bool {
-    label == REMINDER_LABEL || label.starts_with(REMINDER_MONITOR_PREFIX)
+    label == REMINDER_LABEL
+        || label == WINDOWED_REMINDER_LABEL
+        || label.starts_with(REMINDER_MONITOR_PREFIX)
 }
 
 fn reminder_windows(app: &AppHandle) -> Vec<WebviewWindow> {
@@ -529,16 +539,177 @@ fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, 
     }
 }
 
-fn destroy_reminder_window(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    let _ = window.set_simple_fullscreen(false);
-    let _ = window.destroy();
+#[derive(Default)]
+struct WindowCache {
+    idle: HashMap<String, Instant>,
+    destroying: HashSet<String>,
 }
 
-fn destroy_reminder_windows(app: &AppHandle) {
-    for window in reminder_windows(app) {
-        destroy_reminder_window(&window);
+impl WindowCache {
+    fn hide(&mut self, label: &str, now: Instant) {
+        // Repeated close events must not extend the same idle period.
+        self.idle
+            .entry(label.to_string())
+            .or_insert(now + WINDOW_DESTROY_DELAY);
     }
+
+    fn reuse(&mut self, label: &str) {
+        self.idle.remove(label);
+    }
+
+    fn expired(&self, now: Instant) -> Vec<String> {
+        self.idle
+            .iter()
+            .filter(|(_, deadline)| **deadline <= now)
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+}
+
+// Internal helpers require window_operations; native UI callbacks must enqueue work.
+fn hide_cached_window(window: &WebviewWindow, state: &AppState) -> Result<(), String> {
+    window.hide().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    if is_reminder_window_label(window.label()) {
+        let _ = window.set_simple_fullscreen(false);
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    state
+        .0
+        .window_cache
+        .lock()
+        .expect("window cache lock poisoned")
+        .hide(window.label(), Instant::now());
+    Ok(())
+}
+
+fn hide_reminder_windows(app: &AppHandle, state: &AppState) {
+    state
+        .0
+        .reminder_targets
+        .lock()
+        .expect("reminder targets lock poisoned")
+        .clear();
+    for window in reminder_windows(app) {
+        if let Err(error) = hide_cached_window(&window, state) {
+            eprintln!("Failed to hide {}: {error}", window.label());
+        }
+    }
+}
+
+fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> Result<(), String> {
+    if !state
+        .0
+        .window_cache
+        .lock()
+        .expect("window cache lock poisoned")
+        .destroying
+        .contains(label)
+    {
+        return Ok(());
+    }
+    // destroy() only posts a message. Reuse the label after the manager handles Destroyed.
+    // Waiting is safe only on a background thread while the native event loop keeps running.
+    let deadline = Instant::now() + StdDuration::from_secs(2);
+    while app.get_webview_window(label).is_some() {
+        if Instant::now() >= deadline {
+            return Err(format!("Window {label} is still being destroyed"));
+        }
+        thread::sleep(StdDuration::from_millis(10));
+    }
+    state
+        .0
+        .window_cache
+        .lock()
+        .expect("window cache lock poisoned")
+        .destroying
+        .remove(label);
+    Ok(())
+}
+
+fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
+    let labels = state
+        .0
+        .window_cache
+        .lock()
+        .expect("window cache lock poisoned")
+        .expired(Instant::now());
+    for label in labels {
+        let Some(window) = app.get_webview_window(&label) else {
+            let mut cache = state
+                .0
+                .window_cache
+                .lock()
+                .expect("window cache lock poisoned");
+            cache.idle.remove(&label);
+            cache.destroying.remove(&label);
+            continue;
+        };
+        if !matches!(window.is_visible(), Ok(false)) {
+            continue;
+        }
+        if state
+            .0
+            .reminder_targets
+            .lock()
+            .expect("reminder targets lock poisoned")
+            .contains(&label)
+        {
+            continue;
+        }
+        state
+            .0
+            .window_cache
+            .lock()
+            .expect("window cache lock poisoned")
+            .destroying
+            .insert(label.clone());
+        match window.destroy() {
+            Ok(()) => {
+                state
+                    .0
+                    .window_cache
+                    .lock()
+                    .expect("window cache lock poisoned")
+                    .idle
+                    .remove(&label);
+                if label == "main" {
+                    state.0.main_ready.store(false, Ordering::SeqCst);
+                }
+                if let Err(error) = wait_for_window_destroyed(app, state, &label) {
+                    eprintln!("{error}");
+                }
+            }
+            Err(error) => {
+                state
+                    .0
+                    .window_cache
+                    .lock()
+                    .expect("window cache lock poisoned")
+                    .destroying
+                    .remove(&label);
+                eprintln!("Failed to destroy {label}: {error}");
+            }
+        }
+    }
+}
+
+fn queue_window_action<F>(app: &AppHandle, action: F)
+where
+    F: FnOnce(&AppHandle, &AppState) -> Result<(), String> + Send + 'static,
+{
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _operation = state
+            .0
+            .window_operations
+            .lock()
+            .expect("window operations lock poisoned");
+        if let Err(error) = action(&app, state.inner()) {
+            eprintln!("Window operation failed: {error}");
+        }
+    });
 }
 
 fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) -> bool {
@@ -559,7 +730,7 @@ fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) ->
         Ordering::SeqCst,
     );
     emit_to_reminder_windows(app, "reminder-closed", session_id);
-    destroy_reminder_windows(app);
+    hide_reminder_windows(app, state);
     true
 }
 
@@ -571,7 +742,7 @@ fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
         .expect("reminder session lock poisoned") = None;
     state.0.power_action_session.store(0, Ordering::SeqCst);
     emit_to_reminder_windows(app, event, ());
-    destroy_reminder_windows(app);
+    hide_reminder_windows(app, state);
 }
 
 fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
@@ -586,7 +757,7 @@ fn cancel_active_rest_reminder(app: &AppHandle, state: &AppState) {
     *active = None;
     drop(active);
     emit_to_reminder_windows(app, "rest-cancelled", ());
-    destroy_reminder_windows(app);
+    hide_reminder_windows(app, state);
 }
 
 fn active_reminder_matches(state: &AppState, id: &str, session_id: u64) -> bool {
@@ -609,7 +780,7 @@ fn activate_reminder_session(app: &AppHandle, state: &AppState, event: ReminderT
         .replace(event);
     if let Some(previous) = previous {
         emit_to_reminder_windows(app, "reminder-closed", previous.session_id);
-        destroy_reminder_windows(app);
+        hide_reminder_windows(app, state);
     }
 }
 
@@ -634,10 +805,6 @@ fn ordered_monitors(app: &AppHandle) -> Vec<Monitor> {
 
 fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
     let _ = window.hide();
-    #[cfg(target_os = "macos")]
-    let _ = window.set_simple_fullscreen(false);
-    #[cfg(not(target_os = "macos"))]
-    let _ = window.set_fullscreen(false);
     let _ = window.set_title(i18n::notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
     let _ = window.set_decorations(true);
@@ -649,7 +816,6 @@ fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
         REMINDER_WINDOW_HEIGHT,
     ));
     let _ = window.center();
-    let _ = window.unminimize();
     let _ = window.hide();
 }
 
@@ -695,7 +861,6 @@ fn configure_fullscreen_reminder(
             monitor.size().width,
             monitor.size().height,
         ));
-        let _ = window.unminimize();
         let _ = window.hide();
     }
 
@@ -711,7 +876,6 @@ fn configure_fullscreen_reminder(
                 monitor.size().width,
                 monitor.size().height,
             ));
-            let _ = window.unminimize();
             let _ = window.set_fullscreen(true);
         }
         // 原生全屏切换可能自行显示窗口，内容准备完成前必须保持隐藏。
@@ -736,62 +900,58 @@ fn create_reminder_window(
         .map_err(|error| format!("Failed to create reminder window: {error}"))
 }
 
-fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<String> {
-    if !settings.popup_fullscreen {
-        for window in reminder_windows(app) {
-            if window.label() != REMINDER_LABEL {
-                destroy_reminder_window(&window);
-            }
-        }
-        let window = app.get_webview_window(REMINDER_LABEL).or_else(|| {
-            create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok()
-        });
-        if let Some(window) = window {
-            configure_windowed_reminder(&window, settings);
-            return vec![REMINDER_LABEL.to_string()];
-        }
-        return Vec::new();
-    }
-
-    let monitors = ordered_monitors(app);
-    if monitors.is_empty() {
-        let window = app.get_webview_window(REMINDER_LABEL).or_else(|| {
-            create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok()
-        });
-        if let Some(window) = window {
-            configure_windowed_reminder(&window, settings);
-            return vec![REMINDER_LABEL.to_string()];
-        }
-        return Vec::new();
-    }
-
-    let labels = monitors
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            if index == 0 {
+fn prepare_reminder_windows(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &AppSettings,
+) -> Result<Vec<String>, String> {
+    let monitors = if settings.popup_fullscreen {
+        ordered_monitors(app)
+    } else {
+        Vec::new()
+    };
+    // Keep native fullscreen and windowed instances separate: exiting fullscreen
+    // restores saved window placement and can briefly show the old fullscreen surface.
+    let labels: Vec<String> = (0..monitors.len().max(1))
+        .map(|index| {
+            if monitors.is_empty() {
+                WINDOWED_REMINDER_LABEL.to_string()
+            } else if index == 0 {
                 REMINDER_LABEL.to_string()
             } else {
                 format!("{REMINDER_MONITOR_PREFIX}{index}")
             }
         })
-        .collect::<Vec<_>>();
-
+        .collect();
     for window in reminder_windows(app) {
         if !labels.iter().any(|label| label == window.label()) {
-            destroy_reminder_window(&window);
+            hide_cached_window(&window, state)?;
         }
     }
-
-    for (index, (label, monitor)) in labels.iter().zip(monitors).enumerate() {
-        let window = app
-            .get_webview_window(label)
-            .or_else(|| create_reminder_window(app, label.clone(), settings.clone()).ok());
-        if let Some(window) = window {
-            configure_fullscreen_reminder(&window, &monitor, settings, index == 0);
+    for (index, label) in labels.iter().enumerate() {
+        wait_for_window_destroyed(app, state, label)?;
+        let window = match app.get_webview_window(label) {
+            Some(window) => window,
+            None => create_reminder_window(app, label.clone(), settings.clone())?,
+        };
+        state
+            .0
+            .window_cache
+            .lock()
+            .expect("window cache lock poisoned")
+            .reuse(label);
+        if let Some(monitor) = monitors.get(index) {
+            configure_fullscreen_reminder(&window, monitor, settings, index == 0);
+        } else {
+            configure_windowed_reminder(&window, settings);
         }
     }
-    labels
+    *state
+        .0
+        .reminder_targets
+        .lock()
+        .expect("reminder targets lock poisoned") = labels.iter().cloned().collect();
+    Ok(labels)
 }
 
 fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
@@ -844,7 +1004,17 @@ fn dispatch_trigger(
     emit_rest_timer_updated(app, state);
     event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
     activate_reminder_session(app, state, event.clone());
-    for label in prepare_reminder_windows(app, &settings) {
+    let labels = match prepare_reminder_windows(app, state, &settings) {
+        Ok(labels) => labels,
+        Err(error) => {
+            if event.is_rest && complete_rest_round(state) {
+                emit_rest_timer_updated(app, state);
+            }
+            close_reminder_session(app, state, event.session_id);
+            return Err(error);
+        }
+    };
+    for label in labels {
         if app.get_webview_window(&label).is_some() {
             let _ = app.emit_to(&label, "reminder-triggered", event.clone());
         }
@@ -1000,8 +1170,16 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
     state.0.scheduler_stop.store(false, Ordering::SeqCst);
     thread::spawn(move || {
         while !state.0.scheduler_stop.load(Ordering::SeqCst) {
-            if !state.0.paused.load(Ordering::SeqCst) {
-                process_due(&app, &state);
+            {
+                let _operation = state
+                    .0
+                    .window_operations
+                    .lock()
+                    .expect("window operations lock poisoned");
+                if !state.0.paused.load(Ordering::SeqCst) {
+                    process_due(&app, &state);
+                }
+                reclaim_idle_windows(&app, &state);
             }
             thread::sleep(StdDuration::from_secs(1));
         }
@@ -1015,11 +1193,16 @@ fn load_data(state: State<'_, AppState>) -> Result<AppData, String> {
 }
 
 #[tauri::command]
-fn save_data(
+async fn save_data(
     mut data: AppData,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     validate_and_normalize(&mut data)?;
     let mut current = state.0.data.lock().expect("settings lock poisoned");
     let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
@@ -1089,13 +1272,18 @@ fn set_scheduler_paused(paused: bool, state: State<'_, AppState>) -> Result<(), 
 }
 
 #[tauri::command]
-fn snooze_reminder(
+async fn snooze_reminder(
     id: String,
     seconds: u32,
     session_id: u64,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     if !active_reminder_matches(state.inner(), &id, session_id) {
         return Ok(());
     }
@@ -1125,12 +1313,17 @@ fn snooze_reminder(
 }
 
 #[tauri::command]
-fn dismiss_reminder(
+async fn dismiss_reminder(
     id: String,
     session_id: u64,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     if !active_reminder_matches(state.inner(), &id, session_id) {
         return Ok(());
     }
@@ -1144,39 +1337,99 @@ fn dismiss_reminder(
 }
 
 #[tauri::command]
-fn get_active_reminder(
+async fn get_active_reminder(
     window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<ReminderTriggeredEvent>, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
+    if !state
+        .0
+        .reminder_targets
+        .lock()
+        .expect("reminder targets lock poisoned")
+        .contains(window.label())
+    {
+        return Ok(None);
+    }
+    Ok(state
+        .0
+        .active_reminder
+        .lock()
+        .expect("reminder session lock poisoned")
+        .clone())
+}
+
+#[tauri::command]
+async fn show_reminder(
+    window: WebviewWindow,
+    session_id: u64,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Option<ReminderTriggeredEvent> {
+) -> Result<bool, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     let active = state
         .0
         .active_reminder
         .lock()
         .expect("reminder session lock poisoned")
         .clone();
-    let Some(active) = active else {
-        destroy_reminder_window(&window);
-        return None;
-    };
-    if window.label() == REMINDER_LABEL {
-        return Some(active);
+    let current = active
+        .as_ref()
+        .is_some_and(|event| event.session_id == session_id);
+    if !current
+        || !state
+            .0
+            .reminder_targets
+            .lock()
+            .expect("reminder targets lock poisoned")
+            .contains(window.label())
+    {
+        return Ok(false);
     }
-    if !app_data(state.inner()).settings.popup_fullscreen {
-        destroy_reminder_window(&window);
-        return None;
+    // Restore only after content and geometry are ready; unminimize itself may show a window.
+    if let Err(error) = window.unminimize().and_then(|_| window.show()) {
+        if active.as_ref().is_some_and(|event| event.is_rest) && complete_rest_round(state.inner())
+        {
+            emit_rest_timer_updated(&app, state.inner());
+        }
+        close_reminder_session(&app, state.inner(), session_id);
+        let message = error.to_string();
+        let _ = app.emit_to("main", "notification-failed", &message);
+        return Err(message);
     }
-    let valid = ordered_monitors(&app)
-        .iter()
-        .enumerate()
-        .skip(1)
-        .any(|(index, _)| window.label() == format!("{REMINDER_MONITOR_PREFIX}{index}"));
-    if valid {
-        Some(active)
-    } else {
-        destroy_reminder_window(&window);
-        None
+    if window.label() == REMINDER_LABEL || window.label() == WINDOWED_REMINDER_LABEL {
+        window.set_focus().map_err(|error| error.to_string())?;
     }
+    Ok(true)
+}
+
+#[tauri::command]
+async fn hide_idle_window(window: WebviewWindow, state: State<'_, AppState>) -> Result<(), String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
+    if window.label() == "main"
+        || (is_reminder_window_label(window.label())
+            && !state
+                .0
+                .reminder_targets
+                .lock()
+                .expect("reminder targets lock poisoned")
+                .contains(window.label()))
+    {
+        hide_cached_window(&window, state.inner())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1257,12 +1510,17 @@ fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn execute_power_action(
+async fn execute_power_action(
     action: PowerAction,
     session_id: u64,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     let matches = state
         .0
         .active_reminder
@@ -1332,21 +1590,31 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
 }
 
 #[tauri::command]
-fn test_reminder(
+async fn test_reminder(
     kind: TestReminderKind,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     let event = test_reminder_event(&app_data(&state).settings, kind);
     dispatch_trigger(&app, &state, event)
 }
 
 #[tauri::command]
-fn import_data(
+async fn import_data(
     path: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Failed to read the import file: {error}"))?;
     let mut data: AppData =
@@ -1420,55 +1688,90 @@ fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .map_err(|error| format!("Failed to create main window: {error}"))
 }
 
-fn ensure_main_window(app: &AppHandle, navigation: Option<&str>) -> Option<WebviewWindow> {
-    let existing = app.get_webview_window("main");
-    let had_existing = existing.is_some();
-    if existing.is_none() {
-        if let Some(navigation) = navigation {
-            if let Some(state) = app.try_state::<AppState>() {
-                *state
-                    .0
-                    .pending_navigation
-                    .lock()
-                    .expect("pending navigation lock poisoned") = Some(navigation.to_string());
-            }
+fn ensure_main_window(
+    app: &AppHandle,
+    state: &AppState,
+    navigation: Option<&str>,
+) -> Result<WebviewWindow, String> {
+    wait_for_window_destroyed(app, state, "main")?;
+    state
+        .0
+        .window_cache
+        .lock()
+        .expect("window cache lock poisoned")
+        .reuse("main");
+    let window = match app.get_webview_window("main") {
+        Some(window) => window,
+        None => {
+            state.0.main_ready.store(false, Ordering::SeqCst);
+            create_main_window(app)?
+        }
+    };
+    if let Some(navigation) = navigation {
+        if state.0.main_ready.load(Ordering::SeqCst) {
+            app.emit_to("main", "navigate-to", navigation)
+                .map_err(|error| error.to_string())?;
+        } else {
+            *state
+                .0
+                .pending_navigation
+                .lock()
+                .expect("pending navigation lock poisoned") = Some(navigation.to_string());
         }
     }
-    let window = existing.or_else(|| create_main_window(app).ok());
-    if let Some(window) = &window {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        if navigation.is_some() && had_existing {
-            let _ = app.emit_to("main", "navigate-to", navigation);
-        }
-    }
-    window
+    window.unminimize().map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(window)
 }
 
 fn show_main_window(app: &AppHandle) {
-    let _ = ensure_main_window(app, None);
+    queue_window_action(app, |app, state| {
+        ensure_main_window(app, state, None).map(|_| ())
+    });
+}
+
+fn toggle_main_window(app: &AppHandle) {
+    queue_window_action(app, |app, state| {
+        if let Some(window) = app.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
+                return hide_cached_window(&window, state);
+            }
+        }
+        ensure_main_window(app, state, None).map(|_| ())
+    });
 }
 
 fn show_about(app: &AppHandle) {
-    let _ = ensure_main_window(app, Some("about"));
+    queue_window_action(app, |app, state| {
+        ensure_main_window(app, state, Some("about")).map(|_| ())
+    });
 }
 
 #[tauri::command]
-fn open_power_settings(app: AppHandle) -> Result<(), String> {
-    ensure_main_window(&app, Some("power"))
-        .map(|_| ())
-        .ok_or_else(|| "Failed to create the main window".to_string())
+async fn open_power_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
+    ensure_main_window(&app, state.inner(), Some("power")).map(|_| ())
 }
 
 #[tauri::command]
-fn take_pending_navigation(state: State<'_, AppState>) -> Option<String> {
-    state
+async fn take_pending_navigation(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
+    state.0.main_ready.store(true, Ordering::SeqCst);
+    Ok(state
         .0
         .pending_navigation
         .lock()
         .expect("pending navigation lock poisoned")
-        .take()
+        .take())
 }
 
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
@@ -1479,8 +1782,14 @@ fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
         .icon(tauri::include_image!("icons/icon.png"))
         .tooltip("RemindOn")
         .on_tray_icon_event(|tray, event| {
-            if matches!(event, TrayIconEvent::DoubleClick { .. }) {
-                show_main_window(tray.app_handle());
+            if matches!(
+                event,
+                TrayIconEvent::DoubleClick {
+                    button: tauri::tray::MouseButton::Left,
+                    ..
+                }
+            ) {
+                toggle_main_window(tray.app_handle());
             }
         })
         .build(app)?;
@@ -1522,6 +1831,10 @@ pub fn run() {
                 rest_next: Mutex::new(None),
                 shutdown_next: Mutex::new(None),
                 pending_navigation: Mutex::new(None),
+                window_operations: Mutex::new(()),
+                window_cache: Mutex::new(WindowCache::default()),
+                reminder_targets: Mutex::new(HashSet::new()),
+                main_ready: AtomicBool::new(false),
                 update_state: Mutex::new(updater::UpdateRuntimeState::default()),
                 update_progress: Mutex::new(None),
             }));
@@ -1546,6 +1859,8 @@ pub fn run() {
             snooze_reminder,
             dismiss_reminder,
             get_active_reminder,
+            show_reminder,
+            hide_idle_window,
             get_rest_timer_status,
             get_next_shutdown_trigger,
             execute_power_action,
@@ -1603,28 +1918,46 @@ pub fn run() {
                 ..
             } = event
             {
-                if label == "main" {
+                if label == "main" || is_reminder_window_label(&label) {
                     api.prevent_close();
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.destroy();
-                    }
-                } else if is_reminder_window_label(&label) {
-                    api.prevent_close();
-                    let state = app.state::<AppState>();
-                    let active = state
-                        .0
-                        .active_reminder
-                        .lock()
-                        .expect("reminder session lock poisoned")
-                        .clone();
-                    if let Some(active) = active {
-                        if active.is_rest && complete_rest_round(state.inner()) {
-                            emit_rest_timer_updated(&app, state.inner());
+                    // Capture the closing session before queuing: a newer reminder may arrive
+                    // while an earlier native window operation is still completing.
+                    let closing_reminder = if is_reminder_window_label(&label) {
+                        app.state::<AppState>()
+                            .0
+                            .active_reminder
+                            .lock()
+                            .expect("reminder session lock poisoned")
+                            .clone()
+                    } else {
+                        None
+                    };
+                    queue_window_action(app, move |app, state| {
+                        if label == "main" {
+                            if let Some(window) = app.get_webview_window(&label) {
+                                hide_cached_window(&window, state)?;
+                            }
+                        } else if state
+                            .0
+                            .reminder_targets
+                            .lock()
+                            .expect("reminder targets lock poisoned")
+                            .contains(&label)
+                        {
+                            if let Some(active) = closing_reminder {
+                                if !active_reminder_matches(state, &active.id, active.session_id) {
+                                    return Ok(());
+                                }
+                                if active.is_rest && complete_rest_round(state) {
+                                    emit_rest_timer_updated(app, state);
+                                }
+                                close_reminder_session(app, state, active.session_id);
+                            }
+                        } else if let Some(window) = app.get_webview_window(&label) {
+                            hide_cached_window(&window, state)?;
                         }
-                        close_reminder_session(&app, state.inner(), active.session_id);
-                    } else if let Some(window) = app.get_webview_window(&label) {
-                        destroy_reminder_window(&window);
-                    }
+                        Ok(())
+                    });
                 }
             }
         });
@@ -1633,6 +1966,37 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopening_cancels_reclamation_and_reclosing_starts_a_new_delay() {
+        let mut cache = WindowCache::default();
+        let now = Instant::now();
+        cache.hide("main", now);
+        cache.reuse("main");
+        assert!(cache.expired(now + WINDOW_DESTROY_DELAY).is_empty());
+        cache.hide("main", now + StdDuration::from_secs(20));
+        assert!(cache.expired(now + StdDuration::from_secs(49)).is_empty());
+        assert_eq!(
+            cache.expired(now + StdDuration::from_secs(50)),
+            vec!["main"]
+        );
+    }
+
+    #[test]
+    fn duplicate_close_does_not_extend_idle_time_or_affect_other_windows() {
+        let mut cache = WindowCache::default();
+        let now = Instant::now();
+        cache.hide("main", now);
+        cache.hide("reminder", now + StdDuration::from_secs(10));
+        cache.hide("main", now + StdDuration::from_secs(20));
+        assert!(cache.expired(now + StdDuration::from_secs(29)).is_empty());
+        assert_eq!(cache.expired(now + WINDOW_DESTROY_DELAY), vec!["main"]);
+        cache.reuse("main");
+        assert_eq!(
+            cache.expired(now + StdDuration::from_secs(40)),
+            vec!["reminder"]
+        );
+    }
 
     fn rest_state(enabled: bool) -> AppState {
         let mut data = AppData::default();
@@ -1652,6 +2016,10 @@ mod tests {
             rest_next: Mutex::new(None),
             shutdown_next: Mutex::new(None),
             pending_navigation: Mutex::new(None),
+            window_operations: Mutex::new(()),
+            window_cache: Mutex::new(WindowCache::default()),
+            reminder_targets: Mutex::new(HashSet::new()),
+            main_ready: AtomicBool::new(false),
             update_state: Mutex::new(updater::UpdateRuntimeState::default()),
             update_progress: Mutex::new(None),
         }))
@@ -1794,6 +2162,7 @@ mod tests {
     #[test]
     fn reminder_window_labels_do_not_match_unrelated_windows() {
         assert!(is_reminder_window_label(REMINDER_LABEL));
+        assert!(is_reminder_window_label(WINDOWED_REMINDER_LABEL));
         assert!(is_reminder_window_label("reminder-monitor-1"));
         assert!(!is_reminder_window_label("main"));
         assert!(!is_reminder_window_label("reminder-preview"));

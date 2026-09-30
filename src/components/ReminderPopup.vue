@@ -16,7 +16,7 @@ const current = ref<ReminderTriggeredEvent | null>(null)
 const settings = ref<AppData['settings']>(defaultData().settings)
 const triggeredAt = ref<Date | null>(null)
 const currentWindow = getCurrentWindow()
-const isController = currentWindow.label === 'reminder'
+const isController = currentWindow.label === 'reminder' || currentWindow.label === 'reminder-windowed'
 const snoozeStorageKey = 'remindon.popup.snoozeSeconds'
 const snoozeValues = [30, 60, 300, 600, 1800, 3600, 7200, 10800, 14400]
 
@@ -41,12 +41,12 @@ let unlistenSettings: (() => void) | undefined
 let unlistenRestCancelled: (() => void) | undefined
 let unlistenReset: (() => void) | undefined
 let unlistenClosed: (() => void) | undefined
-let unlistenClose: (() => void) | undefined
 let restTimer: number | undefined
 let powerTimer: number | undefined
 let restStartedAt = 0
 let powerDeadline = 0
 let notificationSequence = 0
+let lastSessionId = 0
 
 const popupClass = computed(() => [
   `theme-${settings.value.theme}`,
@@ -105,8 +105,7 @@ const restElapsed = computed(() => t('popup.rested', {
 async function closePopup() {
   snoozeMenu.value?.removeAttribute('open')
   popupAnimating.value = false
-  if (typeof currentWindow.destroy === 'function') await currentWindow.destroy()
-  else await currentWindow.hide()
+  await invoke('hide_idle_window')
 }
 
 function clearPowerTimer() {
@@ -170,8 +169,8 @@ async function snooze(seconds: number) {
 }
 
 function cancelRest() {
-  if (!current.value?.isRest) return
   notificationSequence += 1
+  if (!current.value?.isRest) return
   clearRestTimer()
   current.value = null
 }
@@ -245,6 +244,8 @@ function startPowerCountdown() {
 }
 
 async function handleTrigger(event: ReminderTriggeredEvent) {
+  if (event.sessionId <= lastSessionId) return
+  lastSessionId = event.sessionId
   const sequence = ++notificationSequence
   clearPowerTimer()
   clearRestTimer()
@@ -273,8 +274,13 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   popupAnimating.value = true
   await nextTick()
   if (sequence !== notificationSequence) return
-  await currentWindow.show()
-  if (isController) await currentWindow.setFocus()
+  // The backend checks the session again so a delayed response cannot reopen a closed popup.
+  try {
+    const shown = await invoke<boolean>('show_reminder', { sessionId: event.sessionId })
+    if (!shown && sequence === notificationSequence) handleClosed(event.sessionId)
+  } catch (error) {
+    logError('show reminder', error)
+  }
 }
 
 function handleEscape(event: KeyboardEvent) {
@@ -285,7 +291,8 @@ function handleEscape(event: KeyboardEvent) {
 }
 
 function handleClosed(sessionId: number) {
-  if (current.value?.sessionId !== sessionId) return
+  if (sessionId < lastSessionId) return
+  lastSessionId = sessionId
   notificationSequence += 1
   clearPowerTimer()
   clearRestTimer()
@@ -338,15 +345,12 @@ onMounted(async () => {
     // The standalone Vite preview has no Tauri event bridge.
   }
   try {
+    const sequence = notificationSequence
     const active = await invoke<ReminderTriggeredEvent | null>('get_active_reminder')
-    if (active && active.sessionId !== current.value?.sessionId) await handleTrigger(active)
+    if (sequence === notificationSequence && active) await handleTrigger(active)
   } catch {
     // The standalone Vite preview has no Tauri command bridge.
   }
-  unlistenClose = await currentWindow.onCloseRequested((event) => {
-    event.preventDefault()
-    void dismiss()
-  })
 })
 
 onUnmounted(() => {
@@ -360,7 +364,6 @@ onUnmounted(() => {
   unlistenRestCancelled?.()
   unlistenReset?.()
   unlistenClosed?.()
-  unlistenClose?.()
 })
 </script>
 
