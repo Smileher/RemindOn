@@ -122,6 +122,14 @@ export function useUpdater() {
     }
   }
 
+  async function openAuthorPage() {
+    try {
+      await openUrl('https://smileher.github.io/RemindOn/')
+    } catch (error) {
+      logUpdaterError('open author page', error)
+    }
+  }
+
   function dispose() {
     disposed = true
     void statusListener?.then((unlisten) => unlisten(), () => {})
@@ -132,6 +140,6 @@ export function useUpdater() {
 
   return {
     mode, status, newVersion, progress, errorMessage, busy,
-    loadStatus, checkForUpdates, openReleases, dispose,
+    loadStatus, checkForUpdates, openReleases, openAuthorPage, dispose,
   }
 }
