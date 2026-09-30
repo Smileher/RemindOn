@@ -3,7 +3,7 @@ export const languageLabels = {
   en: 'EN',
 }
 
-export const microsoftStoreUrl = 'https://apps.microsoft.com/search?query=RemindOn'
+export const microsoftStoreUrl = 'https://apps.microsoft.com/detail/9P9K31N2CJBW'
 
 export const locales = {
   zh: {
