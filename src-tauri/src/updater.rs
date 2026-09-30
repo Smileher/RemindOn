@@ -15,10 +15,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::time::Duration;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri_plugin_updater::UpdaterExt;
+
+use crate::AppState;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const UPDATE_MANIFEST_URL: &str =
@@ -28,6 +29,11 @@ const GITEE_UPDATE_MANIFEST_URL: &str =
     "https://gitee.com/smileher/RemindOn/releases/download/latest/latest.json";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const DOWNLOAD_PROGRESS_EVENT: &str = "portable-download-progress";
+const UPDATE_STATUS_EVENT: &str = "update-status";
+const UPDATE_PROGRESS_EVENT: &str = "update-progress";
+const UPDATE_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
+
+const STORE_BUILD: bool = option_env!("REMINDON_STORE_BUILD").is_some();
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const PORTABLE_DOWNLOAD_TARGET: &str = "windows-x86_64-portable";
@@ -43,6 +49,43 @@ pub enum UpdateMode {
     Portable,
     Development,
     Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdatePhase {
+    Idle,
+    Checking,
+    Available,
+    Downloading,
+    Installing,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRuntimeState {
+    pub phase: UpdatePhase,
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Default for UpdateRuntimeState {
+    fn default() -> Self {
+        Self {
+            phase: UpdatePhase::Idle,
+            version: None,
+            error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percentage: Option<u8>,
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -83,6 +126,288 @@ pub fn get_update_mode(app: tauri::AppHandle) -> Result<UpdateMode, String> {
     } else {
         Ok(UpdateMode::Unsupported)
     }
+}
+
+#[tauri::command]
+pub fn get_update_status(state: State<'_, AppState>) -> UpdateRuntimeState {
+    state
+        .0
+        .update_state
+        .lock()
+        .expect("update state lock poisoned")
+        .clone()
+}
+
+#[tauri::command]
+pub fn get_update_progress(state: State<'_, AppState>) -> Option<UpdateProgress> {
+    state
+        .0
+        .update_progress
+        .lock()
+        .expect("update progress lock poisoned")
+        .clone()
+}
+
+#[tauri::command]
+pub async fn check_for_updates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    _force: bool,
+) -> Result<UpdateRuntimeState, String> {
+    run_update_check(app, state.inner().clone()).await
+}
+
+pub fn start_background_update_checks(app: AppHandle, state: AppState) {
+    std::thread::spawn(move || loop {
+        let _ = tauri::async_runtime::block_on(run_update_check(app.clone(), state.clone()));
+        std::thread::sleep(std::time::Duration::from_secs(UPDATE_INTERVAL_SECONDS));
+    });
+}
+
+async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRuntimeState, String> {
+    if STORE_BUILD || cfg!(debug_assertions) {
+        return Ok(set_update_state(
+            &app,
+            &state,
+            UpdatePhase::Idle,
+            None,
+            None,
+        ));
+    }
+
+    {
+        let mut current = state
+            .0
+            .update_state
+            .lock()
+            .expect("update state lock poisoned");
+        if matches!(
+            current.phase,
+            UpdatePhase::Checking | UpdatePhase::Downloading | UpdatePhase::Installing
+        ) {
+            return Ok(current.clone());
+        }
+        current.phase = UpdatePhase::Checking;
+        current.version = None;
+        current.error = None;
+        emit_update_status(&app, &current);
+    }
+    *state
+        .0
+        .update_progress
+        .lock()
+        .expect("update progress lock poisoned") = None;
+
+    let result = run_platform_update(&app, &state).await;
+    match result {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            set_update_state(&app, &state, UpdatePhase::Error, None, Some(error.clone()));
+            Err(error)
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+async fn run_platform_update(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<UpdateRuntimeState, String> {
+    match get_update_mode(app.clone())? {
+        UpdateMode::Installed => {
+            let update = app
+                .updater()
+                .map_err(|error| error.to_string())?
+                .check()
+                .await
+                .map_err(|error| error.to_string())?;
+            let Some(update) = update else {
+                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None));
+            };
+            set_update_state(
+                app,
+                state,
+                UpdatePhase::Available,
+                Some(update.version.clone()),
+                None,
+            );
+            set_update_state(
+                app,
+                state,
+                UpdatePhase::Downloading,
+                Some(update.version.clone()),
+                None,
+            );
+            let mut downloaded = 0_u64;
+            let progress_app = app.clone();
+            let progress_state = state.clone();
+            let install_app = app.clone();
+            let install_state = state.clone();
+            let install_version = update.version.clone();
+            update
+                .download_and_install(
+                    move |chunk, total| {
+                        downloaded = downloaded.saturating_add(chunk as u64);
+                        set_update_progress(&progress_app, &progress_state, downloaded, total);
+                    },
+                    || {
+                        let _ = set_update_state(
+                            &install_app,
+                            &install_state,
+                            UpdatePhase::Installing,
+                            Some(install_version),
+                            None,
+                        );
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            #[cfg(target_os = "macos")]
+            app.request_restart().map_err(|error| error.to_string())?;
+            Ok(get_update_status_from_state(state))
+        }
+        UpdateMode::Portable => {
+            let Some((version, manifest_url)) = check_portable_update(app).await? else {
+                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None));
+            };
+            set_update_state(
+                app,
+                state,
+                UpdatePhase::Available,
+                Some(version.clone()),
+                None,
+            );
+            set_update_state(
+                app,
+                state,
+                UpdatePhase::Downloading,
+                Some(version.clone()),
+                None,
+            );
+            download_portable_update_from_manifest(app, &version, &manifest_url).await?;
+            Ok(set_update_state(
+                app,
+                state,
+                UpdatePhase::Available,
+                Some(version),
+                None,
+            ))
+        }
+        UpdateMode::Development | UpdateMode::Unsupported => {
+            Ok(set_update_state(app, state, UpdatePhase::Idle, None, None))
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+async fn run_platform_update(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<UpdateRuntimeState, String> {
+    Ok(set_update_state(app, state, UpdatePhase::Idle, None, None))
+}
+
+fn get_update_status_from_state(state: &AppState) -> UpdateRuntimeState {
+    state
+        .0
+        .update_state
+        .lock()
+        .expect("update state lock poisoned")
+        .clone()
+}
+
+fn set_update_state(
+    app: &AppHandle,
+    state: &AppState,
+    phase: UpdatePhase,
+    version: Option<String>,
+    error: Option<String>,
+) -> UpdateRuntimeState {
+    let next = UpdateRuntimeState {
+        phase,
+        version,
+        error,
+    };
+    *state
+        .0
+        .update_state
+        .lock()
+        .expect("update state lock poisoned") = next.clone();
+    emit_update_status(app, &next);
+    next
+}
+
+fn emit_update_status(app: &AppHandle, state: &UpdateRuntimeState) {
+    let _ = app.emit_to("main", UPDATE_STATUS_EVENT, state);
+}
+
+fn set_update_progress(
+    app: &AppHandle,
+    state: &AppState,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+) {
+    let progress = UpdateProgress {
+        downloaded_bytes,
+        total_bytes,
+        percentage: total_bytes
+            .map(|total| ((downloaded_bytes.saturating_mul(100) / total).min(100)) as u8),
+    };
+    *state
+        .0
+        .update_progress
+        .lock()
+        .expect("update progress lock poisoned") = Some(progress.clone());
+    let _ = app.emit_to("main", UPDATE_PROGRESS_EVENT, &progress);
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+async fn check_portable_update(app: &AppHandle) -> Result<Option<(String, &'static str)>, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let current_version = app.package_info().version.to_string();
+    let mut last_error = None;
+    for manifest_url in [UPDATE_MANIFEST_URL, GITEE_UPDATE_MANIFEST_URL] {
+        match fetch_portable_manifest(&client, manifest_url).await {
+            Ok(manifest) => {
+                validate_release_version(&manifest.version)?;
+                let asset = manifest
+                    .downloads
+                    .get(PORTABLE_DOWNLOAD_TARGET)
+                    .ok_or_else(|| {
+                        "No portable update is available for the current platform".to_string()
+                    })?;
+                validate_download_asset(&manifest.version, asset)?;
+                if is_release_newer(&manifest.version, &current_version)? {
+                    return Ok(Some((manifest.version, manifest_url)));
+                }
+                return Ok(None);
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "No update manifest is available".to_string()))
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+async fn fetch_portable_manifest(
+    client: &reqwest::Client,
+    manifest_url: &str,
+) -> Result<UpdateManifest, String> {
+    let bytes = client
+        .get(manifest_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| error.to_string())?
+        .bytes()
+        .await
+        .map_err(|error| error.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -300,6 +625,18 @@ fn validate_release_version(version: &str) -> Result<(), String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+fn is_release_newer(candidate: &str, current: &str) -> Result<bool, String> {
+    validate_release_version(current)?;
+    let parse = |version: &str| {
+        version
+            .split('.')
+            .map(|part| part.parse::<u64>().map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    Ok(parse(candidate)? > parse(current)?)
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Result<(), String> {
     if asset.file_name != expected_download_file_name(version) {
         return Err("Invalid update file name".to_string());
@@ -414,6 +751,9 @@ async fn download_to_file(
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn emit_download_progress(app: &tauri::AppHandle, downloaded: u64, total: Option<u64>) {
     let percentage = total.map(|total| ((downloaded.saturating_mul(100) / total).min(100)) as u8);
+    if let Some(state) = app.try_state::<AppState>() {
+        set_update_progress(app, state.inner(), downloaded, total);
+    }
     let _ = app.emit_to(
         "main",
         DOWNLOAD_PROGRESS_EVENT,
@@ -550,6 +890,14 @@ mod tests {
         asset = valid_asset("0.7.0");
         asset.file_name = "another-file.exe".to_string();
         assert!(validate_download_asset("0.7.0", &asset).is_err());
+    }
+
+    #[test]
+    fn release_comparison_uses_numeric_components() {
+        assert!(is_release_newer("1.10.0", "1.9.0").unwrap());
+        assert!(!is_release_newer("1.2.0", "1.2.0").unwrap());
+        assert!(!is_release_newer("1.1.9", "1.2.0").unwrap());
+        assert!(is_release_newer("2.0.0", "1.99.99").unwrap());
     }
 
     #[test]

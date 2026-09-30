@@ -249,6 +249,8 @@ struct InnerState {
     rest_next: Mutex<Option<DateTime<Local>>>,
     shutdown_next: Mutex<Option<DateTime<Local>>>,
     pending_navigation: Mutex<Option<String>>,
+    update_state: Mutex<updater::UpdateRuntimeState>,
+    update_progress: Mutex<Option<updater::UpdateProgress>>,
 }
 
 #[derive(Clone)]
@@ -1520,6 +1522,8 @@ pub fn run() {
                 rest_next: Mutex::new(None),
                 shutdown_next: Mutex::new(None),
                 pending_navigation: Mutex::new(None),
+                update_state: Mutex::new(updater::UpdateRuntimeState::default()),
+                update_progress: Mutex::new(None),
             }));
             app.manage(state.clone());
             setup_tray(app, language)?;
@@ -1527,6 +1531,10 @@ pub fn run() {
                 show_main_window(app.handle());
             }
             spawn_scheduler(app.handle().clone(), state);
+            updater::start_background_update_checks(
+                app.handle().clone(),
+                app.state::<AppState>().inner().clone(),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1547,6 +1555,9 @@ pub fn run() {
             take_pending_navigation,
             open_power_settings,
             updater::get_update_mode,
+            updater::get_update_status,
+            updater::get_update_progress,
+            updater::check_for_updates,
             updater::download_portable_update,
             updater::download_portable_update_from_gitee,
             updater::install_update_from_gitee
@@ -1636,6 +1647,8 @@ mod tests {
             rest_next: Mutex::new(None),
             shutdown_next: Mutex::new(None),
             pending_navigation: Mutex::new(None),
+            update_state: Mutex::new(updater::UpdateRuntimeState::default()),
+            update_progress: Mutex::new(None),
         }))
     }
 
