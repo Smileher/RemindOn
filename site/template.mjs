@@ -34,6 +34,8 @@ function icon(name, className = '') {
 export function renderPage(language, release, screenshots) {
   const t = locales[language]
   const e = escapeHtml
+  const windowsPackages = t.packages.filter((pkg) => pkg.icon === 'windows')
+  const macPackage = t.packages.find((pkg) => pkg.key === 'mac')
   const url = `${origin}${basePath}${t.path}`
   const logo = `${basePath}assets/remindon.svg`
   const screenshot = (theme) => `overview-${language}-${theme}.webp`
@@ -99,7 +101,10 @@ export function renderPage(language, release, screenshots) {
     </section>
     <section class="download-section section" id="download" aria-labelledby="download-title">
       <div class="container"><div class="download-heading"><div class="section-heading"><p class="eyebrow">${e(t.downloadLabel)}</p><h2 id="download-title">${e(t.downloadTitle)}</h2><p>${e(t.downloadIntro)}</p></div><div class="release-meta"><a class="version-badge" href="${e(release.url)}"><span class="status-dot" aria-hidden="true"></span>v${e(release.version)}${icon('arrow')}</a><span>${e(t.published)} <time datetime="${e(release.publishedAt)}">${e(releaseDate)}</time></span></div></div>
-      <div class="download-grid">${t.packages.map((pkg) => { const external = Boolean(pkg.externalUrl); const download = external ? { url: pkg.externalUrl } : release.downloads[pkg.key]; return `<article class="download-card${external ? ' store-card' : ''}"><div class="package-top">${icon(pkg.icon)}${pkg.badge ? `<span class="package-badge">${e(pkg.badge)}</span>` : ''}</div><h3>${e(pkg.title)}</h3><span class="package-arch">${e(pkg.arch)}</span><p>${e(pkg.text)}</p><a class="button ${pkg.key === 'windows' || pkg.key === 'windowsArm64' || external ? 'button-primary' : 'button-secondary'}" href="${e(download.url)}">${icon(external ? 'arrow' : 'download')}${e(pkg.action)}</a>${external ? `<span class="package-size">${e(t.storeManaged)}</span>` : `<span class="package-size">${(download.size / 1024 / 1024).toFixed(1)} MiB</span>`}</article>` }).join('')}</div>
+      <div class="download-grid">
+        <article class="platform-card"><div class="platform-heading"><span class="platform-icon">${icon('windows')}</span><div><h3>Windows</h3><p>${e(t.windowsIntro)}</p></div></div><div class="platform-options" aria-label="${e(t.chooseVersion)}">${windowsPackages.map((pkg) => { const external = Boolean(pkg.externalUrl); const download = external ? { url: pkg.externalUrl } : release.downloads[pkg.key]; return `<a class="platform-option${external ? ' store-option' : ''}" href="${e(download.url)}"><span class="platform-option-copy"><strong>${e(pkg.arch)}</strong><small>${e(pkg.text)}</small></span><span class="platform-option-action">${e(pkg.action)}${icon(external ? 'arrow' : 'download')}</span></a>` }).join('')}</div></article>
+        <article class="platform-card"><div class="platform-heading"><span class="platform-icon">${icon('apple')}</span><div><h3>${e(macPackage.title)}</h3><p>${e(t.macIntro)}</p></div></div><div class="mac-package"><span class="package-badge">${e(macPackage.arch)}</span><strong>${e(macPackage.text)}</strong><a class="button button-primary" href="${e(release.downloads[macPackage.key].url)}">${icon('download')}${e(macPackage.action)}</a><span class="package-size">${(release.downloads[macPackage.key].size / 1024 / 1024).toFixed(1)} MiB</span></div></article>
+      </div>
       <div class="download-bottom"><p>${e(t.downloadNote)}</p><a class="text-link" href="${repository}/releases">${e(t.allReleases)}${icon('arrow')}</a></div></div>
     </section>
     <section class="faq-section section container" id="faq" aria-labelledby="faq-title"><div class="section-heading"><p class="eyebrow">${e(t.faqLabel)}</p><h2 id="faq-title">${e(t.faqTitle)}</h2><p>${e(t.faqIntro)}</p></div><div class="faq-list">${t.faqs.map((faq, i) => `<details${i === 0 ? ' open' : ''}><summary>${e(faq.question)}${icon('plus')}</summary><div class="faq-answer">${faq.paragraphs.map((p) => `<p>${e(p)}</p>`).join('')}${faq.paths ? `<dl>${faq.paths.map(([name, path]) => `<dt>${e(name)}</dt><dd><code>${e(path)}</code></dd>`).join('')}</dl>` : ''}</div></details>`).join('')}</div></section>
