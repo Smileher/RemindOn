@@ -6,7 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import {
-  CalendarClock, Check, Clock3, Coffee, Download, Info, LockKeyhole,
+  BellRing, CalendarClock, Check, Clock3, Coffee, Download, ExternalLink, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
 } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -42,7 +42,7 @@ const appVersion = ref('0.9')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
-  loadStatus: loadUpdateStatus, checkForUpdates, openReleases, dispose: disposeUpdater,
+  loadStatus: loadUpdateStatus, checkForUpdates, openReleases, openAuthorPage, dispose: disposeUpdater,
 } = useUpdater()
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
@@ -690,7 +690,7 @@ onUnmounted(() => {
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
         <div v-else class="update-panel" aria-live="polite"><div class="update-summary"><span class="update-icon"><Info :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div></div></div>
-        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <b>Smileher</b></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
+        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <button class="author-link" type="button" @click="openAuthorPage">Smileher <ExternalLink :size="12" /></button></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
         <p class="about-copyright">{{ t('about.copyright') }}</p>
       </section>
     </main>
