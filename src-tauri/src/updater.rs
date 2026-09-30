@@ -25,7 +25,7 @@ const UPDATE_MANIFEST_URL: &str =
     "https://github.com/Smileher/RemindOn/releases/latest/download/latest.json";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const GITEE_UPDATE_MANIFEST_URL: &str =
-    "https://gitee.com/smileher/RemindOn/releases/latest/download/latest.json";
+    "https://gitee.com/smileher/RemindOn/releases/download/latest/latest.json";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const DOWNLOAD_PROGRESS_EVENT: &str = "portable-download-progress";
 
