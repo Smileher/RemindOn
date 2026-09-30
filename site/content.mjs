@@ -3,6 +3,8 @@ export const languageLabels = {
   en: 'EN',
 }
 
+export const microsoftStoreUrl = 'https://apps.microsoft.com/search?query=RemindOn'
+
 export const locales = {
   zh: {
     lang: 'zh-CN', locale: 'zh_CN', path: '',
@@ -36,15 +38,16 @@ export const locales = {
     ],
     downloadLabel: '从下一次提醒开始', downloadTitle: '给日常，添一位小帮手。',
     downloadIntro: '选择适合你的版本，下载后即可开始安排提醒。',
-    published: '发布于', releaseNotes: '版本记录',
+    published: '发布于', releaseNotes: '版本记录', storeManaged: '由商店管理更新',
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · 安装版', text: '安装到电脑，支持在应用内安装更新。', action: '下载安装版', badge: '常规安装' },
       { key: 'windowsArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · 安装版', text: '适用于 ARM64 Windows 设备，支持在应用内安装更新。', action: '下载 ARM64 安装版', badge: '' },
       { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · 便携版', text: '直接运行 EXE，无需安装。配置仍保存在系统应用数据目录。', action: '下载便携版', badge: '' },
       { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · 便携版', text: '适用于 ARM64 Windows 设备，直接运行 EXE，无需安装。', action: '下载 ARM64 便携版', badge: '' },
       { key: 'mac', icon: 'apple', title: 'macOS', arch: 'Apple Silicon · DMG', text: '适用于 M 系列芯片 Mac，安装时将应用拖入“应用程序”。', action: '下载 Mac 版', badge: '' },
+      { key: 'store', externalUrl: microsoftStoreUrl, icon: 'windows', title: 'Microsoft Store', arch: 'Windows · 商店版', text: '从 Microsoft Store 安装，应用由商店自动管理更新。', action: '打开 Microsoft Store', badge: '官方渠道' },
     ],
-    downloadNote: '安装包托管于 GitHub，Windows 同时提供 x64 和 ARM64 版本。Mac 版仅支持 Apple Silicon。',
+    downloadNote: 'GitHub 提供 Windows x64、ARM64 安装版和便携版，以及 Apple Silicon Mac 版；商店版由 Microsoft Store 管理更新。',
     allReleases: '查看全部版本',
     faqLabel: '你可能还想知道', faqTitle: '几个小问题。',
     faqIntro: '开始使用前，先了解这些。',
@@ -90,15 +93,16 @@ export const locales = {
     ],
     downloadLabel: 'Start with your next reminder', downloadTitle: 'A little help for your everyday.',
     downloadIntro: 'Pick the version for your computer and make your first reminder.',
-    published: 'Released', releaseNotes: 'Release notes',
+    published: 'Released', releaseNotes: 'Release notes', storeManaged: 'Updates managed by Store',
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · Installer', text: 'Install on your computer, with support for in-app updates.', action: 'Download installer', badge: 'Standard install' },
       { key: 'windowsArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · Installer', text: 'For ARM64 Windows devices, with support for in-app updates.', action: 'Download ARM64 installer', badge: '' },
       { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · Portable', text: 'Run the EXE without installing. Settings still live in the system app data folder.', action: 'Download portable', badge: '' },
       { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · Portable', text: 'Run the EXE on ARM64 Windows without installing.', action: 'Download ARM64 portable', badge: '' },
       { key: 'mac', icon: 'apple', title: 'macOS', arch: 'Apple Silicon · DMG', text: 'For Macs with an M-series chip. Drag the app into Applications to install.', action: 'Download for Mac', badge: '' },
+      { key: 'store', externalUrl: microsoftStoreUrl, icon: 'windows', title: 'Microsoft Store', arch: 'Windows · Store', text: 'Install from Microsoft Store, with updates managed by the store.', action: 'Open Microsoft Store', badge: 'Official channel' },
     ],
-    downloadNote: 'Downloads are hosted on GitHub. Windows provides x64 and ARM64 builds; the Mac version supports Apple Silicon only.',
+    downloadNote: 'GitHub provides Windows x64, ARM64 installer and portable builds, plus an Apple Silicon Mac version. Microsoft Store manages store updates.',
     allReleases: 'Browse all releases',
     faqLabel: 'Good to know', faqTitle: 'A few small questions.', faqIntro: 'A little context before you get started.',
     faqs: [

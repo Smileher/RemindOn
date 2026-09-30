@@ -16,7 +16,7 @@ function releaseFixture(version = '0.7.0') {
   }
 }
 
-test('a new version updates all five downloads and both pages together', () => {
+test('a new version updates GitHub downloads and the Store entry on both pages', () => {
   const release = parseRelease(releaseFixture('0.8.0'))
   assert.equal(release.version, '0.8.0')
   assert.deepEqual(Object.keys(release.downloads), ['windows', 'windowsArm64', 'portable', 'portableArm64', 'mac'])
@@ -25,6 +25,7 @@ test('a new version updates all five downloads and both pages together', () => {
     assert.match(html, /v0\.8\.0/)
     assert.doesNotMatch(html, /v0\.7\.0|app\.tar\.gz/)
     for (const asset of Object.values(release.downloads)) assert.ok(html.includes(`href="${asset.url}"`))
+    assert.match(html, /apps\.microsoft\.com\/search\?query=RemindOn/)
     assert.match(html, new RegExp(`overview-${language}-dark.webp`))
     assert.match(html, new RegExp(`overview-${language}-light.webp`))
     assert.ok(html.includes('media="(prefers-color-scheme: dark)"'))
