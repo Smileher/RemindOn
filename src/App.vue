@@ -576,6 +576,12 @@ onMounted(async () => {
     data.value = await invoke<AppData>('load_data')
     restMessageDraft.value = data.value.settings.restMessage
     shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
+    try {
+      const pendingNavigation = await invoke<View | null>('take_pending_navigation')
+      if (pendingNavigation) currentView.value = pendingNavigation
+    } catch {
+      // The standalone preview and older bridge mocks do not expose navigation state.
+    }
     await applyNativeTheme(data.value.settings.theme)
     try {
       appVersion.value = (await getVersion()).replace(/\.0$/, '')

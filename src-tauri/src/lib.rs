@@ -27,6 +27,8 @@ const REMINDER_LABEL: &str = "reminder";
 const REMINDER_MONITOR_PREFIX: &str = "reminder-monitor-";
 const REMINDER_WINDOW_WIDTH: f64 = 520.0;
 const REMINDER_WINDOW_HEIGHT: f64 = 320.0;
+const MAIN_WINDOW_WIDTH: f64 = 780.0;
+const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 
 fn default_rest_message() -> String {
     i18n::default_rest_message(Language::ZhCn).to_string()
@@ -246,6 +248,7 @@ struct InnerState {
     rest_round_pending: AtomicBool,
     rest_next: Mutex<Option<DateTime<Local>>>,
     shutdown_next: Mutex<Option<DateTime<Local>>>,
+    pending_navigation: Mutex<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -738,9 +741,9 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
                 destroy_reminder_window(&window);
             }
         }
-        let window = app
-            .get_webview_window(REMINDER_LABEL)
-            .or_else(|| create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok());
+        let window = app.get_webview_window(REMINDER_LABEL).or_else(|| {
+            create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok()
+        });
         if let Some(window) = window {
             configure_windowed_reminder(&window, settings);
             return vec![REMINDER_LABEL.to_string()];
@@ -750,9 +753,9 @@ fn prepare_reminder_windows(app: &AppHandle, settings: &AppSettings) -> Vec<Stri
 
     let monitors = ordered_monitors(app);
     if monitors.is_empty() {
-        let window = app
-            .get_webview_window(REMINDER_LABEL)
-            .or_else(|| create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok());
+        let window = app.get_webview_window(REMINDER_LABEL).or_else(|| {
+            create_reminder_window(app, REMINDER_LABEL.to_string(), settings.clone()).ok()
+        });
         if let Some(window) = window {
             configure_windowed_reminder(&window, settings);
             return vec![REMINDER_LABEL.to_string()];
@@ -1403,24 +1406,67 @@ fn update_tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri:
     Ok(())
 }
 
-fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("RemindOn")
+        .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+        .min_inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+        .resizable(true)
+        .center()
+        .visible(false)
+        .build()
+        .map_err(|error| format!("Failed to create main window: {error}"))
+}
+
+fn ensure_main_window(app: &AppHandle, navigation: Option<&str>) -> Option<WebviewWindow> {
+    let existing = app.get_webview_window("main");
+    let had_existing = existing.is_some();
+    if existing.is_none() {
+        if let Some(navigation) = navigation {
+            if let Some(state) = app.try_state::<AppState>() {
+                *state
+                    .0
+                    .pending_navigation
+                    .lock()
+                    .expect("pending navigation lock poisoned") = Some(navigation.to_string());
+            }
+        }
+    }
+    let window = existing.or_else(|| create_main_window(app).ok());
+    if let Some(window) = &window {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        if navigation.is_some() && had_existing {
+            let _ = app.emit_to("main", "navigate-to", navigation);
+        }
     }
+    window
+}
+
+fn show_main_window(app: &AppHandle) {
+    let _ = ensure_main_window(app, None);
 }
 
 fn show_about(app: &AppHandle) {
-    show_main_window(app);
-    let _ = app.emit_to("main", "navigate-to", "about");
+    let _ = ensure_main_window(app, Some("about"));
 }
 
 #[tauri::command]
 fn open_power_settings(app: AppHandle) -> Result<(), String> {
-    show_main_window(&app);
-    app.emit_to("main", "navigate-to", "power")
-        .map_err(|error| format!("Failed to open scheduled action settings: {error}"))
+    ensure_main_window(&app, Some("power"))
+        .map(|_| ())
+        .ok_or_else(|| "Failed to create the main window".to_string())
+}
+
+#[tauri::command]
+fn take_pending_navigation(state: State<'_, AppState>) -> Option<String> {
+    state
+        .0
+        .pending_navigation
+        .lock()
+        .expect("pending navigation lock poisoned")
+        .take()
 }
 
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
@@ -1473,15 +1519,12 @@ pub fn run() {
                 rest_round_pending: AtomicBool::new(false),
                 rest_next: Mutex::new(None),
                 shutdown_next: Mutex::new(None),
+                pending_navigation: Mutex::new(None),
             }));
             app.manage(state.clone());
             setup_tray(app, language)?;
             if !hide_on_start {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.center();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app.handle());
             }
             spawn_scheduler(app.handle().clone(), state);
             Ok(())
@@ -1501,6 +1544,7 @@ pub fn run() {
             test_reminder,
             import_data,
             export_data,
+            take_pending_navigation,
             open_power_settings,
             updater::get_update_mode,
             updater::download_portable_update,
@@ -1546,7 +1590,7 @@ pub fn run() {
                 if label == "main" {
                     api.prevent_close();
                     if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.hide();
+                        let _ = window.destroy();
                     }
                 } else if is_reminder_window_label(&label) {
                     api.prevent_close();
@@ -1591,6 +1635,7 @@ mod tests {
             rest_round_pending: AtomicBool::new(false),
             rest_next: Mutex::new(None),
             shutdown_next: Mutex::new(None),
+            pending_navigation: Mutex::new(None),
         }))
     }
 
