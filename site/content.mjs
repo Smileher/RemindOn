@@ -37,7 +37,7 @@ export const locales = {
       { icon: 'folder', title: '你的数据，留在本地', text: '无需账号或服务器。通过导入和导出，备份或迁移自己的提醒。' },
     ],
     downloadLabel: '从下一次提醒开始', downloadTitle: '给日常，添一位小帮手。',
-    downloadIntro: '选择适合你的版本，下载后即可开始安排提醒。',
+    downloadIntro: '按设备选择下载渠道，版本信息与最新发布同步。', windowsIntro: '支持 x64、ARM64、便携版和 Microsoft Store，按你的使用方式选择。', macIntro: '仅提供一个 Apple Silicon DMG 下载。', chooseVersion: '选择版本',
     published: '发布于', releaseNotes: '版本记录', storeManaged: '由商店管理更新',
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · 安装版', text: '安装到电脑，支持在应用内安装更新。', action: '下载安装版', badge: '常规安装' },
@@ -92,7 +92,7 @@ export const locales = {
       { icon: 'folder', title: 'Your data stays with you', text: 'No account or server needed. Import and export your reminders to back them up or move them.' },
     ],
     downloadLabel: 'Start with your next reminder', downloadTitle: 'A little help for your everyday.',
-    downloadIntro: 'Pick the version for your computer and make your first reminder.',
+    downloadIntro: 'Choose a channel for your device. Version details stay in sync with the latest release.', windowsIntro: 'Choose x64, ARM64, portable, or Microsoft Store based on how you use Windows.', macIntro: 'One Apple Silicon DMG package is available.', chooseVersion: 'Choose a version',
     published: 'Released', releaseNotes: 'Release notes', storeManaged: 'Updates managed by Store',
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · Installer', text: 'Install on your computer, with support for in-app updates.', action: 'Download installer', badge: 'Standard install' },
