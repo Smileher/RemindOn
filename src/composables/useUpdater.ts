@@ -1,191 +1,114 @@
 import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
-import { relaunch } from '@tauri-apps/plugin-process'
-import { check, type Update } from '@tauri-apps/plugin-updater'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { openUrl } from '@tauri-apps/plugin-opener'
 
 function logUpdaterError(context: string, error: unknown) {
   console.error(`[RemindOn] ${context}`, error)
 }
 
 type UpdateMode = 'unknown' | 'installed' | 'portable' | 'development' | 'unsupported'
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'ready' | 'downloaded' | 'upToDate' | 'error'
-type PortableDownloadProgress = { downloadedBytes: number; totalBytes: number | null; percentage: number | null }
+type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'error'
+type UpdateStatus = UpdatePhase | 'upToDate'
+type UpdateRuntimeState = { phase: UpdatePhase; version: string | null; error: string | null }
+type UpdateProgress = { downloadedBytes: number; totalBytes: number | null; percentage: number | null }
 
 export function useUpdater() {
   const mode = ref<UpdateMode>('unknown')
   const status = ref<UpdateStatus>('idle')
   const newVersion = ref('')
   const progress = ref<number | null>(null)
-  const downloadedPath = ref('')
   const errorMessage = ref('')
-  const fallbackSeconds = ref(0)
-  const fallbackAvailable = computed(() => fallbackSeconds.value > 0)
   const busy = computed(() => ['checking', 'downloading', 'installing'].includes(status.value))
-  let pendingUpdate: Update | null = null
   let disposed = false
-  let fallbackTimer: ReturnType<typeof setInterval> | undefined
+  let statusListener: Promise<UnlistenFn> | undefined
+  let progressListener: Promise<UnlistenFn> | undefined
 
-  function cancelMirrorFallback() {
-    if (fallbackTimer) clearInterval(fallbackTimer)
-    fallbackTimer = undefined
-    fallbackSeconds.value = 0
+  function applyRuntimeState(runtime: UpdateRuntimeState) {
+    newVersion.value = runtime.version ?? ''
+    status.value = runtime.phase === 'idle' ? 'upToDate' : runtime.phase
+    errorMessage.value = runtime.error ? 'update-failed' : ''
   }
 
-  function scheduleMirrorFallback() {
-    cancelMirrorFallback()
-    fallbackSeconds.value = 5
-    fallbackTimer = setInterval(() => {
-      fallbackSeconds.value -= 1
-      if (fallbackSeconds.value <= 0) void switchToMirror()
-    }, 1000)
-    if (typeof fallbackTimer === 'object' && 'unref' in fallbackTimer) fallbackTimer.unref()
+  function applyProgress(runtime: UpdateProgress) {
+    progress.value = runtime.percentage
   }
 
-  async function switchToMirror() {
-    cancelMirrorFallback()
-    if (disposed || busy.value || !pendingUpdate) return
-    status.value = 'downloading'
-    progress.value = null
-    errorMessage.value = ''
-    try {
-      const update = pendingUpdate
-      if (mode.value === 'portable') {
-        const path = await invoke<string>('download_portable_update_from_gitee', { expectedVersion: update.version })
-        downloadedPath.value = path
-        progress.value = 100
-        status.value = 'downloaded'
-      } else if (mode.value === 'installed') {
-        await invoke('install_update_from_gitee', { expectedVersion: update.version })
-        status.value = 'ready'
-        await restartApp()
-      }
-    } catch (error) {
-      status.value = 'error'
-      logUpdaterError('switch to Gitee update', error)
-      errorMessage.value = 'update-failed'
+  async function ensureListeners() {
+    if (!statusListener) {
+      statusListener = listen<UpdateRuntimeState>('update-status', (event) => {
+        if (!disposed) applyRuntimeState(event.payload)
+      }).catch((error) => {
+        logUpdaterError('listen for update status', error)
+        throw error
+      })
     }
+    if (!progressListener) {
+      progressListener = listen<UpdateProgress>('update-progress', (event) => {
+        if (!disposed) applyProgress(event.payload)
+      }).catch((error) => {
+        logUpdaterError('listen for update progress', error)
+        throw error
+      })
+    }
+    await Promise.allSettled([statusListener, progressListener])
   }
 
-  async function checkForUpdates(silent = false): Promise<boolean> {
-    if (disposed || busy.value || status.value === 'ready') return false
+  async function loadStatus(): Promise<boolean> {
+    if (disposed) return false
     if (typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__) return true
-    status.value = 'checking'
-    errorMessage.value = ''
-
     try {
+      await ensureListeners()
       mode.value = await invoke<UpdateMode>('get_update_mode')
       if (disposed) return false
       if (mode.value !== 'installed' && mode.value !== 'portable') {
         status.value = 'idle'
+        newVersion.value = ''
         return true
       }
-      const update = await check({ timeout: 15000 })
-      if (disposed) {
-        await update?.close().catch(() => {})
-        return false
-      }
-      const previous = pendingUpdate
-      pendingUpdate = update
-      newVersion.value = update?.version ?? ''
-      downloadedPath.value = ''
-      status.value = update ? 'available' : 'upToDate'
-      // Each successful check owns a native resource, including repeated checks of the same version.
-      await previous?.close().catch(() => {})
+      const runtime = await invoke<UpdateRuntimeState>('get_update_status')
+      const runtimeProgress = await invoke<UpdateProgress | null>('get_update_progress')
+      if (disposed) return false
+      applyRuntimeState(runtime)
+      progress.value = runtimeProgress?.percentage ?? null
       return true
     } catch (error) {
-      status.value = silent ? (pendingUpdate ? 'available' : 'idle') : 'error'
-      logUpdaterError('check for updates', error)
-      if (!silent) errorMessage.value = 'update-failed'
+      logUpdaterError('load update status', error)
       return false
     }
   }
 
-  async function downloadPortableUpdate() {
-    if (!pendingUpdate || mode.value !== 'portable' || busy.value) return
-    status.value = 'downloading'
-    progress.value = null
-    downloadedPath.value = ''
+  async function checkForUpdates(silent = false): Promise<boolean> {
+    if (disposed || busy.value) return false
+    if (typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__) return true
+    status.value = 'checking'
     errorMessage.value = ''
-
-    let unlistenProgress: (() => void) | undefined
+    progress.value = null
     try {
-      unlistenProgress = await listen<PortableDownloadProgress>('portable-download-progress', (event) => {
-        progress.value = event.payload.percentage
-      })
-      if (disposed) return
-      const path = await invoke<string>('download_portable_update', {
-        expectedVersion: pendingUpdate.version,
-      })
-      if (disposed) return
-      downloadedPath.value = path
-      progress.value = 100
-      status.value = 'downloaded'
-    } catch (error) {
-      if (!disposed) {
-        status.value = 'error'
-        logUpdaterError('download portable update', error)
-        errorMessage.value = 'update-failed'
-        scheduleMirrorFallback()
+      await ensureListeners()
+      mode.value = await invoke<UpdateMode>('get_update_mode')
+      if (disposed) return false
+      if (mode.value !== 'installed' && mode.value !== 'portable') {
+        status.value = 'idle'
+        newVersion.value = ''
+        return true
       }
-    } finally {
-      unlistenProgress?.()
-    }
-  }
-
-  async function restartApp() {
-    if (status.value !== 'ready') return
-    status.value = 'installing'
-    errorMessage.value = ''
-    try {
-      await relaunch()
+      const runtime = await invoke<UpdateRuntimeState>('check_for_updates', { force: !silent })
+      if (disposed) return false
+      applyRuntimeState(runtime)
+      const runtimeProgress = await invoke<UpdateProgress | null>('get_update_progress')
+      progress.value = runtimeProgress?.percentage ?? null
+      return true
     } catch (error) {
-      status.value = 'ready'
-      logUpdaterError('restart after update', error)
-      errorMessage.value = 'update-failed'
-    }
-  }
-
-  async function installUpdate() {
-    if (!pendingUpdate || mode.value !== 'installed' || busy.value || status.value === 'ready') return
-    status.value = 'downloading'
-    progress.value = null
-    errorMessage.value = ''
-
-    let stallTimer: ReturnType<typeof setInterval> | undefined
-    let lastProgressAt = Date.now()
-    try {
-      let downloaded = 0
-      let total = 0
-      stallTimer = setInterval(() => {
-        if (Date.now() - lastProgressAt < 15000 || !pendingUpdate) return
-        void pendingUpdate.close().catch(() => {})
-      }, 1000)
-      if (typeof stallTimer === 'object' && 'unref' in stallTimer) stallTimer.unref()
-      await pendingUpdate.downloadAndInstall((event) => {
-        if (event.event === 'Started') {
-          lastProgressAt = Date.now()
-          total = event.data.contentLength ?? 0
-          progress.value = total > 0 ? 0 : null
-        } else if (event.event === 'Progress') {
-          lastProgressAt = Date.now()
-          downloaded += event.data.chunkLength
-          if (total > 0) progress.value = Math.min(100, Math.round(downloaded / total * 100))
-        } else if (event.event === 'Finished') {
-          status.value = 'installing'
-        }
-      }, { timeout: 300000 })
-      // Windows exits through the installer; macOS needs an explicit relaunch.
-      status.value = 'ready'
-      await restartApp()
-    } catch (error) {
-      status.value = 'error'
-      logUpdaterError('install update', error)
-      errorMessage.value = 'update-failed'
-      scheduleMirrorFallback()
-    } finally {
-      if (stallTimer) clearInterval(stallTimer)
+      logUpdaterError('check for updates', error)
+      if (silent) {
+        status.value = 'idle'
+        errorMessage.value = ''
+      } else {
+        status.value = 'error'
+        errorMessage.value = 'update-failed'
+      }
+      return false
     }
   }
 
@@ -199,29 +122,16 @@ export function useUpdater() {
     }
   }
 
-  async function revealDownloadedUpdate() {
-    if (!downloadedPath.value) return
-    errorMessage.value = ''
-    try {
-      await revealItemInDir(downloadedPath.value)
-    } catch (error) {
-      logUpdaterError('reveal downloaded update', error)
-      errorMessage.value = 'update-failed'
-    }
-  }
-
   function dispose() {
     disposed = true
-    cancelMirrorFallback()
-    const update = pendingUpdate
-    pendingUpdate = null
-    void update?.close().catch(() => {})
+    void statusListener?.then((unlisten) => unlisten(), () => {})
+    void progressListener?.then((unlisten) => unlisten(), () => {})
+    statusListener = undefined
+    progressListener = undefined
   }
 
   return {
-    mode, status, newVersion, progress, downloadedPath, errorMessage, busy,
-    checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
-    fallbackSeconds, fallbackAvailable, switchToMirror, cancelMirrorFallback,
-    revealDownloadedUpdate, openReleases, dispose,
+    mode, status, newVersion, progress, errorMessage, busy,
+    loadStatus, checkForUpdates, openReleases, dispose,
   }
 }

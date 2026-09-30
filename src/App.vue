@@ -5,9 +5,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { onAction, sendNotification } from '@tauri-apps/plugin-notification'
 import {
-  CalendarClock, Check, Clock3, Coffee, Download, FolderOpen, Info, LockKeyhole,
+  CalendarClock, Check, Clock3, Coffee, Download, Info, LockKeyhole,
   Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
 } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -43,18 +42,12 @@ const appVersion = ref('0.9')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
-  checkForUpdates, installUpdate, downloadPortableUpdate, restartApp,
-  revealDownloadedUpdate, openReleases, fallbackSeconds, fallbackAvailable,
-  switchToMirror, cancelMirrorFallback, dispose: disposeUpdater,
+  loadStatus: loadUpdateStatus, checkForUpdates, openReleases, dispose: disposeUpdater,
 } = useUpdater()
-const confirmingUpdate = ref(false)
-const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000
-const UPDATE_CHECKED_AT_KEY = 'remindon.update.lastCheckedAt'
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let unlistenNotificationFailure: (() => void) | undefined
-let unlistenUpdateAction: { unregister: () => Promise<void> } | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
@@ -132,8 +125,6 @@ const updateStatusText = computed(() => {
       : t('update.progress', { progress: updateProgress.value })
   }
   if (updateStatus.value === 'installing') return t('update.installing')
-  if (updateStatus.value === 'ready') return t('update.ready')
-  if (updateStatus.value === 'downloaded') return t('update.downloaded', { version: newVersion.value })
   if (updateStatus.value === 'upToDate') return t('update.upToDate')
   if (updateStatus.value === 'error') return t('update.checkFailed')
   if (updateMode.value === 'development') return t('update.development')
@@ -518,48 +509,6 @@ function applyRestTimerStatus(status: RestTimerStatus) {
   now.value = Date.now()
 }
 
-async function confirmUpdate() {
-  if (confirmingUpdate.value || updateBusy.value) return
-  confirmingUpdate.value = true
-  try {
-    const confirmed = await ask(t('update.confirm', { version: newVersion.value }), {
-      title: 'RemindOn',
-      kind: 'info',
-      okLabel: t('update.install'),
-      cancelLabel: t('common.cancel'),
-    })
-    if (confirmed) await installUpdate()
-  } catch (error) {
-    logError('confirm update', error)
-    updateError.value = 'update-failed'
-  } finally {
-    confirmingUpdate.value = false
-  }
-}
-
-async function startUpdate() {
-  if (updateMode.value === 'portable') {
-    await downloadPortableUpdate()
-    return
-  }
-  await confirmUpdate()
-}
-
-async function checkForUpdatesInBackground() {
-  const lastCheckedAt = Number.parseInt(localStorage.getItem(UPDATE_CHECKED_AT_KEY) ?? '', 10)
-  if (Number.isFinite(lastCheckedAt) && Date.now() - lastCheckedAt < UPDATE_CHECK_INTERVAL) return
-  const successful = await checkForUpdates(true)
-  if (!successful) return
-  localStorage.setItem(UPDATE_CHECKED_AT_KEY, String(Date.now()))
-  if (newVersion.value && (document.visibilityState === 'hidden' || !document.hasFocus())) {
-    try {
-      sendNotification({ title: 'RemindOn', body: t('update.notification', { version: newVersion.value }), extra: { kind: 'update' } })
-    } catch (error) {
-      logError('send update notification', error)
-    }
-  }
-}
-
 function handleMainWindowEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.repeat) return
   void getCurrentWindow().hide()
@@ -568,7 +517,7 @@ function handleMainWindowEscape(event: KeyboardEvent) {
 onMounted(async () => {
   if (isPopup) return
   window.addEventListener('keydown', handleMainWindowEscape)
-  void checkForUpdatesInBackground()
+  void loadUpdateStatus?.()
   try {
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
@@ -612,17 +561,6 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
-    try {
-      unlistenUpdateAction = await onAction((notification) => {
-        if (notification.extra?.kind !== 'update') return
-        currentView.value = 'about'
-        void getCurrentWindow().show()
-        void getCurrentWindow().setFocus()
-      })
-    } catch (error) {
-      // Some desktop notification backends do not support action listeners.
-      logError('listen for update notification action', error)
-    }
     await refreshTimers()
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
@@ -640,7 +578,6 @@ onUnmounted(() => {
   unlistenNavigation?.()
   unlistenRestTimer?.()
   unlistenNotificationFailure?.()
-  void unlistenUpdateAction?.unregister()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
 })
@@ -659,14 +596,14 @@ onUnmounted(() => {
         <button :class="['nav-item', { active: currentView === 'events' }]" @click="currentView = 'events'"><CalendarClock :size="17" /><span>{{ t('nav.events') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'power' }]" @click="currentView = 'power'"><Power :size="17" /><span>{{ t('nav.power') }}</span></button>
         <button :class="['nav-item', { active: currentView === 'settings' }]" @click="currentView = 'settings'"><Settings2 :size="17" /><span>{{ t('nav.settings') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span><span v-if="newVersion && updateStatus !== 'ready'" class="update-dot" :aria-label="t('update.available', { version: newVersion })"></span></button>
+        <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span><span v-if="newVersion" class="update-dot" :aria-label="t('update.available', { version: newVersion })"></span></button>
       </nav>
       <div class="sidebar-footer">RemindOn v{{ appVersion }}</div>
     </aside>
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
       <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
-        <span>{{ updateStatus === 'ready' ? t('update.ready') : updateStatus === 'downloaded' ? t('update.downloaded', { version: newVersion }) : t('update.available', { version: newVersion }) }}</span>
+        <span>{{ t('update.available', { version: newVersion }) }}</span>
         <button class="button" type="button" @click="currentView = 'about'">{{ t('update.view') }}</button>
       </div>
       <section v-if="currentView === 'events'" class="page-section">
@@ -746,14 +683,10 @@ onUnmounted(() => {
         <div v-if="!isStoreBuild" class="update-panel" aria-live="polite">
           <div class="update-summary"><span :class="['update-icon', { checking: updateStatus === 'checking' }]"><RotateCw :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ updateStatusText }}</strong></div></div>
           <div class="update-actions">
-            <button v-if="updateStatus === 'ready'" class="button button-primary" type="button" @click="restartApp">{{ t('update.restart') }}</button>
-            <button v-else-if="updateStatus === 'downloaded'" class="button button-primary" type="button" @click="revealDownloadedUpdate"><FolderOpen :size="14" />{{ t('update.reveal') }}</button>
-            <button v-else-if="newVersion && !updateBusy" class="button button-primary" type="button" :disabled="confirmingUpdate" @click="startUpdate"><Download v-if="updateMode === 'portable'" :size="14" />{{ updateMode === 'portable' ? t('update.downloadNew') : t('update.install') }}</button>
-            <button class="button" type="button" :disabled="updateBusy || confirmingUpdate || updateStatus === 'ready' || updateMode === 'development' || updateMode === 'unsupported'" @click="checkForUpdates()"><RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}</button>
+            <button class="button" type="button" :disabled="updateBusy || updateMode === 'development' || updateMode === 'unsupported'" @click="checkForUpdates()"><RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}</button>
             <button v-if="updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
           </div>
           <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
-          <div v-if="fallbackAvailable" class="update-error" role="status"><span>{{ t('update.fallback', { seconds: fallbackSeconds }) }}</span><button class="button" type="button" @click="switchToMirror">{{ t('update.switchSource') }}</button><button class="button" type="button" @click="cancelMirrorFallback">{{ t('common.cancel') }}</button></div>
           <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
         </div>
         <div v-else class="update-panel" aria-live="polite"><div class="update-summary"><span class="update-icon"><Info :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div></div></div>
