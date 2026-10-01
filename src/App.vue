@@ -38,7 +38,7 @@ const restMessageDraft = ref(defaultData().settings.restMessage)
 const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
 const notificationError = ref('')
 const autostartError = ref('')
-const appVersion = ref('0.9')
+const appVersion = ref('1.1')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,

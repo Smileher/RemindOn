@@ -66,7 +66,7 @@ pnpm tauri:build --bundles nsis
 pnpm tauri:build --bundles app,dmg
 ```
 
-安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序 `RemindOn_0.9.0_x64_portable.exe`。macOS 构建需在对应平台验证。
+安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序，例如 `RemindOn_1.1.0_x64_portable.exe`。macOS 构建需在对应平台验证。
 
 ## 使用说明
 
@@ -108,7 +108,7 @@ pnpm tauri:build --bundles nsis
 发布步骤：
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
-2. 执行上述检查，提交代码并推送版本标签，例如 `v0.9.0`。
+2. 执行上述检查，提交代码并推送版本标签，例如 `v1.1.0`。
 3. Release 工作流创建草稿，并行构建 Windows x64、Windows ARM64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
 4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 GitHub `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
 5. 发布完成后，`sync-gitee` job 创建或复用同 tag 的 Gitee Release，上传 6 个二进制资产和 Gitee 版 `latest.json`。Gitee 仓库不接收源码同步。
@@ -127,16 +127,16 @@ pnpm tauri:build --bundles nsis
 
 ### Microsoft Store MSIX
 
-Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.github/workflows/store.yml` 手动构建。它与 NSIS/便携版是独立渠道，Store 版本不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
+Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.github/workflows/store.yml` 在推送版本标签后自动构建。它与 NSIS/便携版是独立渠道，Store 版本不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
 
 首次构建前，在 GitHub 仓库配置以下值：
 
-- Repository variables：`MSIX_IDENTITY_NAME`、`MSIX_PUBLISHER`、`MSIX_PUBLISHER_DISPLAY_NAME`。它们必须与 Partner Center 现有产品的包身份、Publisher 和 PublisherDisplayName 完全一致。
+- Repository secrets：`MSIX_IDENTITY_NAME`、`MSIX_PUBLISHER`、`MSIX_PUBLISHER_DISPLAY_NAME`。它们必须与 Partner Center 现有产品的包身份、Publisher 和 PublisherDisplayName 完全一致。
 - 可选 Repository secrets：`MSIX_PFX_BASE64`、`MSIX_PFX_PASSWORD`，仅用于本地签名测试，两项必须同时提供。商店上传不要求购买代码签名证书，由 Microsoft Store 在发布时重新签名；不要提交证书文件。
 
-在 Actions 中运行 `Microsoft Store MSIX`，输入四段版本号，例如 `1.8.0.0`：第一段非零，每段不超过 65535，第四段为 0。工作流会生成 x64 `.msix`、ARM64 `.msix` 和 `.msixbundle` artifact，之后手动上传 Partner Center。Store 包版本必须递增；普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
+本产品的 Store 身份值为：`MSIX_IDENTITY_NAME=54317Smileher.RemindOn`、`MSIX_PUBLISHER=CN=426E8CF5-3861-440D-B400-CDB0323C5FD4`、`MSIX_PUBLISHER_DISPLAY_NAME=Smileher`。推送与版本文件一致的 `v1.1.0` 标签后，Release 工作流会构建并发布普通版、同步 Gitee；Microsoft Store workflow 同时使用 `1.1.0.0` 生成 x64/ARM64 `.msixbundle` artifact，不会调用 Store API。下载并解压 `remindon-msix-store` artifact 后，将其中的 `.msixbundle` 手动上传到 Partner Center。手动运行 Store workflow 时，输入版本必须是应用版本加 `.0`，例如 `1.1.0.0`。普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
 
-从获取身份、Actions 一键构建、本地脚本、上传文件到网页各项填写的完整步骤，见 [Microsoft Store 首次发布指南](docs/release/microsoft-store.md)。真实 MSIX 的安装、升级、ARM64 和开机自启仍需验证，当前未接入自动提交审核。
+真实 MSIX 的安装、升级、ARM64 和开机自启仍需验证。
 
 ## 项目结构
 

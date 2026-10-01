@@ -1,10 +1,12 @@
 name: Microsoft Store MSIX
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: Store package version with a nonzero major and zero revision, for example 1.8.0.0
+        description: Store package version with a nonzero major and zero revision, for example 1.1.0.0
         required: true
         type: string
 
@@ -12,7 +14,37 @@ permissions:
   contents: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve Store package version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+
+          const appVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          if (!/^\d+\.\d+\.\d+$/.test(appVersion)) {
+            throw new Error(`Invalid application version: ${appVersion}`);
+          }
+          const expectedStoreVersion = `${appVersion}.0`;
+          const version = process.env.INPUT_VERSION || expectedStoreVersion;
+          if (version !== expectedStoreVersion || !/^[1-9]\d*\.\d+\.\d+\.0$/.test(version)) {
+            throw new Error(`Store version must match application version as ${expectedStoreVersion}`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`, 'utf8');
+          JS
+
   package:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -24,7 +56,7 @@ jobs:
     runs-on: windows-latest
     env:
       REMINDON_STORE_BUILD: '1'
-      VERSION: ${{ inputs.version }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       MSIX_IDENTITY_NAME: ${{ secrets.MSIX_IDENTITY_NAME }}
       MSIX_PUBLISHER: ${{ secrets.MSIX_PUBLISHER }}
       MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.MSIX_PUBLISHER_DISPLAY_NAME }}
@@ -46,7 +78,7 @@ jobs:
       - name: Validate Store identity and version
         shell: pwsh
         run: |
-          if ($env:VERSION -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw 'Store version must have a nonzero major and a zero fourth component, for example 1.8.0.0.' }
+          if ($env:VERSION -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw 'Store version must have a nonzero major and a zero fourth component, for example 1.1.0.0.' }
           foreach ($component in $env:VERSION.Split('.')) {
             $number = [uint16]0
             if (-not [uint16]::TryParse($component, [ref]$number)) { throw 'Store version components must be between 0 and 65535.' }
@@ -78,10 +110,10 @@ jobs:
           path: store-output/*.msix
 
   bundle:
-    needs: package
+    needs: [prepare, package]
     runs-on: windows-latest
     env:
-      VERSION: ${{ inputs.version }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
       MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
     steps:
