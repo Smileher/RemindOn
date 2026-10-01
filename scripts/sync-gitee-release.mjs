@@ -36,6 +36,30 @@ async function upload(fetchImpl, token, releaseId, name, bytes) {
   return asset
 }
 
+async function uploadWithRetry(fetchImpl, token, releaseId, name, bytes) {
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await upload(fetchImpl, token, releaseId, name, bytes)
+    } catch (error) {
+      lastError = error
+      // The upload may have completed before the connection was reset.
+      try {
+        const existing = await request(fetchImpl, token, `/releases/${releaseId}/attach_files?per_page=100`)
+        const uploaded = existing.find((asset) => asset.name === name)
+        if (uploaded) return uploaded
+      } catch {
+        // Keep the original upload error if the recovery lookup also fails.
+      }
+      if (attempt < 3) {
+        console.warn(`Retrying Gitee asset ${name} after upload error (attempt ${attempt}/3): ${error.message}`)
+        await new Promise((resolve) => setTimeout(resolve, attempt * 5000))
+      }
+    }
+  }
+  throw lastError
+}
+
 function uploadWithHttps(token, releaseId, name, bytes) {
   const boundary = `----RemindOn-${Date.now().toString(36)}`
   const prefix = Buffer.from(
@@ -127,7 +151,7 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
   for (const name of names) {
     const bytes = await readFile(join(assetDir, name))
     if (!assets.has(name)) {
-      assets.set(name, await upload(fetchImpl, token, release.id, name, bytes))
+      assets.set(name, await uploadWithRetry(fetchImpl, token, release.id, name, bytes))
     }
     const url = assets.get(name)?.browser_download_url
     if (!url || new URL(url).protocol !== 'https:') throw new Error(`Gitee download URL is missing or invalid: ${name}`)
