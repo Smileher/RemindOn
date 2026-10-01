@@ -263,7 +263,7 @@ async fn run_platform_update(
                 .await
                 .map_err(|error| error.to_string())?;
             #[cfg(target_os = "macos")]
-            app.request_restart().map_err(|error| error.to_string())?;
+            app.request_restart();
             Ok(get_update_status_from_state(state))
         }
         UpdateMode::Portable => {
