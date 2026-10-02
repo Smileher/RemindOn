@@ -45,6 +45,8 @@ pnpm tauri:dev
 
 也可从“终端 → 运行任务”选择上述任务。资源管理器中的 NPM 脚本视图可能默认隐藏，可通过“查看 → 打开视图”搜索 `NPM` 后打开；脚本会使用 pnpm 执行。这些入口无需 Tauri 扩展识别项目。
 
+“终端 → 运行任务”还提供 Windows 便携版、Windows NSIS 安装版、macOS APP/DMG、Store 上传包和 Store 本机测试包构建任务。macOS 任务必须在 Mac 上运行；Store 任务必须在装有 Windows SDK 的 Windows 上运行。本地 Windows/macOS 安装版任务使用 `--no-sign`，适合测试；正式更新发布仍按下文配置更新签名密钥。构建任务不会自动上传或发布任何安装包。
+
 启动前请从托盘退出正在运行的安装版或便携版：本项目启用了单实例，且各版本共用提醒数据，旧进程可能接管新进程的启动请求。
 
 ## 检查与构建
@@ -61,6 +63,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 # 以下打包命令需要先配置更新签名环境变量，见“发布更新”
 # Windows：构建 NSIS 安装包
 pnpm tauri:build --bundles nsis
+
+# Windows：构建便携 EXE（不打包）
+pnpm tauri:build --no-bundle
 
 # macOS：在 Apple Silicon Mac 上构建 DMG
 pnpm tauri:build --bundles app,dmg
@@ -127,7 +132,7 @@ pnpm tauri:build --bundles nsis
 
 ### Microsoft Store MSIX
 
-Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.github/workflows/store.yml` 在推送版本标签后自动构建。它与 NSIS/便携版是独立渠道，Store 版本不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
+Store 版本先由 Tauri 编译 EXE，再用 Windows SDK 的 `MakeAppx.exe` 生成 x64/ARM64 MSIX 与 `.msixbundle`；当前 Tauri CLI 没有直接生成 MSIX bundle 的选项。`.msix` 也可以由 Store 更新，bundle 只是把多个架构放在同一个上传文件中。Store 版本与 NSIS/便携版是独立渠道，不访问 GitHub 或 Gitee，更新由 Microsoft Store 管理。普通版仍保留应用内更新和 Gitee 回退。
 
 首次构建前，在 GitHub 仓库配置以下值：
 
@@ -135,6 +140,12 @@ Store 版本使用 Windows SDK 的 `MakeAppx.exe` 和 `SignTool.exe`，由 `.git
 - 可选 Repository secrets：`MSIX_PFX_BASE64`、`MSIX_PFX_PASSWORD`，仅用于本地签名测试，两项必须同时提供。商店上传不要求购买代码签名证书，由 Microsoft Store 在发布时重新签名；不要提交证书文件。
 
 本产品的 Store 身份值为：`MSIX_IDENTITY_NAME=54317Smileher.RemindOn`、`MSIX_PUBLISHER=CN=426E8CF5-3861-440D-B400-CDB0323C5FD4`、`MSIX_PUBLISHER_DISPLAY_NAME=Smileher`。推送与版本文件一致的 `v1.1.0` 标签后，Release 工作流会构建并发布普通版、同步 Gitee；Microsoft Store workflow 同时使用 `1.1.0.0` 生成 x64/ARM64 `.msixbundle` artifact，不会调用 Store API。下载并解压 `remindon-msix-store` artifact 后，将其中的 `.msixbundle` 手动上传到 Partner Center。手动运行 Store workflow 时，输入版本必须是应用版本加 `.0`，例如 `1.1.0.0`。普通 GitHub/Gitee 版本和 Store 版本可以并行，但 Store 用户不会被普通版安装包覆盖。
+
+在 Windows 本机可从 VS Code“终端 → 运行任务”选择“构建 Store 上传包”，或运行 `./scripts/build-store.ps1`。需要 Node.js、pnpm、Rust 的 x64 Windows target、MSVC C++ 工具链，以及 Windows SDK 的 `MakeAppx.exe`。默认生成可直接提交 Partner Center 的未签名 x64 `.msix`，位于 `src-tauri/target/store/<版本>/upload/`。如需与 GitHub 一样生成 x64/ARM64 `.msixbundle`，还须安装 Rust 的 ARM64 Windows target，以及 Visual Studio 的 ARM64 MSVC C++ 和 LLVM/Clang 组件，然后运行 VS Code“双架构上传包”任务或 `./scripts/build-store.ps1 -AllArchitectures`。单架构包也能由 Store 更新，但只覆盖所提交的架构；发布新版本时应继续照顾 ARM64 用户。新版本必须高于已发布的 Store 包版本。
+
+选择“构建 Store 上传包和本机测试包”，或运行 `./scripts/build-store.ps1 -LocalTest`，还会在当前用户证书库生成一张本机测试证书。首次运行会导出 `src-tauri/target/store-certificate/RemindOn-local-test.cer` 并提示信任证书：双击该文件，选择“安装证书 → 当前用户 → 将所有证书放入下列存储”，分别安装到“受信任的根证书颁发机构”和“受信任人”；完成后重跑构建任务。随后输出签名的 `src-tauri/target/store/<版本>/local-test/RemindOn_<版本>_x64.msix`，可双击安装。`-AllArchitectures -LocalTest` 则输出签名的双架构 bundle。脚本只在当前用户证书库保存私钥，临时 PFX 用后删除；测试包与正式 Store 包使用相同包身份。同版本正式 Store 包已安装时，先在应用内导出数据，再卸载它，才能安装本机测试包。不要将本机测试包上传 Store，也不要分发测试证书。
+
+更换 Logo 时，只需修改 `src/assets/remindon.svg`，然后在 VS Code 运行“更新应用图标”任务，或执行 `pnpm tauri icon src/assets/remindon.svg` 并提交生成的桌面图标。普通构建自动使用这些图标；MSIX 所需的无底板尺寸由打包脚本在每次构建时自动生成，无需手工替换。
 
 真实 MSIX 的安装、升级、ARM64 和开机自启仍需验证。
 
