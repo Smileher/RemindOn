@@ -143,7 +143,7 @@ Store 版本先由 Tauri 编译 EXE，再用 Windows SDK 的 `MakeAppx.exe` 生�
 
 在 Windows 本机可从 VS Code“终端 → 运行任务”选择“构建 Store 上传包”，或运行 `./scripts/build-store.ps1`。需要 Node.js、pnpm、Rust 的 x64 Windows target、MSVC C++ 工具链，以及 Windows SDK 的 `MakeAppx.exe`。默认生成可直接提交 Partner Center 的未签名 x64 `.msix`，位于 `src-tauri/target/store/<版本>/upload/`。如需与 GitHub 一样生成 x64/ARM64 `.msixbundle`，还须安装 Rust 的 ARM64 Windows target，以及 Visual Studio 的 ARM64 MSVC C++ 和 LLVM/Clang 组件，然后运行 VS Code“双架构上传包”任务或 `./scripts/build-store.ps1 -AllArchitectures`。单架构包也能由 Store 更新，但只覆盖所提交的架构；发布新版本时应继续照顾 ARM64 用户。新版本必须高于已发布的 Store 包版本。
 
-选择“构建 Store 上传包和本机测试包”，或运行 `./scripts/build-store.ps1 -LocalTest`，还会在当前用户证书库生成一张本机测试证书。首次运行会导出 `src-tauri/target/store-certificate/RemindOn-local-test.cer` 并提示信任证书：双击该文件，选择“安装证书 → 当前用户 → 将所有证书放入下列存储”，分别安装到“受信任的根证书颁发机构”和“受信任人”；完成后重跑构建任务。随后输出签名的 `src-tauri/target/store/<版本>/local-test/RemindOn_<版本>_x64.msix`，可双击安装。`-AllArchitectures -LocalTest` 则输出签名的双架构 bundle。脚本只在当前用户证书库保存私钥，临时 PFX 用后删除；测试包与正式 Store 包使用相同包身份。同版本正式 Store 包已安装时，先在应用内导出数据，再卸载它，才能安装本机测试包。不要将本机测试包上传 Store，也不要分发测试证书。
+选择“构建 Store 上传包和本机测试包”，或运行 `./scripts/build-store.ps1 -LocalTest`，还会在当前用户证书库生成一张本机测试证书。首次运行会导出 `src-tauri/target/store-certificate/RemindOn-local-test.cer` 并提示信任证书：双击该文件，选择“安装证书 → 本地计算机 → 将所有证书放入下列存储 → 受信任人”（需要管理员权限）；完成后重跑构建任务。随后输出签名的 `src-tauri/target/store/<版本>/local-test/RemindOn_<版本>_x64.msix`，可双击安装。`-AllArchitectures -LocalTest` 则输出签名的双架构 bundle。脚本只在当前用户证书库保存私钥，临时 PFX 用后删除；测试包与正式 Store 包使用相同包身份。同版本正式 Store 包已安装时，先在应用内导出数据，再卸载它，才能安装本机测试包。不要将本机测试包上传 Store，也不要分发测试证书。
 
 更换 Logo 时，只需修改 `src/assets/remindon.svg`，然后在 VS Code 运行“更新应用图标”任务，或执行 `pnpm tauri icon src/assets/remindon.svg` 并提交生成的桌面图标。普通构建自动使用这些图标；MSIX 所需的无底板尺寸由打包脚本在每次构建时自动生成，无需手工替换。
 
