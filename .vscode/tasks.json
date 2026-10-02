@@ -22,6 +22,62 @@
       "problemMatcher": [],
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Windows 便携版",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:build", "--no-bundle", "--ci"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Windows 安装版",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:build", "--bundles", "nsis", "--no-sign", "--ci"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 macOS 安装版（在 Mac 上运行）",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:build", "--bundles", "app,dmg", "--no-sign", "--ci"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Store 上传包",
+      "type": "shell",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "./scripts/build-store.ps1"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Store 双架构上传包（需 ARM64 MSVC/Clang）",
+      "type": "shell",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "./scripts/build-store.ps1", "-AllArchitectures"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 Store 上传包和本机测试包",
+      "type": "shell",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "./scripts/build-store.ps1", "-LocalTest"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 更新应用图标",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri", "icon", "src/assets/remindon.svg"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
     }
   ]
 }
