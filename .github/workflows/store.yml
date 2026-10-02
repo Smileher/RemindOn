@@ -103,7 +103,7 @@ jobs:
             $signing.CertificatePath = "$env:RUNNER_TEMP\remindon-signing.pfx"
             $signing.CertificatePassword = $env:MSIX_PFX_PASSWORD
           }
-          & ./scripts/package-msix.ps1 -Architecture '${{ matrix.architecture }}' -Version $version -IdentityName $env:MSIX_IDENTITY_NAME -Publisher $env:MSIX_PUBLISHER -PublisherDisplayName $env:MSIX_PUBLISHER_DISPLAY_NAME -SourceExecutable $source -IconPath 'src-tauri\icons\128x128.png' -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" @signing
+          & ./scripts/package-msix.ps1 -Architecture '${{ matrix.architecture }}' -Version $version -IdentityName $env:MSIX_IDENTITY_NAME -Publisher $env:MSIX_PUBLISHER -PublisherDisplayName $env:MSIX_PUBLISHER_DISPLAY_NAME -SourceExecutable $source -IconPath 'src-tauri\icons\icon.png' -OutputDirectory "$env:GITHUB_WORKSPACE\store-output" @signing
       - uses: actions/upload-artifact@v4
         with:
           name: msix-${{ matrix.architecture }}

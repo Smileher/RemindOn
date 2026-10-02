@@ -17,6 +17,8 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 
 mod i18n;
+#[cfg(target_os = "windows")]
+mod notification;
 mod updater;
 
 const DATA_VERSION: u32 = 4;
@@ -1024,14 +1026,27 @@ fn dispatch_trigger(
     let _ = app.emit_to("main", "reminder-triggered", event.clone());
 
     if settings.system_notification_enabled {
-        app.notification()
+        let title = i18n::notification_title(settings.language, &event);
+        #[cfg(target_os = "windows")]
+        let result = if option_env!("REMINDON_STORE_BUILD").is_some() {
+            notification::show_packaged(title, &event.title)
+        } else {
+            app.notification()
+                .builder()
+                .title(title)
+                .body(&event.title)
+                .show()
+                .map_err(|error| error.to_string())
+        };
+        #[cfg(not(target_os = "windows"))]
+        let result = app
+            .notification()
             .builder()
-            .title(i18n::notification_title(settings.language, &event))
+            .title(title)
             .body(&event.title)
             .show()
-            .map_err(|error| {
-                i18n::notification_send_failed(settings.language, &error.to_string())
-            })?;
+            .map_err(|error| error.to_string());
+        result.map_err(|error| i18n::notification_send_failed(settings.language, &error))?;
     }
 
     Ok(())
@@ -1779,7 +1794,11 @@ fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .icon(tauri::include_image!("icons/icon.png"))
+        .icon(if cfg!(target_os = "windows") {
+            tauri::include_image!("icons/32x32.png")
+        } else {
+            tauri::include_image!("icons/icon.png")
+        })
         .tooltip("RemindOn")
         .on_tray_icon_event(|tray, event| {
             if matches!(
