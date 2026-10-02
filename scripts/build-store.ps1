@@ -48,14 +48,13 @@ try {
     if (-not $certificate) {
       $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -FriendlyName $friendlyName -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy Exportable -HashAlgorithm SHA256
     }
-    $trustedPeople = Get-ChildItem Cert:\CurrentUser\TrustedPeople | Where-Object Thumbprint -EQ $certificate.Thumbprint
-    $trustedRoot = Get-ChildItem Cert:\CurrentUser\Root | Where-Object Thumbprint -EQ $certificate.Thumbprint
-    if (-not $trustedPeople -or -not $trustedRoot) {
+    $trustedPeople = Get-ChildItem Cert:\LocalMachine\TrustedPeople | Where-Object Thumbprint -EQ $certificate.Thumbprint
+    if (-not $trustedPeople) {
       $certificateDirectory = Join-Path $repository 'src-tauri/target/store-certificate'
       New-Item -ItemType Directory -Path $certificateDirectory -Force | Out-Null
       $certificatePath = Join-Path $certificateDirectory 'RemindOn-local-test.cer'
       Export-Certificate -Cert $certificate -FilePath $certificatePath -Force | Out-Null
-      throw "Install $certificatePath into Current User / Trusted Root Certification Authorities and Trusted People, then rerun this command."
+      throw "Install $certificatePath into Local Machine / Trusted People, then rerun this command."
     }
   }
 
