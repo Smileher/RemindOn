@@ -3105,6 +3105,7 @@ name = "remindon"
 version = "1.1.0"
 dependencies = [
  "chrono",
+ "notify-rust",
  "reqwest",
  "serde",
  "serde_json",
@@ -3118,6 +3119,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "windows-sys 0.61.2",
  "winreg 0.55.0",
 ]
 

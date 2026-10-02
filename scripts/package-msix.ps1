@@ -51,6 +51,28 @@ foreach ($name in @('StoreLogo.png', 'Square44x44Logo.png', 'Square150x150Logo.p
   Copy-Item -LiteralPath $logo -Destination (Join-Path $stage "Assets\$name")
 }
 
+# Windows selects these assets for taskbar and Start icons without adding an accent-color plate.
+$sourceIcon = [Drawing.Bitmap]::new((Resolve-Path -LiteralPath $IconPath).Path)
+try {
+  foreach ($size in @(16, 20, 24, 30, 32, 36, 40, 44, 48, 60, 64, 72, 80, 96, 256)) {
+    $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.Clear([Drawing.Color]::Transparent)
+      $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
+      $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+      $graphics.DrawImage($sourceIcon, 0, 0, $size, $size)
+      $bitmap.Save((Join-Path $stage "Assets\Square44x44Logo.targetsize-${size}_altform-unplated.png"), [Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $graphics.Dispose()
+      $bitmap.Dispose()
+    }
+  }
+} finally {
+  $sourceIcon.Dispose()
+}
+
 $IdentityName = [Security.SecurityElement]::Escape($IdentityName)
 $Publisher = [Security.SecurityElement]::Escape($Publisher)
 $PublisherDisplayName = [Security.SecurityElement]::Escape($PublisherDisplayName)
