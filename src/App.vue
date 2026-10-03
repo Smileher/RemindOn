@@ -262,8 +262,13 @@ function formatNext(reminder: Reminder) {
   return countdown ? `${formatRule(reminder)} · ${countdown}` : formatRule(reminder)
 }
 
+// 保存响应里是整个数据对象，拖动滑块这类连续修改会产生并发保存；
+// 只接受最后一次保存的响应，早到的过期响应不能把新值回滚成旧值。
+let persistToken = 0
 async function persist() {
-  data.value = await invoke<AppData>('save_data', { data: data.value })
+  const token = ++persistToken
+  const saved = await invoke<AppData>('save_data', { data: data.value })
+  if (token === persistToken) data.value = saved
 }
 
 async function saveReminder() {

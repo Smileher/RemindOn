@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import {
   ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight,
   ArrowUp, ArrowUpLeft, ArrowUpRight, Circle, Download, Image, RotateCcw, Upload,
@@ -47,11 +47,7 @@ const positionOptions = computed<{ value: PopupBackgroundPosition; label: string
   { value: 'bottomRight', label: t('settings.posBottomRight'), icon: ArrowDownRight },
 ])
 
-// 拖动过程只更新本地值，松手才写回配置；否则保存的异步回包会把滑块拽回旧值。
-const overlayDraft = ref(props.settings.popupOverlayOpacity)
-watch(() => props.settings.popupOverlayOpacity, (value) => {
-  overlayDraft.value = value
-})
+// 拖动过程实时提交，保存的过期响应由 App 侧的序号守卫挡掉，不会把滑块拽回旧值。
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -140,8 +136,8 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </div>
         <label class="slider-row">
           <span>{{ t('settings.popupOverlay') }}</span>
-          <input v-model.number="overlayDraft" type="range" min="0" max="100" step="5" @change="emit('update:setting', 'popupOverlayOpacity', overlayDraft)" />
-          <em>{{ overlayDraft }}%</em>
+          <input :value="settings.popupOverlayOpacity" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
+          <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
       </div>
       <div class="setting-card">
