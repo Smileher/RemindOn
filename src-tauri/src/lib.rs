@@ -76,8 +76,6 @@ pub struct AppSettings {
     #[serde(default)]
     pub accent_color: AccentColor,
     #[serde(default)]
-    pub popup_background_image: String,
-    #[serde(default)]
     pub popup_background_fit: PopupBackgroundFit,
     #[serde(default)]
     pub popup_text_color: String,
@@ -189,7 +187,6 @@ impl Default for AppSettings {
             system_notification_enabled: true,
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
-            popup_background_image: String::new(),
             popup_background_fit: PopupBackgroundFit::Cover,
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
@@ -1654,6 +1651,9 @@ async fn test_reminder(
         .lock()
         .expect("window operations lock poisoned");
     let event = test_reminder_event(&app_data(&state).settings, kind);
+    // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
+    let settings = app_data(&state).settings;
+    sync_reminder_settings(&app, &settings);
     dispatch_trigger(&app, &state, event)
 }
 
@@ -1713,8 +1713,22 @@ fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> 
     if !origin.is_file() {
         return Err("The selected image does not exist".to_string());
     }
-    let extension = origin
-        .extension()
+    let mime = extension_mime(&image_extension(&origin)?);
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
+    // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
+    let target = directory.join("popup-background.img");
+    fs::copy(&origin, &target).map_err(|error| format!("Failed to copy the image: {error}"))?;
+    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
+fn image_extension(path: &Path) -> Result<String, String> {
+    path.extension()
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
         .filter(|value| {
@@ -1723,25 +1737,39 @@ fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> 
                 "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "avif"
             )
         })
-        .ok_or_else(|| "Unsupported image format".to_string())?;
-    let mime = match extension.as_str() {
+        .ok_or_else(|| "Unsupported image format".to_string())
+}
+
+fn extension_mime(extension: &str) -> &'static str {
+    match extension {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "gif" => "image/gif",
         "bmp" => "image/bmp",
         "avif" => "image/avif",
         _ => "image/png",
+    }
+}
+
+/// Read the stored background image back as a data URL. An absent file simply means no background.
+#[tauri::command]
+fn read_popup_image(app: AppHandle) -> Result<Option<String>, String> {
+    let directory = match app.path().app_config_dir() {
+        Ok(directory) => directory,
+        Err(_) => return Ok(None),
     };
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
-    let target = directory.join(format!("popup-background.{extension}"));
-    fs::copy(&origin, &target).map_err(|error| format!("Failed to copy the image: {error}"))?;
+    // 固定文件名，找不到就代表用户还没设置背景。
+    let target = directory.join("popup-background.img");
+    if !target.is_file() {
+        return Ok(None);
+    }
+    let extension = image_extension(&target).unwrap_or_else(|_| "png".to_string());
     let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
-    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+    Ok(Some(format!(
+        "data:{};base64,{}",
+        extension_mime(&extension),
+        base64_encode(&bytes)
+    )))
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -1769,50 +1797,23 @@ fn base64_encode(bytes: &[u8]) -> String {
     output
 }
 
-/// Read the stored background image back as a data URL after the settings change.
-#[tauri::command]
-fn read_popup_image(name: String, app: AppHandle) -> Result<String, String> {
-    if !name.starts_with("popup-background.") || name.contains('/') || name.contains('\\') {
-        return Err("Invalid background image name".to_string());
-    }
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
-    let target = directory.join(&name);
-    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
-    let extension = Path::new(&name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("png")
-        .to_ascii_lowercase();
-    let mime = match extension.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        "bmp" => "image/bmp",
-        "avif" => "image/avif",
-        _ => "image/png",
-    };
-    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
-}
-
 #[tauri::command]
 fn clear_popup_image(app: AppHandle) -> Result<(), String> {
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
-    if !directory.exists() {
-        return Ok(());
+    let directory = match app.path().app_config_dir() {
+        Ok(directory) => directory,
+        Err(_) => return Ok(()),
+    };
+    let target = directory.join("popup-background.img");
+    if target.is_file() {
+        fs::remove_file(&target).map_err(|error| format!("Failed to remove the image: {error}"))?;
     }
-    for entry in fs::read_dir(&directory)
-        .map_err(|error| format!("Failed to read the app configuration directory: {error}"))?
-    {
-        let entry = entry.map_err(|error| format!("Failed to read the directory entry: {error}"))?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("popup-background.") {
-            let _ = fs::remove_file(entry.path());
+    // 清理旧版本按扩展名保存的残留文件。
+    if let Ok(entries) = fs::read_dir(&directory) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("popup-background.") && name != "popup-background.img" {
+                let _ = fs::remove_file(entry.path());
+            }
         }
     }
     Ok(())
@@ -1850,6 +1851,7 @@ fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .resizable(true)
         .center()
         .visible(false)
+        .theme(Some(tauri::Theme::Dark))
         .build()
         .map_err(|error| format!("Failed to create main window: {error}"))
 }
