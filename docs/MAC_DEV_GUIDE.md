@@ -97,7 +97,49 @@ pnpm tauri:build --bundles app --no-sign --ci
 pnpm tauri:build --bundles app,dmg --no-sign --ci
 ```
 
-## 三、Mac 上能构建哪些包（实测结论）
+## 四、安装包格式全景对照
+
+### Windows 侧
+
+| 格式 | 定位 | 特点 | 本项目是否使用 |
+| --- | --- | --- | --- |
+| `.exe`（NSIS） | 安装版 | 有安装向导，可写注册表、创建快捷方式。`installMode: currentUser` 表示只装给当前用户，不需要管理员权限 | **是**，官网主推 |
+| `.exe`（portable） | 便携版 | 就是一个 exe，双击即用，不写注册表。CI 里手工复制二进制并算 SHA256 拼出来的 | **是**，官网提供下载 |
+| `.msi` | 安装版 | Windows Installer 包，支持静默安装、组策略批量部署到企业机器 | 否 |
+| `.msix` | 商店包 | 单架构。只能覆盖一种 CPU，Intel 机器和 ARM 机器需要分别提交 | 是，双架构模式时用 |
+| `.msixbundle` | 商店包 | 同时包含 x64 与 ARM64，微软商店上传用这个。用户在商店里看到的**一个条目**会自动装对架构 | **是**，商店发布推荐 |
+
+`msi` 和 `exe` 的本质区别：前者是 Windows Installer 标准格式，支持企业批量部署；后者是自解压安装程序，用户体验更直观。个人工具项目用 `exe` 就够了，`msi` 主要给企业 IT 部门用。
+
+### macOS 侧
+
+| 格式 | 定位 | 特点 |
+| --- | --- | --- |
+| `.app` | 应用包 | 就是应用本体，双击即用，不需要安装。**作用等同 Windows 的便携版** |
+| `.dmg` | 磁盘镜像 | 分发用。挂载后把 app 拖到"应用程序"文件夹，模拟 Windows 的安装向导体验 |
+| 裸二进制 | 开发调试 | 没有图标和图标壳，只能命令行跑 |
+
+所以你问的「`.app` 相当于 Win 的便携版吗」——**对，定位完全一致**。区别是 macOS 的 `.app` 就是标准应用格式，不存在"安装"这一步；而 Windows 便携版是"省略了安装步骤"。
+
+`.dmg` 和 `.app` 的关系：`.app` 是内容，`.dmg` 是装 `.app` 的盒子。给用户分发用 `.dmg`，自己本机用直接跑 `.app` 就行。
+
+### 关于「Windows 上能打出 dmg」
+
+**打不出。** 容易误解的地方在于 `src-tauri/tauri.conf.json` 里写着：
+
+```json
+"targets": ["nsis", "dmg"]
+```
+
+这**不是**说任意平台都能出这两种包。Tauri 会自动跳过当前平台不支持的那个：
+- Windows 上跑 → 跳过 `dmg`，只出 nsis
+- Mac 上跑 → 跳过 `nsis`，只出 dmg
+
+而且跳过时**不报错**。我在 Mac 上跑 `--bundles nsis` 时退出码是 0、日志显示成功，但 `bundle/nsis/` 目录压根不存在。
+
+CI 里的 dmg 是在 `macos-latest` 这台 **Mac 机器**上打的，不是在 Windows 上。
+
+## 五、Mac 上能构建哪些包（实测结论）
 
 | 包类型 | 能否在 Mac 构建 | 产物位置 | 说明 |
 | --- | --- | --- | --- |
@@ -120,7 +162,7 @@ pnpm tauri:build --bundles app,dmg --no-sign --ci
 pnpm tauri:build --debug --no-bundle
 ```
 
-## 四、macOS 与 Windows 的关键差异
+## 六、macOS 与 Windows 的关键差异
 
 ### 1. 可执行文件没有扩展名
 
@@ -194,7 +236,7 @@ macOS 首次触发系统能力时会弹窗询问，需要同意：
 
 自动化权限那条最容易漏，不授权的话定时关机功能会静默失败。
 
-## 五、常见问题
+## 七、常见问题
 
 **`cargo: command not found`**
 
@@ -232,7 +274,7 @@ Tauri 依赖树很大，第一次 `cargo build` 要编译几百个 crate，5~10 
 lsof -ti:1420 | xargs kill
 ```
 
-## 六、测试结果（2026-10-02，Apple Silicon）
+## 八、测试结果（2026-10-02，Apple Silicon）
 
 | 检查项 | 命令 | 结果 |
 | --- | --- | --- |
@@ -249,7 +291,7 @@ lsof -ti:1420 | xargs kill
 
 2026-10-03 补充验证：合并 Windows 侧 4 个提交（含商店版图标资源、通知修复、新增 `src-tauri/src/notification.rs`）后，Mac 上重新编译与全部测试仍通过，说明双设备并行开发不会互相破坏。
 
-## 七、目录结构
+## 九、目录结构
 
 ```
 src/             Vue 界面、组件、样式与中英文文案
@@ -266,3 +308,35 @@ scripts/         构建与发布辅助脚本
 node site/preview.mjs
 # 打开 http://127.0.0.1:4173/RemindOn/
 ```
+
+## 十、发布流程
+
+推 `v*` 标签即可触发全部构建，不需要在任一平台手工打包：
+
+```zsh
+# 先同步、更新版本号、跑一遍检查
+git pull
+# 修改 package.json 与 src-tauri/tauri.conf.json 的 version，两处必须一致
+pnpm test && cargo test --manifest-path src-tauri/Cargo.toml
+git commit -am "chore: 提升版本至 1.2.0" && git push
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+标签推送后依次触发：
+
+| 工作流 | 做什么 |
+| --- | --- |
+| `release.yml` | 在 Windows x64、Windows ARM64、macOS ARM64 三台机器上并行构建，产出 4 个安装包 + 便携版，合成 `latest.json` 更新清单，发布到 GitHub Releases |
+| `store.yml` | 解析版本后在 `windows-latest` 打 MSIX 上传包 |
+| `pages.yml` | 等待 Release 成功后运行 `site/build.mjs`，抓取最新 Release 的资产列表更新官网下载地址 |
+| `sync-gitee.yml` | 同步到 Gitee 镜像 |
+
+**官网更新是有校验的**：`site/build.mjs` 要求 Release 里必须存在以下文件，缺一个就构建失败：
+```
+RemindOn_<版本>_x64-setup.exe
+RemindOn_<版本>_arm64-setup.exe
+RemindOn_<版本>_x64_portable.exe
+RemindOn_<版本>_arm64_portable.exe
+RemindOn_<版本>_aarch64.dmg
+```
+所以 Windows 便携版和 Mac 的 dmg 都是必需产物，CI 已自动处理。
