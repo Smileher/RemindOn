@@ -9,15 +9,21 @@
 | macOS | 27.0 | Apple Silicon（arm64） |
 | Xcode Command Line Tools | clang 21.0.0 | 编译 Rust 原生依赖必需，已就绪 |
 | Homebrew | 6.0.17 | `/opt/homebrew/bin/brew` |
-| Node.js | 22.22.2 | 由 WorkBuddy 托管 |
+| Node.js | 22.22.2 | 由 WorkBuddy 托管；README 建议 24 LTS，实测 22 也能正常构建 |
 | pnpm | 11.28.3 | 前端包管理器，项目锁文件要求 pnpm 11 |
 | Rust | 1.99.0 stable | `~/.cargo/bin`，已加入 PATH |
+
+> **关于 Node 版本**：README 写的是 24 LTS，CI 也用 24。本机实测 22.22.2 下前端构建、46 个测试、Rust 编译全部通过，说明项目对 Node 版本不敏感。若想和 CI 完全一致，装个 24 也不冲突。
+>
+> 项目没有 `.nvmrc` 或 `volta` 配置，所以换设备时 Node 版本不会被自动约束，记得两台机器尽量对齐。
 
 > Rust 装在 `~/.cargo/bin`，这是**用户级**目录，不在 Homebrew 也不在系统 PATH 里。你自己新开终端时如果提示 `cargo: command not found`，执行下面这行补上：
 >
 > ```zsh
 > echo 'source "$HOME/.cargo/env"' >> ~/.zshrc
 > ```
+>
+> 这行和 Homebrew 的 PATH 已经帮你写进 `~/.zshrc` 了，正常新开终端就能直接用 `cargo` 和 `gh`。
 
 ## 二、打开项目和运行
 
@@ -128,7 +134,15 @@ alias glog='git log --oneline --graph --decorate --all -20'
 
 **只能在 Windows 做的**：MSIX 商店包、Microsoft Store 上传。原因是 `scripts/build-store.ps1` 依赖 `makeappx.exe`、MSVC 工具链、`Cert:\` 证书存储和 `vswhere.exe`，这些 Windows 独有，Mac 上无法替代。商店发布流程留在 Windows 上走。
 
-**`Cargo.lock` 冲突**：两台机器各自 build 可能写出不同的 lock 文件。切换设备前如果提示冲突，先 `git checkout -- src-tauri/Cargo.lock` 放弃本地改动再 pull，避免反复冲突。
+> **其实不用在 Windows 上手工打包**：`store.yml` 工作流已经配好了——版本解析跑在 `ubuntu-latest`，打包签名跑在 `windows-latest`。打 `v*` 标签即可触发，或在 Actions 页面手动 `workflow_dispatch` 填版本号。`release.yml` 同样是三平台矩阵（windows x64、windows arm64、macos arm64），Mac 产物由 CI 自动构建。所以 Mac 上唯一需要做的，就是改代码和推标签。
+
+**`scripts/*.ps1` 在 Mac 上不可运行**，这是预期行为，不是 bug。这两个脚本（`build-store.ps1`、`package-msix.ps1`）是 Windows 专用的 CI/本地打包入口。同目录下的 `create-updater-manifest.mjs` 和 `sync-gitee-release.mjs` 是跨平台的 Node 脚本，两边都能跑。
+
+**关于 `Cargo.lock`**：实测两台设备各自 build 不会改写它，锁文件保持稳定，不需要特殊处理。只有在 Windows 侧新增了 Rust 依赖并提交后，Mac 侧 `cargo build` 才会自动更新本地副本；此时若出现冲突，以远程版本为准：
+```zsh
+git checkout -- src-tauri/Cargo.lock && git pull
+```
+
 
 ### 5. 沙箱权限弹窗
 
