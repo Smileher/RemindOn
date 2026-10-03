@@ -20,6 +20,7 @@ const emit = defineEmits<{
   'update:enabled': [value: boolean]
   'update:interval': [value: string]
   'update:message': [value: string]
+  messageCommitted: [value: string]
 }>()
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
@@ -65,7 +66,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       </div>
       <label class="setting-card stacked-setting">
         <div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div>
-        <input :value="message" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value)" />
+        <input :value="message" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value); emit('messageCommitted', ($event.target as HTMLInputElement).value)" />
       </label>
     </div>
     <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
