@@ -487,6 +487,13 @@ fn snooze_rest_round(state: &AppState, seconds: u32) -> bool {
 
 fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     data.version = DATA_VERSION;
+    // 填充方式已精简为整张填充与原始尺寸两种，旧配置里的其它取值统一迁移成整张填充。
+    if !matches!(
+        data.settings.popup_background_fit,
+        PopupBackgroundFit::Cover | PopupBackgroundFit::Original
+    ) {
+        data.settings.popup_background_fit = PopupBackgroundFit::Cover;
+    }
     data.settings.rest_interval_minutes = data.settings.rest_interval_minutes.clamp(1, 1440);
     if data.settings.rest_message.trim().is_empty() {
         data.settings.rest_message = i18n::default_rest_message(data.settings.language).to_string();
