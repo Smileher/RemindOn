@@ -143,11 +143,13 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
     <div class="settings-group">
       <p class="settings-group-title">{{ t('settings.groupData') }}</p>
       <div class="data-actions">
-        <div><strong>{{ t('settings.data') }}</strong><span>{{ t('settings.dataHint') }}</span></div>
-        <div class="action-row">
-          <button class="button" type="button" @click="emit('importData')"><Upload :size="14" />{{ t('settings.import') }}</button>
-          <button class="button" type="button" @click="emit('exportData')"><Download :size="14" />{{ t('settings.export') }}</button>
-          <button v-if="canReset" class="button danger" type="button" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
+        <div class="data-actions-row">
+          <div><strong>{{ t('settings.data') }}</strong><span>{{ t('settings.dataHint') }}</span></div>
+          <div class="action-row">
+            <button class="button" type="button" @click="emit('importData')"><Upload :size="14" />{{ t('settings.import') }}</button>
+            <button class="button" type="button" @click="emit('exportData')"><Download :size="14" />{{ t('settings.export') }}</button>
+            <button class="button danger" type="button" :disabled="!canReset" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
+          </div>
         </div>
         <small v-if="actionMessage" class="status-message">{{ actionMessage }}</small>
       </div>

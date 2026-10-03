@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -53,6 +53,18 @@ let unlistenNotificationFailure: (() => void) | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
+let actionMessageTimer: number | undefined
+
+// 状态消息只短暂停留，避免一直占位或把旁边的按钮挤走。
+watch(actionMessage, (value) => {
+  if (actionMessageTimer) window.clearTimeout(actionMessageTimer)
+  actionMessageTimer = undefined
+  if (value) {
+    actionMessageTimer = window.setTimeout(() => {
+      actionMessage.value = ''
+    }, 4000)
+  }
+})
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(data.value.settings.language, key, params)
@@ -591,6 +603,13 @@ async function resetSettings() {
     await applyNativeTheme(data.value.settings.theme)
     await persist()
     await refreshTimers()
+    // 重置参数要连背景图一起清掉，否则弹窗还会挂着旧图。
+    try {
+      await invoke('clear_popup_image')
+    } catch (error) {
+      logError('clear popup image on reset', error)
+    }
+    popupBackgroundPreview.value = ''
     autostartError.value = ''
     notificationError.value = ''
     actionMessage.value = t('status.resetDone')
@@ -712,6 +731,7 @@ onUnmounted(() => {
   unlistenNotificationFailure?.()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
+  if (actionMessageTimer) window.clearTimeout(actionMessageTimer)
 })
 </script>
 
