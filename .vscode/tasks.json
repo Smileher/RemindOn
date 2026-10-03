@@ -14,11 +14,11 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
-      "label": "RemindOn: 构建 Debug EXE",
+      "label": "RemindOn: 构建 Debug 可执行文件",
       "type": "shell",
       "command": "pnpm",
       "args": ["tauri:build", "--debug", "--no-bundle"],
-      "detail": "构建含前端资源的 Debug EXE，供 CodeLLDB 调试；不生成安装包，无热更新。",
+      "detail": "构建含前端资源的 Debug 可执行文件，供 CodeLLDB 调试；不生成安装包，无热更新。macOS 产物为 src-tauri/target/debug/remindon，Windows 为 remindon.exe。",
       "problemMatcher": [],
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "always", "panel": "dedicated" }
