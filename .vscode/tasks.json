@@ -44,6 +44,7 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["tauri:build", "--bundles", "app,dmg", "--no-sign", "--ci"],
+      "detail": "产出 .app 与 .dmg。DMG 排版需调用 Finder，首次执行请在弹窗中允许控制 Finder。",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
@@ -68,6 +69,15 @@
       "type": "shell",
       "command": "pwsh",
       "args": ["-NoProfile", "-File", "./scripts/build-store.ps1", "-LocalTest"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "RemindOn: 构建 macOS 快速包（仅 .app，约 2 分钟）",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["tauri:build", "--bundles", "app", "--no-sign", "--ci"],
+      "detail": "仅产出 RemindOn.app，不做 DMG 排版因此无需 Finder 自动化权限，速度最快，适合本机验证。",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
