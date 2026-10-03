@@ -77,11 +77,17 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         listen: async (name, callback) => { listeners.set(name, { target: 'main', callback }); return noop },
       }),
     },
-    '@tauri-apps/plugin-dialog': { ask: noop, open: noop, save: noop },
+    '@tauri-apps/plugin-dialog': { ask: noop, confirm: async () => false, open: noop, save: noop },
     '@tauri-apps/plugin-autostart': { disable: noop, enable: noop, isEnabled: async () => false },
     '@tauri-apps/plugin-notification': { sendNotification: noop, onAction: async () => ({ unregister: async () => {} }) },
     '@lucide/vue': new Proxy({}, { get: () => ({ render: noop }) }),
     './components/ReminderPopup.vue': { default: { render: noop } },
+    './components/AppSidebar.vue': { default: { render: noop } },
+    './components/EventsView.vue': { default: { render: noop } },
+    './components/RestView.vue': { default: { render: noop } },
+    './components/PowerView.vue': { default: { render: noop } },
+    './components/SettingsView.vue': { default: { render: noop } },
+    './components/AboutView.vue': { default: { render: noop } },
     './assets/remindon.svg': { default: 'remindon.svg' },
     './assets/donate.png': { default: 'donate.png' },
     './i18n': { translate },
@@ -152,7 +158,8 @@ test('test break notifications use backend rest state even with reminders disabl
   assert.equal(app.state.restIsActive.value, true)
   assert.equal(app.state.nextRestTrigger.value, null)
   assert.equal(app.state.restProgress.value, 0)
-  assert.ok((await app.render()).includes('正在休息中'))
+  // 文案已下沉到 RestView，这里断言状态与文案来源保持一致，避免依赖界面文本。
+  assert.equal(app.state.restStatusText.value, '正在休息中')
 })
 
 test('a slow status read cannot restore the countdown after a resting event', async () => {

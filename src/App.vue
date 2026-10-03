@@ -3,15 +3,16 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { ask, open, save } from '@tauri-apps/plugin-dialog'
+import { ask, confirm, open, save } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import {
-  BellRing, CalendarClock, Check, Clock3, Coffee, Download, ExternalLink, Info, LockKeyhole,
-  Pencil, Play, Plus, Power, RotateCw, Settings2, Trash2, Upload, X,
-} from '@lucide/vue'
+import { LockKeyhole, Power, RotateCw } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
-import brandIcon from './assets/remindon.svg'
-import donationCode from './assets/donate.png'
+import AppSidebar from './components/AppSidebar.vue'
+import EventsView from './components/EventsView.vue'
+import RestView from './components/RestView.vue'
+import PowerView from './components/PowerView.vue'
+import SettingsView from './components/SettingsView.vue'
+import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
@@ -108,6 +109,29 @@ const sortedReminders = computed(() =>
   }),
 )
 
+const restStatusText = computed(() =>
+  restIsActive.value
+    ? t('rest.resting')
+    : data.value.settings.restEnabled
+      ? (nextRestTrigger.value ? formatCountdown(nextRestTrigger.value) : t('common.calculating'))
+      : t('common.paused'),
+)
+
+const powerStatusText = computed(() =>
+  data.value.settings.shutdownReminderEnabled
+    ? (nextShutdownTrigger.value ? formatCountdown(nextShutdownTrigger.value) : t('common.calculating'))
+    : t('common.paused'),
+)
+
+// 重置只恢复参数默认值，提醒列表必须保留；全部等于默认时才隐藏按钮，避免误触。
+const canResetSettings = computed(() => {
+  const defaults = defaultData().settings
+  const current = data.value.settings
+  return (Object.keys(defaults) as Array<keyof typeof defaults>).some(
+    (key) => JSON.stringify(current[key]) !== JSON.stringify(defaults[key]),
+  )
+})
+
 const restProgress = computed(() => {
   if (restIsActive.value) return 0
   if (!data.value.settings.restEnabled || !nextRestTrigger.value) return 0
@@ -132,6 +156,10 @@ const updateStatusText = computed(() => {
   if (newVersion.value) return t('update.available', { version: newVersion.value })
   return t('update.idle')
 })
+
+function patchForm(patch: Record<string, unknown>) {
+  Object.assign(form, patch)
+}
 
 function resetForm() {
   form.title = ''
@@ -323,6 +351,28 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   }
 }
 
+async function applySetting(key: keyof AppData['settings'], value: AppData['settings'][keyof AppData['settings']]) {
+  if (key === 'autostart') {
+    await updateAutostart(Boolean(value))
+    return
+  }
+  if (key === 'language') {
+    await updateLanguage(value as Language)
+    return
+  }
+  if (key === 'powerAction') {
+    await updatePowerAction(value as AutomaticPowerAction)
+    return
+  }
+  if (key === 'shutdownReminderTime') {
+    if (/^\d{2}:\d{2}$/.test(String(value))) {
+      await updateSetting('shutdownReminderTime', String(value))
+    }
+    return
+  }
+  await updateSetting(key, value as never)
+}
+
 async function updateAutostart(value: boolean) {
   autostartError.value = ''
   try {
@@ -400,23 +450,23 @@ async function updatePowerAction(value: AutomaticPowerAction) {
   }
 }
 
-async function updateRestInterval(event: Event) {
-  const value = (event.target as HTMLInputElement).valueAsNumber
+async function updateRestInterval(raw: string) {
+  const value = Number(raw)
   if (Number.isInteger(value) && value >= 1 && value <= 1440) {
     await updateSetting('restIntervalMinutes', value)
   }
 }
 
-async function updateShutdownTime(event: Event) {
-  const value = (event.target as HTMLInputElement).value
-  if (/^\d{2}:\d{2}$/.test(value)) {
-    await updateSetting('shutdownReminderTime', value)
+async function updateShutdownTimeValue(raw: string) {
+  if (/^\d{2}:\d{2}$/.test(raw)) {
+    await updateSetting('shutdownReminderTime', raw)
   }
 }
 
-async function saveRestMessage() {
+async function saveRestMessage(value: string) {
   const previous = data.value.settings
-  data.value.settings = { ...previous, restMessage: restMessageDraft.value }
+  restMessageDraft.value = value
+  data.value.settings = { ...previous, restMessage: value }
   try {
     await persist()
   } catch (error) {
@@ -427,9 +477,10 @@ async function saveRestMessage() {
   }
 }
 
-async function saveShutdownMessage() {
+async function saveShutdownMessage(value: string) {
   const previous = data.value.settings
-  data.value.settings = { ...previous, shutdownReminderMessage: shutdownMessageDraft.value }
+  shutdownMessageDraft.value = value
+  data.value.settings = { ...previous, shutdownReminderMessage: value }
   try {
     await persist()
   } catch (error) {
@@ -469,6 +520,37 @@ async function exportData() {
   } catch (error) {
     logError('export data', error)
     actionMessage.value = t('status.exportFailed')
+  }
+}
+
+// 只恢复参数默认值，提醒列表原样保留。自启与主题要同步到系统层，所以单独处理。
+async function resetSettings() {
+  actionMessage.value = ''
+  const confirmed = await confirm(t('settings.resetConfirmBody'), {
+    title: t('settings.resetConfirmTitle'),
+    kind: 'warning',
+  })
+  if (!confirmed) return
+
+  const previous = data.value.settings
+  const defaults = defaultData().settings
+  data.value.settings = { ...defaults, language: previous.language }
+  restMessageDraft.value = data.value.settings.restMessage
+  shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
+  try {
+    if (previous.autostart) await disable()
+    await applyNativeTheme(data.value.settings.theme)
+    await persist()
+    await refreshTimers()
+    autostartError.value = ''
+    notificationError.value = ''
+    actionMessage.value = t('status.resetDone')
+  } catch (error) {
+    data.value.settings = previous
+    restMessageDraft.value = previous.restMessage
+    shutdownMessageDraft.value = previous.shutdownReminderMessage
+    logError('reset settings', error)
+    actionMessage.value = t('status.saveFailed')
   }
 }
 
@@ -586,113 +668,109 @@ onUnmounted(() => {
 <template>
   <ReminderPopup v-if="isPopup" />
   <div v-else :class="['app-shell', `theme-${data.settings.theme}`, `accent-${data.settings.accentColor}`]">
-    <aside class="sidebar">
-      <div class="brand">
-        <img class="brand-mark" :src="brandIcon" alt="" />
-        <div class="brand-copy"><strong>RemindOn</strong><span>{{ t('app.tagline') }}</span></div>
-      </div>
-      <nav class="nav-list" aria-label="Navigation">
-        <button :class="['nav-item', { active: currentView === 'rest' }]" @click="currentView = 'rest'"><Coffee :size="17" /><span>{{ t('nav.rest') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'events' }]" @click="currentView = 'events'"><CalendarClock :size="17" /><span>{{ t('nav.events') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'power' }]" @click="currentView = 'power'"><Power :size="17" /><span>{{ t('nav.power') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'settings' }]" @click="currentView = 'settings'"><Settings2 :size="17" /><span>{{ t('nav.settings') }}</span></button>
-        <button :class="['nav-item', { active: currentView === 'about' }]" @click="currentView = 'about'"><Info :size="17" /><span>{{ t('nav.about') }}</span><span v-if="newVersion" class="update-dot" :aria-label="t('update.available', { version: newVersion })"></span></button>
-      </nav>
-      <div class="sidebar-footer">RemindOn v{{ appVersion }}</div>
-    </aside>
+    <AppSidebar
+      :current-view="currentView"
+      :language="data.settings.language"
+      :app-version="appVersion"
+      :has-update="Boolean(newVersion)"
+      @navigate="currentView = $event"
+    />
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
       <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
         <span>{{ t('update.available', { version: newVersion }) }}</span>
         <button class="button" type="button" @click="currentView = 'about'">{{ t('update.view') }}</button>
       </div>
-      <section v-if="currentView === 'events'" class="page-section">
-        <header class="page-header"><div><p class="eyebrow">REMINDERS</p><h1>{{ t('events.title') }}</h1><p class="page-subtitle">{{ t('events.subtitle') }}</p></div><div class="page-header-actions"><button class="button" type="button" @click="testNotification('event')"><Play :size="14" />{{ t('settings.testNotification') }}</button><button class="button button-primary" type="button" @click="openAddForm"><Plus :size="15" />{{ t('events.add') }}</button></div></header>
 
-        <div v-if="showForm" class="form-panel">
-          <div class="form-heading"><div><p class="eyebrow">REMINDER</p><h2>{{ editingId ? t('events.editTitle') : t('events.addTitle') }}</h2></div><button class="icon-button" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="showForm = false"><X :size="18" /></button></div>
-          <label class="field"><span>{{ t('events.content') }}</span><input v-model="form.title" type="text" maxlength="120" :placeholder="t('events.contentPlaceholder')" /></label>
-          <div class="field"><span>{{ t('events.frequency') }}</span><div class="segmented frequency-segments"><button v-for="option in frequencyOptions" :key="option.value" :class="{ selected: form.type === option.value }" type="button" @click="form.type = option.value">{{ option.label }}</button></div></div>
-          <div class="field-row"><label v-if="form.type === 'once'" class="field"><span>{{ t('events.reminderTime') }}</span><input v-model="form.triggerAt" type="datetime-local" /></label><label v-else class="field"><span>{{ t('events.exactTime') }}</span><input v-model="form.time" type="time" /></label></div>
-          <div v-if="form.type === 'weekly'" class="field"><span>{{ t('events.selectWeekday') }}</span><div class="choice-grid weekday-grid"><button v-for="day in weekdayOptions" :key="day.value" :class="{ selected: form.weekdays.includes(day.value) }" type="button" @click="toggleNumber(form.weekdays, day.value)">{{ t('rule.weekPrefix') }}{{ day.label }}</button></div></div>
-          <div v-if="form.type === 'monthly'" class="field"><span>{{ t('events.selectDate') }}</span><div class="choice-grid month-grid"><button v-for="day in 31" :key="day" :class="{ selected: form.monthDays.includes(day) }" type="button" @click="toggleNumber(form.monthDays, day)">{{ day }}</button></div><small>{{ t('events.missingDateHint') }}</small></div>
-          <small v-if="actionMessage" class="status-message form-message">{{ actionMessage }}</small>
-          <div class="form-actions"><button class="button" type="button" @click="showForm = false">{{ t('common.cancel') }}</button><button class="button button-primary" type="button" @click="saveReminder"><Check :size="15" />{{ t('events.save') }}</button></div>
-        </div>
+      <EventsView
+        v-if="currentView === 'events'"
+        :language="data.settings.language"
+        :subtitle="t('events.subtitle')"
+        :show-form="showForm"
+        :editing-id="editingId"
+        :form="form"
+        :frequency-options="frequencyOptions"
+        :weekday-options="weekdayOptions"
+        :type-labels="typeLabels"
+        :reminders="sortedReminders"
+        :action-message="actionMessage"
+        :format-next="formatNext"
+        @test-notification="testNotification('event')"
+        @add="openAddForm"
+        @close-form="showForm = false"
+        @save="saveReminder"
+        @update:form="patchForm"
+        @toggle-weekday="toggleNumber(form.weekdays, $event)"
+        @toggle-month-day="toggleNumber(form.monthDays, $event)"
+        @toggle-reminder="toggleReminder"
+        @edit-reminder="editReminder"
+        @remove-reminder="removeReminder"
+      />
 
-        <div v-if="sortedReminders.length" class="reminder-list">
-          <article v-for="reminder in sortedReminders" :key="reminder.id" :class="['reminder-row', { disabled: !reminder.enabled }]">
-            <div :class="['reminder-status', { enabled: reminder.enabled }]"></div>
-            <div class="reminder-main"><div class="reminder-title"><strong>{{ reminder.title }}</strong><span class="type-chip">{{ typeLabels[reminder.type] }}</span></div><span>{{ formatNext(reminder) }}</span></div>
-            <button class="switch" :class="{ on: reminder.enabled }" type="button" :aria-label="reminder.enabled ? t('common.disabled') : t('common.enabled')" @click="toggleReminder(reminder)"><span></span></button>
-            <button class="icon-button row-action" type="button" :aria-label="t('events.edit')" :title="t('events.edit')" @click="editReminder(reminder)"><Pencil :size="15" /></button>
-            <button class="icon-button row-action danger" type="button" :aria-label="t('events.delete')" :title="t('events.delete')" @click="removeReminder(reminder.id)"><Trash2 :size="15" /></button>
-          </article>
-        </div>
-        <div v-else-if="!showForm" class="empty-state"><div class="empty-icon"><CalendarClock :size="22" /></div><h2>{{ t('events.emptyTitle') }}</h2><p>{{ t('events.emptyBody') }}</p><button class="button" type="button" @click="openAddForm"><Plus :size="15" />{{ t('events.addFirst') }}</button></div>
-      </section>
+      <RestView
+        v-else-if="currentView === 'rest'"
+        :language="data.settings.language"
+        :subtitle="t('rest.subtitle')"
+        :enabled="data.settings.restEnabled"
+        :interval-minutes="data.settings.restIntervalMinutes"
+        :message="restMessageDraft"
+        :progress="restProgress"
+        :status="restStatusText"
+        :action-message="actionMessage"
+        @test-notification="testNotification('rest')"
+        @update:enabled="updateSetting('restEnabled', $event)"
+        @update:interval="updateRestInterval"
+        @update:message="restMessageDraft = $event"
+        @message-committed="saveRestMessage"
+      />
 
-      <section v-else-if="currentView === 'rest'" class="page-section narrow-section">
-        <header class="page-header compact-header"><div><p class="eyebrow">BREAK</p><h1>{{ t('rest.title') }}</h1><p class="page-subtitle">{{ t('rest.subtitle') }}</p></div><button class="button" type="button" @click="testNotification('rest')"><Play :size="14" />{{ t('settings.testNotification') }}</button></header>
-        <div class="status-panel">
-          <div class="status-panel-top"><span class="status-icon"><Coffee :size="18" /></span><div><span class="card-label">{{ t('rest.next') }}</span><strong>{{ restIsActive ? t('rest.resting') : (data.settings.restEnabled ? (nextRestTrigger ? formatCountdown(nextRestTrigger) : t('common.calculating')) : t('common.paused')) }}</strong></div><label class="setting-toggle compact-toggle"><input :checked="data.settings.restEnabled" type="checkbox" @change="updateSetting('restEnabled', ($event.target as HTMLInputElement).checked)" /></label></div>
-          <div class="progress-track"><span :style="{ width: `${restProgress}%` }"></span></div><p>{{ t('rest.scheduleHint') }}</p>
-        </div>
-        <div class="settings-group">
-          <div class="setting-card"><div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div><label class="number-field"><input :value="data.settings.restIntervalMinutes" type="number" min="1" max="1440" @input="updateRestInterval" /><span>{{ t('common.minutes') }}</span></label></div>
-          <label class="setting-card stacked-setting"><div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div><input v-model="restMessageDraft" type="text" maxlength="120" @change="saveRestMessage" /></label>
-        </div>
-        <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
-      </section>
+      <PowerView
+        v-else-if="currentView === 'power'"
+        :language="data.settings.language"
+        :subtitle="t('power.subtitle')"
+        :settings="data.settings"
+        :status="powerStatusText"
+        :action-message="actionMessage"
+        :power-action-options="powerActionOptions"
+        @test-notification="testNotification('power')"
+        @update:enabled="updateSetting('shutdownReminderEnabled', $event)"
+        @update:power-action="updatePowerAction"
+        @update:time="updateShutdownTimeValue"
+        @update:message="shutdownMessageDraft = $event"
+        @message-committed="saveShutdownMessage"
+      />
 
-      <section v-else-if="currentView === 'power'" class="page-section narrow-section">
-        <header class="page-header compact-header"><div><p class="eyebrow">SYSTEM</p><h1>{{ t('power.title') }}</h1><p class="page-subtitle">{{ t('power.subtitle') }}</p></div><button class="button" type="button" @click="testNotification('power')"><Play :size="14" />{{ t('settings.testNotification') }}</button></header>
-        <div class="status-panel power-status">
-          <div class="status-panel-top"><span class="status-icon"><Power :size="18" /></span><div><span class="card-label">{{ t('power.next') }}</span><strong>{{ data.settings.shutdownReminderEnabled ? (nextShutdownTrigger ? formatCountdown(nextShutdownTrigger) : t('common.calculating')) : t('common.paused') }}</strong></div></div>
-        </div>
-        <div class="settings-group">
-          <label class="setting-card setting-toggle"><div><strong>{{ t('power.enable') }}</strong><span>{{ t('power.enableHint') }}</span></div><input :checked="data.settings.shutdownReminderEnabled" type="checkbox" @change="updateSetting('shutdownReminderEnabled', ($event.target as HTMLInputElement).checked)" /></label>
-          <div class="setting-card setting-choice power-choice"><div><strong>{{ t('power.action') }}</strong><span>{{ t('power.actionHint') }}</span></div><div class="segmented power-segments"><button v-for="option in powerActionOptions" :key="option.value" :class="{ selected: data.settings.powerAction === option.value }" type="button" @click="updatePowerAction(option.value)"><component :is="option.icon" :size="14" />{{ option.label }}</button></div></div>
-          <label class="setting-card"><div><strong>{{ t('power.dailyTime') }}</strong><span>{{ t('power.dailyTimeHint') }}</span></div><span class="time-control"><Clock3 :size="15" /><input class="time-input" :value="data.settings.shutdownReminderTime" type="time" @input="updateShutdownTime" /></span></label>
-          <label class="setting-card stacked-setting"><div><strong>{{ t('power.message') }}</strong><span>{{ t('power.messageHint') }}</span></div><input v-model="shutdownMessageDraft" type="text" maxlength="120" @change="saveShutdownMessage" /></label>
-        </div>
-        <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
-      </section>
+      <SettingsView
+        v-else-if="currentView === 'settings'"
+        :language="data.settings.language"
+        :settings="data.settings"
+        :accent-colors="accentColors"
+        :autostart-error="autostartError"
+        :notification-error="notificationError"
+        :action-message="actionMessage"
+        :can-reset="canResetSettings"
+        @update:setting="applySetting"
+        @import-data="importData"
+        @export-data="exportData"
+        @reset-settings="resetSettings"
+      />
 
-      <section v-else-if="currentView === 'settings'" class="page-section narrow-section">
-        <header class="page-header compact-header"><div><p class="eyebrow">PREFERENCES</p><h1>{{ t('settings.title') }}</h1><p class="page-subtitle">{{ t('settings.subtitle') }}</p></div></header>
-        <div class="settings-group">
-          <div class="setting-card setting-choice"><div><strong>{{ t('settings.language') }}</strong><span>{{ t('settings.languageHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.language === 'zh-CN' }" type="button" @click="updateLanguage('zh-CN')">{{ t('settings.zh') }}</button><button :class="{ selected: data.settings.language === 'en' }" type="button" @click="updateLanguage('en')">{{ t('settings.en') }}</button></div></div>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div><input :checked="data.settings.autostart" type="checkbox" @change="updateAutostart(($event.target as HTMLInputElement).checked)" /></label>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.startHidden') }}</strong><span>{{ t('settings.startHiddenHint') }}</span></div><input :checked="data.settings.minimizeToTray" type="checkbox" @change="updateSetting('minimizeToTray', ($event.target as HTMLInputElement).checked)" /></label>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div><input :checked="data.settings.popupAlwaysOnTop" type="checkbox" @change="updateSetting('popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" /></label>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.fullscreenPopup') }}</strong><span>{{ t('settings.fullscreenPopupHint') }}</span></div><input :checked="data.settings.popupFullscreen" type="checkbox" @change="updateSetting('popupFullscreen', ($event.target as HTMLInputElement).checked)" /></label>
-          <label class="setting-card setting-toggle"><div><strong>{{ t('settings.systemNotification') }}</strong><span>{{ t('settings.systemNotificationHint') }}</span><small v-if="notificationError" class="setting-error">{{ notificationError }}</small></div><input :checked="data.settings.systemNotificationEnabled" type="checkbox" @change="updateSetting('systemNotificationEnabled', ($event.target as HTMLInputElement).checked)" /></label>
-          <div class="setting-card setting-choice"><div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div><div class="segmented"><button :class="{ selected: data.settings.theme === 'dark' }" type="button" @click="updateSetting('theme', 'dark')">{{ t('settings.dark') }}</button><button :class="{ selected: data.settings.theme === 'light' }" type="button" @click="updateSetting('theme', 'light')">{{ t('settings.light') }}</button><button :class="{ selected: data.settings.theme === 'system' }" type="button" @click="updateSetting('theme', 'system')">{{ t('settings.system') }}</button></div></div>
-          <div class="setting-card color-setting"><div><strong>{{ t('settings.accent') }}</strong><span>{{ t('settings.accentHint') }}</span></div><div class="color-options"><button v-for="color in accentColors" :key="color" :class="['color-swatch', `swatch-${color}`, { selected: data.settings.accentColor === color }]" type="button" :aria-label="color" @click="updateSetting('accentColor', color)"></button></div></div>
-        </div>
-        <div class="data-actions"><div><strong>{{ t('settings.data') }}</strong><span>{{ t('settings.dataHint') }}</span></div><div class="action-row"><button class="button" type="button" @click="importData"><Upload :size="14" />{{ t('settings.import') }}</button><button class="button" type="button" @click="exportData"><Download :size="14" />{{ t('settings.export') }}</button></div><small v-if="actionMessage" class="status-message">{{ actionMessage }}</small></div>
-      </section>
-
-      <section v-else class="page-section about-section">
-        <div class="about-overview">
-          <img :src="brandIcon" alt="" />
-          <div class="about-product"><h1>RemindOn</h1><p>{{ t('app.tagline') }}</p></div>
-          <span class="about-version">{{ t('about.version', { version: appVersion }) }}</span>
-        </div>
-        <div v-if="!isStoreBuild" class="update-panel" aria-live="polite">
-          <div class="update-summary"><span :class="['update-icon', { checking: updateStatus === 'checking' }]"><RotateCw :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ updateStatusText }}</strong></div></div>
-          <div class="update-actions">
-            <button class="button" type="button" :disabled="updateBusy || updateMode === 'development' || updateMode === 'unsupported'" @click="checkForUpdates()"><RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}</button>
-            <button v-if="updateMode === 'unsupported' || updateError" class="button" type="button" @click="openReleases"><Download :size="14" />{{ t('update.download') }}</button>
-          </div>
-          <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined"><div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div><span v-if="updateProgress !== null">{{ updateProgress }}%</span></div>
-          <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
-        </div>
-        <div v-else class="update-panel" aria-live="polite"><div class="update-summary"><span class="update-icon"><Info :size="18" /></span><div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div></div></div>
-        <div class="support-section"><div class="support-copy"><span class="support-icon"><BellRing :size="19" /></span><div><strong>{{ t('about.support') }}</strong><span>{{ t('about.author') }} <button class="author-link" type="button" @click="openAuthorPage">Smileher <ExternalLink :size="12" /></button></span></div></div><div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div></div>
-        <p class="about-copyright">{{ t('about.copyright') }}</p>
-      </section>
+      <AboutView
+        v-else
+        :language="data.settings.language"
+        :app-version="appVersion"
+        :is-store-build="isStoreBuild"
+        :update-mode="updateMode"
+        :update-status="updateStatus"
+        :update-status-text="updateStatusText"
+        :new-version="newVersion"
+        :update-progress="updateProgress"
+        :update-error="updateError"
+        :update-busy="updateBusy"
+        @check-for-updates="checkForUpdates()"
+        @open-releases="openReleases"
+        @open-author-page="openAuthorPage"
+      />
     </main>
   </div>
 </template>
