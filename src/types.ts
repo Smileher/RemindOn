@@ -6,7 +6,7 @@ export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest' | 'power'
-export type PopupBackgroundFit = 'cover' | 'contain' | 'repeat' | 'stretch'
+export type PopupBackgroundFit = 'cover' | 'contain' | 'repeat' | 'stretch' | 'original'
 export type PopupBackgroundPosition = 'topLeft' | 'top' | 'topRight' | 'left' | 'center' | 'right' | 'bottomLeft' | 'bottom' | 'bottomRight'
 
 export interface Reminder {

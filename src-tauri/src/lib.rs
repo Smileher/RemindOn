@@ -110,6 +110,8 @@ pub enum PopupBackgroundFit {
     Contain,
     Repeat,
     Stretch,
+    /// 原始尺寸：不缩放不平铺，按停靠方位摆放，适合头像、贴纸类小图。
+    Original,
 }
 
 impl Default for PopupBackgroundFit {

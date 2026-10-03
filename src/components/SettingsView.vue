@@ -33,6 +33,7 @@ const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() =
   { value: 'contain', label: t('settings.fitContain') },
   { value: 'stretch', label: t('settings.fitStretch') },
   { value: 'repeat', label: t('settings.fitRepeat') },
+  { value: 'original', label: t('settings.fitOriginal') },
 ])
 
 const positionOptions = computed<{ value: PopupBackgroundPosition; label: string; icon: typeof ArrowUp }[]>(() => [
@@ -141,16 +142,15 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </label>
       </div>
       <div class="setting-card">
-        <div><strong>{{ t('settings.popupTextColor') }}</strong><span>{{ t('settings.popupTextColorHint') }}</span></div>
-        <span class="color-control">
-          <input type="color" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
-          <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
-        </span>
+        <div><strong>{{ t('settings.popupText') }}</strong><span>{{ t('settings.popupTextHint') }}</span></div>
+        <div class="text-controls">
+          <span class="color-control">
+            <input type="color" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
+            <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
+          </span>
+          <label class="number-field"><input :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
+        </div>
       </div>
-      <label class="setting-card">
-        <div><strong>{{ t('settings.popupTitleSize') }}</strong><span>{{ t('settings.popupTitleSizeHint') }}</span></div>
-        <label class="number-field"><input :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
-      </label>
     </div>
 
     <div class="settings-group">
