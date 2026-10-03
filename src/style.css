@@ -330,6 +330,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-header-actions { display: flex; align-items: center; gap: 8px; }
 .popup-mode-button { display: grid; place-items: center; width: 24px; height: 22px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 0; color: var(--muted); background: var(--page-bg); box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
 .popup-mode-button:hover { border-color: var(--accent); color: var(--text); }
+/* 弹窗显示时 webview 会把焦点丢给第一个可聚焦元素，快捷键只有 ESC，这里不需要焦点环。 */
+.popup-mode-button:focus { outline: none; }
 .popup-content { align-self: center; padding: 21px 27px; }
 .popup-content h1 { max-width: 440px; font-size: var(--popup-title-size, var(--font-title)); line-height: 1.35; overflow-wrap: anywhere; }
 .rest-elapsed { margin: 0 0 15px; color: var(--muted); font-size: var(--font-title); line-height: 1; }
