@@ -102,6 +102,7 @@ async function mountPopup({ label = 'reminder', active = null, readActive } = {}
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return readData()
         if (command === 'read_popup_image') return null
+        if (command === 'popup_window_is_transparent') return false
         if (command === 'get_active_reminder') return readActive ? readActive(listeners) : active
         if (command === 'hide_idle_window') return nativeWindow.hide()
         if (command === 'show_reminder') {

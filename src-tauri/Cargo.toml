@@ -13,7 +13,9 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# macos-private-api 用于弹窗窗口透明（WKWebView 透明背景需私有 API）。
+# 应用只走 dmg 直接分发、不上 Mac App Store，可以使用私有 API。
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
