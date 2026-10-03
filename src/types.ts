@@ -35,6 +35,7 @@ export interface AppSettings {
   accentColor: AccentColor
   popupBackgroundFit: PopupBackgroundFit
   popupBackgroundPosition: PopupBackgroundPosition
+  popupFadeEnabled: boolean
   popupTextColor: string
   popupTitleSize: number
   popupOverlayOpacity: number
@@ -82,6 +83,7 @@ export const defaultData = (): AppData => ({
     accentColor: 'mint',
     popupBackgroundFit: 'cover',
     popupBackgroundPosition: 'center',
+    popupFadeEnabled: true,
     popupTextColor: '',
     popupTitleSize: 32,
     popupOverlayOpacity: 55,

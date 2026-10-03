@@ -79,6 +79,8 @@ pub struct AppSettings {
     pub popup_background_fit: PopupBackgroundFit,
     #[serde(default)]
     pub popup_background_position: PopupBackgroundPosition,
+    #[serde(default = "default_popup_fade_enabled")]
+    pub popup_fade_enabled: bool,
     #[serde(default)]
     pub popup_text_color: String,
     #[serde(default = "default_popup_title_size")]
@@ -148,6 +150,10 @@ fn default_popup_overlay_opacity() -> u32 {
     55
 }
 
+fn default_popup_fade_enabled() -> bool {
+    true
+}
+
 impl Default for PowerAction {
     fn default() -> Self {
         Self::Shutdown
@@ -213,6 +219,7 @@ impl Default for AppSettings {
             accent_color: AccentColor::Mint,
             popup_background_fit: PopupBackgroundFit::Cover,
             popup_background_position: PopupBackgroundPosition::Center,
+            popup_fade_enabled: default_popup_fade_enabled(),
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
             popup_overlay_opacity: default_popup_overlay_opacity(),
