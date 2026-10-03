@@ -85,7 +85,7 @@ const popupStyleVars = computed(() => {
   const style: Record<string, string> = {}
   if (popupBackgroundUrl.value) {
     const fit = current.popupBackgroundFit
-    const size = fit === 'stretch' ? '100% 100%' : fit === 'repeat' ? 'auto' : fit === 'contain' ? 'contain' : 'cover'
+    const size = fit === 'stretch' ? '100% 100%' : fit === 'repeat' || fit === 'original' ? 'auto' : fit === 'contain' ? 'contain' : 'cover'
     const repeat = fit === 'repeat' ? 'repeat' : 'no-repeat'
     style['--popup-image'] = `url("${popupBackgroundUrl.value}")`
     style['--popup-image-size'] = size
