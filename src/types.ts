@@ -32,7 +32,6 @@ export interface AppSettings {
   systemNotificationEnabled: boolean
   theme: Theme
   accentColor: AccentColor
-  popupBackgroundImage: string
   popupBackgroundFit: PopupBackgroundFit
   popupTextColor: string
   popupTitleSize: number
@@ -79,7 +78,6 @@ export const defaultData = (): AppData => ({
     systemNotificationEnabled: true,
     theme: 'dark',
     accentColor: 'mint',
-    popupBackgroundImage: '',
     popupBackgroundFit: 'cover',
     popupTextColor: '',
     popupTitleSize: 32,

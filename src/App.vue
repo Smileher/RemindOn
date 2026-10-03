@@ -40,6 +40,7 @@ const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
 const notificationError = ref('')
 const autostartError = ref('')
 const appVersion = ref('1.1')
+const popupBackgroundPreview = ref('')
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
@@ -491,7 +492,8 @@ async function saveShutdownMessage(value: string) {
   }
 }
 
-// 选图后由 Rust 复制到配置目录并返回 data URL，配置里只存文件名。
+// 选图后由 Rust 复制成配置目录里的固定文件名，清空则是删掉该文件。
+// 配置里不记录图片信息，弹窗按文件是否存在决定要不要显示背景。
 async function pickPopupImage() {
   actionMessage.value = ''
   try {
@@ -501,10 +503,8 @@ async function pickPopupImage() {
       filters: [{ name: t('settings.imageFilter'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'] }],
     })
     if (typeof path !== 'string') return
-    // Rust 复制到配置目录并回传 data URL；配置里只记文件名，弹窗再按名读取。
-    await invoke<string>('import_popup_image', { source: path })
-    const fileName = path.split(/[\\/]/).pop() || 'popup-background.png'
-    await updateSetting('popupBackgroundImage', fileName)
+    const dataUrl = await invoke<string>('import_popup_image', { source: path })
+    popupBackgroundPreview.value = dataUrl
     actionMessage.value = t('status.imageSaved')
   } catch (error) {
     logError('pick popup image', error)
@@ -516,11 +516,19 @@ async function clearPopupImage() {
   actionMessage.value = ''
   try {
     await invoke('clear_popup_image')
-    await updateSetting('popupBackgroundImage', '')
+    popupBackgroundPreview.value = ''
     actionMessage.value = t('status.imageCleared')
   } catch (error) {
     logError('clear popup image', error)
     actionMessage.value = t('status.imageFailed')
+  }
+}
+
+async function loadPopupImagePreview() {
+  try {
+    popupBackgroundPreview.value = (await invoke<string | null>('read_popup_image')) ?? ''
+  } catch {
+    popupBackgroundPreview.value = ''
   }
 }
 
@@ -633,6 +641,7 @@ onMounted(async () => {
   if (isPopup) return
   window.addEventListener('keydown', handleMainWindowEscape)
   void loadUpdateStatus?.()
+  void loadPopupImagePreview()
   try {
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
@@ -782,6 +791,7 @@ onUnmounted(() => {
         :notification-error="notificationError"
         :action-message="actionMessage"
         :can-reset="canResetSettings"
+        :background-preview="popupBackgroundPreview"
         @update:setting="applySetting"
         @import-data="importData"
         @export-data="exportData"
