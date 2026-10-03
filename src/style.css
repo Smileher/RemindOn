@@ -177,7 +177,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .color-control input[type="color"] { width: 42px; height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 2px; background: var(--surface-hover); cursor: pointer; }
 
 .setting-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 58px; padding: 10px 12px; }
-.setting-card > div:first-child, .data-actions > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.setting-card > div:first-child, .data-actions-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .setting-card strong, .data-actions strong { color: var(--text); font-size: var(--font-sm); }
 .setting-card span, .data-actions span { color: var(--muted); font-size: var(--font-xs); line-height: 1.4; }
 .setting-toggle > input { appearance: none; position: relative; width: 34px; height: 19px; flex: 0 0 34px; border: 0; border-radius: 99px; background: var(--border); transition: background .15s ease; }
@@ -192,10 +192,12 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .swatch-blue { background: #62b2ff; }
 .swatch-violet { background: #bc98ff; }
 .swatch-amber { background: #f1be6d; }
-.data-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 11px 12px; }
-.data-actions .action-row { flex: 0 0 auto; }
+.data-actions { display: grid; gap: 8px; margin-top: 10px; padding: 11px 12px; }
+.data-actions-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.data-actions-row .action-row { flex: 0 0 auto; }
 .status-message { color: var(--accent-strong); font-size: var(--font-xs); }
-.data-actions .status-message { max-width: 180px; }
+.button:disabled { cursor: not-allowed; opacity: .5; }
+.button:disabled:hover { border-color: var(--border); background: var(--surface); }
 .page-message { display: block; margin-top: 8px; }
 .setting-error { color: var(--danger) !important; font-size: var(--font-xs); line-height: 1.4; overflow-wrap: anywhere; }
 .number-field { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--font-xs); }
