@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Download, RotateCcw, Upload } from '@lucide/vue'
+import { computed } from 'vue'
+import { Download, Image, RotateCcw, Upload } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { AccentColor, AppSettings, Language, Theme } from '../types'
+import type { AccentColor, AppSettings, Language, PopupBackgroundFit, Theme } from '../types'
 
 const props = defineProps<{
   language: Language
@@ -19,7 +20,16 @@ const emit = defineEmits<{
   importData: []
   exportData: []
   resetSettings: []
+  pickPopupImage: []
+  clearPopupImage: []
 }>()
+
+const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() => [
+  { value: 'cover', label: t('settings.fitCover') },
+  { value: 'contain', label: t('settings.fitContain') },
+  { value: 'stretch', label: t('settings.fitStretch') },
+  { value: 'repeat', label: t('settings.fitRepeat') },
+])
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -78,6 +88,38 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
           ></button>
         </div>
       </div>
+      <div class="setting-card stacked-setting">
+        <div><strong>{{ t('settings.popupBackground') }}</strong><span>{{ t('settings.popupBackgroundHint') }}</span></div>
+        <div class="background-picker">
+          <div class="action-row">
+            <button class="button" type="button" @click="emit('pickPopupImage')"><Image :size="14" />{{ t('settings.popupChooseImage') }}</button>
+            <button v-if="settings.popupBackgroundImage" class="button" type="button" @click="emit('clearPopupImage')"><RotateCcw :size="14" />{{ t('settings.popupClearImage') }}</button>
+          </div>
+          <small v-if="settings.popupBackgroundImage" class="setting-note">{{ settings.popupBackgroundImage }}</small>
+        </div>
+      </div>
+      <div v-if="settings.popupBackgroundImage" class="setting-card stacked-setting">
+        <div><strong>{{ t('settings.popupBackgroundFit') }}</strong><span>{{ t('settings.popupBackgroundFitHint') }}</span></div>
+        <div class="segmented fit-segments">
+          <button v-for="option in fitOptions" :key="option.value" :class="{ selected: settings.popupBackgroundFit === option.value }" type="button" @click="emit('update:setting', 'popupBackgroundFit', option.value)">{{ option.label }}</button>
+        </div>
+        <label class="slider-row">
+          <span>{{ t('settings.popupOverlay') }}</span>
+          <input :value="settings.popupOverlayOpacity" type="range" min="0" max="90" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
+          <em>{{ settings.popupOverlayOpacity }}%</em>
+        </label>
+      </div>
+      <div class="setting-card">
+        <div><strong>{{ t('settings.popupTextColor') }}</strong><span>{{ t('settings.popupTextColorHint') }}</span></div>
+        <span class="color-control">
+          <input type="color" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
+          <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
+        </span>
+      </div>
+      <label class="setting-card">
+        <div><strong>{{ t('settings.popupTitleSize') }}</strong><span>{{ t('settings.popupTitleSizeHint') }}</span></div>
+        <label class="number-field"><input :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
+      </label>
     </div>
 
     <div class="settings-group">

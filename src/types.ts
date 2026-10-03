@@ -6,6 +6,7 @@ export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest' | 'power'
+export type PopupBackgroundFit = 'cover' | 'contain' | 'repeat' | 'stretch'
 
 export interface Reminder {
   id: string
@@ -31,6 +32,11 @@ export interface AppSettings {
   systemNotificationEnabled: boolean
   theme: Theme
   accentColor: AccentColor
+  popupBackgroundImage: string
+  popupBackgroundFit: PopupBackgroundFit
+  popupTextColor: string
+  popupTitleSize: number
+  popupOverlayOpacity: number
   shutdownReminderEnabled: boolean
   powerAction: PowerAction
   shutdownReminderTime: string
@@ -73,6 +79,11 @@ export const defaultData = (): AppData => ({
     systemNotificationEnabled: true,
     theme: 'dark',
     accentColor: 'mint',
+    popupBackgroundImage: '',
+    popupBackgroundFit: 'cover',
+    popupTextColor: '',
+    popupTitleSize: 32,
+    popupOverlayOpacity: 55,
     shutdownReminderEnabled: false,
     powerAction: 'shutdown',
     shutdownReminderTime: '23:30',

@@ -76,6 +76,16 @@ pub struct AppSettings {
     #[serde(default)]
     pub accent_color: AccentColor,
     #[serde(default)]
+    pub popup_background_image: String,
+    #[serde(default)]
+    pub popup_background_fit: PopupBackgroundFit,
+    #[serde(default)]
+    pub popup_text_color: String,
+    #[serde(default = "default_popup_title_size")]
+    pub popup_title_size: u32,
+    #[serde(default = "default_popup_overlay_opacity")]
+    pub popup_overlay_opacity: u32,
+    #[serde(default)]
     pub shutdown_reminder_enabled: bool,
     #[serde(default)]
     pub power_action: PowerAction,
@@ -91,6 +101,29 @@ pub enum PowerAction {
     Shutdown,
     Lock,
     Restart,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum PopupBackgroundFit {
+    Cover,
+    Contain,
+    Repeat,
+    Stretch,
+}
+
+impl Default for PopupBackgroundFit {
+    fn default() -> Self {
+        Self::Cover
+    }
+}
+
+fn default_popup_title_size() -> u32 {
+    32
+}
+
+fn default_popup_overlay_opacity() -> u32 {
+    55
 }
 
 impl Default for PowerAction {
@@ -156,6 +189,11 @@ impl Default for AppSettings {
             system_notification_enabled: true,
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
+            popup_background_image: String::new(),
+            popup_background_fit: PopupBackgroundFit::Cover,
+            popup_text_color: String::new(),
+            popup_title_size: default_popup_title_size(),
+            popup_overlay_opacity: default_popup_overlay_opacity(),
             shutdown_reminder_enabled: false,
             power_action: PowerAction::Shutdown,
             shutdown_reminder_time: default_shutdown_time(),
@@ -1667,6 +1705,119 @@ fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
     fs::write(path, content).map_err(|error| format!("Failed to write the export file: {error}"))
 }
 
+/// Copy a user-picked image into the configuration folder and return it as a data URL.
+/// The file lives next to `remindon.json`, so development and installed builds share one copy.
+#[tauri::command]
+fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> {
+    let origin = PathBuf::from(&source);
+    if !origin.is_file() {
+        return Err("The selected image does not exist".to_string());
+    }
+    let extension = origin
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "avif"
+            )
+        })
+        .ok_or_else(|| "Unsupported image format".to_string())?;
+    let mime = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        _ => "image/png",
+    };
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
+    let target = directory.join(format!("popup-background.{extension}"));
+    fs::copy(&origin, &target).map_err(|error| format!("Failed to copy the image: {error}"))?;
+    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        output.push(ALPHABET[(triple >> 18) as usize & 0x3f] as char);
+        output.push(ALPHABET[(triple >> 12) as usize & 0x3f] as char);
+        output.push(if chunk.len() > 1 {
+            ALPHABET[(triple >> 6) as usize & 0x3f] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            ALPHABET[triple as usize & 0x3f] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
+/// Read the stored background image back as a data URL after the settings change.
+#[tauri::command]
+fn read_popup_image(name: String, app: AppHandle) -> Result<String, String> {
+    if !name.starts_with("popup-background.") || name.contains('/') || name.contains('\\') {
+        return Err("Invalid background image name".to_string());
+    }
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    let target = directory.join(&name);
+    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    let extension = Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        _ => "image/png",
+    };
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
+#[tauri::command]
+fn clear_popup_image(app: AppHandle) -> Result<(), String> {
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    if !directory.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Failed to read the app configuration directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Failed to read the directory entry: {error}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("popup-background.") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
 fn tray_menu(
     app: &AppHandle,
     language: Language,
@@ -1886,6 +2037,9 @@ pub fn run() {
             test_reminder,
             import_data,
             export_data,
+            import_popup_image,
+            read_popup_image,
+            clear_popup_image,
             take_pending_navigation,
             open_power_settings,
             updater::get_update_mode,
