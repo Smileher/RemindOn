@@ -4,6 +4,7 @@ import { getVersion, setTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, confirm, open, save } from '@tauri-apps/plugin-dialog'
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { LockKeyhole, Power, RotateCw } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -382,6 +383,10 @@ async function applySetting(key: keyof AppData['settings'], value: AppData['sett
     await updateAutostart(Boolean(value))
     return
   }
+  if (key === 'systemNotificationEnabled' && value === true) {
+    // macOS 上被用户拒绝过的通知会静默失败，开启前先确认权限。
+    if (!await ensureNotificationPermission()) return
+  }
   if (key === 'language') {
     await updateLanguage(value as Language)
     return
@@ -397,6 +402,18 @@ async function applySetting(key: keyof AppData['settings'], value: AppData['sett
     return
   }
   await updateSetting(key, value as never)
+}
+
+async function ensureNotificationPermission() {
+  try {
+    if (await isPermissionGranted()) return true
+    if (await requestPermission() === 'granted') return true
+  } catch {
+    // The standalone Vite preview has no permission bridge; do not block the toggle there.
+    return true
+  }
+  notificationError.value = t('status.notificationDenied')
+  return false
 }
 
 async function updateAutostart(value: boolean) {
