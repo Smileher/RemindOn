@@ -491,6 +491,39 @@ async function saveShutdownMessage(value: string) {
   }
 }
 
+// 选图后由 Rust 复制到配置目录并返回 data URL，配置里只存文件名。
+async function pickPopupImage() {
+  actionMessage.value = ''
+  try {
+    const path = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: t('settings.imageFilter'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'] }],
+    })
+    if (typeof path !== 'string') return
+    // Rust 复制到配置目录并回传 data URL；配置里只记文件名，弹窗再按名读取。
+    await invoke<string>('import_popup_image', { source: path })
+    const fileName = path.split(/[\\/]/).pop() || 'popup-background.png'
+    await updateSetting('popupBackgroundImage', fileName)
+    actionMessage.value = t('status.imageSaved')
+  } catch (error) {
+    logError('pick popup image', error)
+    actionMessage.value = t('status.imageFailed')
+  }
+}
+
+async function clearPopupImage() {
+  actionMessage.value = ''
+  try {
+    await invoke('clear_popup_image')
+    await updateSetting('popupBackgroundImage', '')
+    actionMessage.value = t('status.imageCleared')
+  } catch (error) {
+    logError('clear popup image', error)
+    actionMessage.value = t('status.imageFailed')
+  }
+}
+
 async function importData() {
   actionMessage.value = ''
   try {
@@ -753,6 +786,8 @@ onUnmounted(() => {
         @import-data="importData"
         @export-data="exportData"
         @reset-settings="resetSettings"
+        @pick-popup-image="pickPopupImage"
+        @clear-popup-image="clearPopupImage"
       />
 
       <AboutView

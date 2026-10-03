@@ -54,6 +54,43 @@ const popupClass = computed(() => [
   { 'popup-fullscreen': settings.value.popupFullscreen, 'popup-enter': popupAnimating.value },
 ])
 
+// 自定义外观通过内联 CSS 变量下发，样式表只负责消费这些变量。
+// 背景图由 Rust 读取后转成 data URL，这样不依赖资源协议与打包路径。
+const popupBackgroundUrl = ref('')
+
+async function refreshPopupBackground() {
+  const name = settings.value.popupBackgroundImage
+  if (!name) {
+    popupBackgroundUrl.value = ''
+    return
+  }
+  try {
+    const encoded = await invoke<string>('read_popup_image', { name })
+    const extension = name.split('.').pop() || 'png'
+    popupBackgroundUrl.value = `data:image/${extension};base64,${encoded}`
+  } catch (error) {
+    logError('read popup image', error)
+    popupBackgroundUrl.value = ''
+  }
+}
+
+const popupStyleVars = computed(() => {
+  const current = settings.value
+  const style: Record<string, string> = {}
+  if (current.popupBackgroundImage && popupBackgroundUrl.value) {
+    const fit = current.popupBackgroundFit
+    const size = fit === 'stretch' ? '100% 100%' : fit === 'repeat' ? 'auto' : fit === 'contain' ? 'contain' : 'cover'
+    const repeat = fit === 'repeat' ? 'repeat' : 'no-repeat'
+    style['--popup-image'] = `url("${popupBackgroundUrl.value}")`
+    style['--popup-image-size'] = size
+    style['--popup-image-repeat'] = repeat
+    style['--popup-overlay'] = String(current.popupOverlayOpacity / 100)
+  }
+  if (current.popupTextColor) style['--popup-text'] = current.popupTextColor
+  if (current.popupTitleSize) style['--popup-title-size'] = `${current.popupTitleSize}px`
+  return style
+})
+
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(settings.value.language, key, params)
 }
@@ -307,6 +344,7 @@ onMounted(async () => {
   } catch {
     // The standalone Vite preview has no Tauri command bridge.
   }
+  await refreshPopupBackground()
   try {
     unlistenReset = await currentWindow.listen('reminders-reset', () => void resetReminders())
   } catch {
@@ -325,6 +363,7 @@ onMounted(async () => {
   try {
     unlistenSettings = await currentWindow.listen<AppSettings>('settings-updated', async (event) => {
       settings.value = event.payload
+      await refreshPopupBackground()
       try {
         await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
       } catch {
@@ -368,7 +407,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main :key="popupAnimationKey" :class="['popup-shell', ...popupClass]">
+  <main :key="popupAnimationKey" :class="['popup-shell', ...popupClass]" :style="popupStyleVars">
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
       <kbd class="popup-escape-hint">ESC</kbd>
