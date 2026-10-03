@@ -19,6 +19,7 @@ const emit = defineEmits<{
   'update:powerAction': [value: PowerAction]
   'update:time': [value: string]
   'update:message': [value: string]
+  messageCommitted: [value: string]
 }>()
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
@@ -77,7 +78,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       </label>
       <label class="setting-card stacked-setting">
         <div><strong>{{ t('power.message') }}</strong><span>{{ t('power.messageHint') }}</span></div>
-        <input :value="settings.shutdownReminderMessage" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value)" />
+        <input :value="settings.shutdownReminderMessage" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value); emit('messageCommitted', ($event.target as HTMLInputElement).value)" />
       </label>
     </div>
     <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>

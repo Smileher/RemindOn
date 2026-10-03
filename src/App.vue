@@ -124,12 +124,20 @@ const powerStatusText = computed(() =>
     : t('common.paused'),
 )
 
-// 重置只恢复参数默认值，提醒列表必须保留；全部等于默认时才隐藏按钮，避免误触。
+// 重置只恢复参数默认值，提醒列表必须保留。
+// 默认文案随语言变化，所以比较时要按当前语言重新生成一份默认值，否则切到英文后永远判定为「已修改」。
 const canResetSettings = computed(() => {
   const defaults = defaultData().settings
   const current = data.value.settings
-  return (Object.keys(defaults) as Array<keyof typeof defaults>).some(
-    (key) => JSON.stringify(current[key]) !== JSON.stringify(defaults[key]),
+  const language = current.language
+  const localized = {
+    ...defaults,
+    language,
+    restMessage: translate(language, 'rest.defaultMessage'),
+    shutdownReminderMessage: translate(language, `power.default${current.powerAction === 'lock' ? 'Lock' : current.powerAction === 'restart' ? 'Restart' : 'Shutdown'}Message` as MessageKey),
+  }
+  return (Object.keys(localized) as Array<keyof typeof localized>).some(
+    (key) => JSON.stringify(current[key]) !== JSON.stringify(localized[key]),
   )
 })
 
@@ -763,7 +771,7 @@ onUnmounted(() => {
         @update:enabled="updateSetting('restEnabled', $event)"
         @update:interval="updateRestInterval"
         @update:message="restMessageDraft = $event"
-        @message-committed="saveRestMessage"
+        @message-committed="saveRestMessage($event)"
       />
 
       <PowerView
@@ -779,7 +787,7 @@ onUnmounted(() => {
         @update:power-action="updatePowerAction"
         @update:time="updateShutdownTimeValue"
         @update:message="shutdownMessageDraft = $event"
-        @message-committed="saveShutdownMessage"
+        @message-committed="saveShutdownMessage($event)"
       />
 
       <SettingsView
