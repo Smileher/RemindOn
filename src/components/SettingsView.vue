@@ -30,9 +30,6 @@ const emit = defineEmits<{
 
 const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() => [
   { value: 'cover', label: t('settings.fitCover') },
-  { value: 'contain', label: t('settings.fitContain') },
-  { value: 'stretch', label: t('settings.fitStretch') },
-  { value: 'repeat', label: t('settings.fitRepeat') },
   { value: 'original', label: t('settings.fitOriginal') },
 ])
 
