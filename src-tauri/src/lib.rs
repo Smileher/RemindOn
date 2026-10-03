@@ -964,6 +964,41 @@ fn popup_window_is_transparent(label: String) -> bool {
     is_transparent_popup(&label)
 }
 
+/// 弹窗上的「全屏/窗口」切换按钮：翻转设置并保存。
+/// 有正在显示的提醒时立即换窗——用新 session 重新分发，旧窗口由
+/// activate_reminder_session 统一关闭隐藏，避免两个模式的窗口同时挂着。
+#[tauri::command]
+fn toggle_popup_fullscreen(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let _operation = state
+        .0
+        .window_operations
+        .lock()
+        .expect("window operations lock poisoned");
+    let mut data = state.0.data.lock().expect("settings lock poisoned");
+    data.settings.popup_fullscreen = !data.settings.popup_fullscreen;
+    let settings = data.settings.clone();
+    write_json(&state.0.data_path, &data)?;
+    drop(data);
+    sync_reminder_settings(&app, &settings);
+    let active = state
+        .0
+        .active_reminder
+        .lock()
+        .expect("reminder session lock poisoned")
+        .clone();
+    if let Some(mut event) = active {
+        event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
+        activate_reminder_session(&app, state.inner(), event.clone());
+        let labels = prepare_reminder_windows(&app, state.inner(), &settings)?;
+        for label in labels {
+            if app.get_webview_window(&label).is_some() {
+                let _ = app.emit_to(&label, "reminder-triggered", event.clone());
+            }
+        }
+    }
+    Ok(settings.popup_fullscreen)
+}
+
 fn create_reminder_window(
     app: &AppHandle,
     label: String,
@@ -2168,6 +2203,7 @@ pub fn run() {
             clear_popup_image,
             take_pending_navigation,
             popup_window_is_transparent,
+            toggle_popup_fullscreen,
             open_power_settings,
             updater::get_update_mode,
             updater::get_update_status,
