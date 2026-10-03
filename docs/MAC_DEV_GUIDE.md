@@ -9,13 +9,17 @@
 | macOS | 27.0 | Apple Silicon（arm64） |
 | Xcode Command Line Tools | clang 21.0.0 | 编译 Rust 原生依赖必需，已就绪 |
 | Homebrew | 6.0.17 | `/opt/homebrew/bin/brew` |
-| Node.js | 22.22.2 | 由 WorkBuddy 托管；README 建议 24 LTS，实测 22 也能正常构建 |
+| Node.js | 24.19.0 | 官方版，装在 `/opt/homebrew/lib/nodejs/node-24`，与 CI 和 README 要求一致 |
 | pnpm | 11.28.3 | 前端包管理器，项目锁文件要求 pnpm 11 |
 | Rust | 1.99.0 stable | `~/.cargo/bin`，已加入 PATH |
 
-> **关于 Node 版本**：README 写的是 24 LTS，CI 也用 24。本机实测 22.22.2 下前端构建、46 个测试、Rust 编译全部通过，说明项目对 Node 版本不敏感。若想和 CI 完全一致，装个 24 也不冲突。
+> **Node 版本说明**：README 和 CI 都要求 24 LTS，本机已装 24.19.0 完全对齐。Node 22 也能跑（实测 46 个测试全过），但既然两台机器都是 24 就没必要降级。
 >
-> 项目没有 `.nvmrc` 或 `volta` 配置，所以换设备时 Node 版本不会被自动约束，记得两台机器尽量对齐。
+> Node 24 相比 22 的实用改进：`crypto.randomUUIDv7()`（时间有序 ID）、`req.signal`（客户端断开时中止请求）、测试运行器支持随机顺序（能发现隐藏的测试依赖）。这个项目目前用不到，但升级没有代价。
+>
+> 想要 26 也行（`Temporal` 日期 API 默认开启、V8 14.6），但 26 目前是 Current 阶段，要到 2026 年 10 月底才进 LTS。个人工具项目没必要追 Current，等它进 LTS 再升更稳。
+>
+> 项目没有 `.nvmrc` 或 `volta` 配置，所以 Node 版本不会被自动约束——换设备时记得手动对齐。
 
 > Rust 装在 `~/.cargo/bin`，这是**用户级**目录，不在 Homebrew 也不在系统 PATH 里。你自己新开终端时如果提示 `cargo: command not found`，执行下面这行补上：
 >
@@ -23,7 +27,7 @@
 > echo 'source "$HOME/.cargo/env"' >> ~/.zshrc
 > ```
 >
-> 这行和 Homebrew 的 PATH 已经帮你写进 `~/.zshrc` 了，正常新开终端就能直接用 `cargo` 和 `gh`。
+> 这行和 Homebrew 的 PATH 已经帮你写进 `~/.zshrc` 了，正常新开终端就能直接用 `cargo`、`gh`、`node`、`pnpm`。
 
 ## 二、打开项目和运行
 
@@ -35,11 +39,24 @@
    - Vue (Official)、rust-analyzer、CodeLLDB、Tauri
 3. 新建终端（`Ctrl+` 反引号，或 `终端` → `新建终端`），确认三个命令都在：
    ```zsh
-   node --version
-   pnpm --version
-   cargo --version
+   node --version    # v24.19.0
+   pnpm --version    # 11.28.3
+   cargo --version   # 1.99.0
    ```
 4. `F5` 启动，顶部下拉框选 **RemindOn: 开发运行（热更新）**
+
+> **报 `zsh: command not found: pnpm` 怎么办？**
+>
+> 这是 PATH 没配好。node 和 pnpm 装在 `/opt/homebrew/lib/nodejs/node-24/bin`，`/opt/homebrew/bin` 里有软链接指向它们。检查并修复：
+>
+> ```zsh
+> grep -q 'homebrew/bin' ~/.zshrc || echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+>
+> 如果 VS Code 之前就开着，PATH 不会自动刷新——**完全退出 VS Code 再重开**（`Cmd + Q`，不是关窗口）。仍然不行就重启终端，或在 VS Code 里执行 `命令面板 → 开发人员: 重新加载窗口`。
+>
+> 验证：`ls -la /opt/homebrew/bin/pnpm` 应该显示软链接存在。
 
 ### 用命令行
 
@@ -73,9 +90,29 @@ cargo test --manifest-path src-tauri/Cargo.toml
 # 桌面应用开发运行（热更新）
 pnpm tauri:dev
 
-# 打包：macOS 上产出 .app 和 DMG
-pnpm tauri:build --bundles app,dmg
+# 只构建 .app（最快，约 2 分钟）
+pnpm tauri:build --bundles app --no-sign --ci
+
+# 构建 .app 和 DMG（DMG 需要 Finder 自动化权限，见下方说明）
+pnpm tauri:build --bundles app,dmg --no-sign --ci
 ```
+
+## 三、Mac 上能构建哪些包（实测结论）
+
+| 包类型 | 能否在 Mac 构建 | 产物位置 | 说明 |
+| --- | --- | --- | --- |
+| `.app` 应用包 | **可以** | `target/release/bundle/macos/RemindOn.app` | 直接双击即可运行 |
+| `.dmg` 磁盘镜像 | 可以，需授权 | `target/release/bundle/dmg/RemindOn_<版本>_aarch64.dmg` | 首次会弹窗要 Finder 权限 |
+| 免安装裸二进制 | **可以** | `target/release/remindon` | 命令行直接跑 |
+| NSIS 安装包（`nsis`） | **不行** | 无 | NSIS 只能在 Windows 上生成，Mac 上会静默跳过、不报错但没有文件 |
+| MSIX 商店包 | **不行** | 无 | 依赖 `makeappx.exe`、MSVC、Windows 证书存储 |
+| 便携版 | 不适用 | 无 | 便携版是 Windows 概念（免安装 zip） |
+
+**关键提醒**：`--bundles nsis` 在 Mac 上跑不会报错，但也不会产出任何文件——日志里只有 `Built application at: .../release/remindon`，没有 `Bundling ... .exe`。别以为成功了。
+
+**DMG 首次打包要授权**：`create-dmg` 脚本需要调用 Finder 排版图标窗口。首次执行会弹出权限请求，选择允许。若失败报 `“Finder”遇到一个错误：发生权限违例 (-10004)`，到 `系统设置 → 隐私与安全性 → 自动化` 里勾选允许你的终端或 VS Code 控制 Finder，然后重试。
+
+**分发给别人时的限制**：未签名的 `.app` 在别人 Mac 上会被 Gatekeeper 拦住，需要 Apple 开发者证书签名和公证。自己本机开发测试完全不受影响。
 
 `pnpm tauri:build` 需要先配置更新签名环境变量（`TAURI_SIGNING_PRIVATE_KEY` 等），**本地想快速看 .app 出来的话可以加 `--no-bundle` 跳过打包**，或者直接跑：
 
