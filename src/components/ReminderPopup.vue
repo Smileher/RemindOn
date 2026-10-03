@@ -445,6 +445,7 @@ onUnmounted(() => {
         <button
           class="popup-mode-button"
           type="button"
+          tabindex="-1"
           :title="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
           :aria-label="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
           @click="toggleFullscreenMode"
