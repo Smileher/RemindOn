@@ -360,6 +360,8 @@ onMounted(async () => {
   await refreshPopupBackground()
   try {
     seeThrough.value = await invoke<boolean>('popup_window_is_transparent', { label: currentWindow.label })
+    // body 默认刷了一层不透明底色，窗口透明时必须去掉，否则透明被挡死。
+    if (seeThrough.value) document.body.classList.add('popup-transparent-body')
   } catch {
     seeThrough.value = false
   }
@@ -412,6 +414,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   notificationSequence += 1
+  document.body.classList.remove('popup-transparent-body')
   document.removeEventListener('click', closeSnoozeMenuOnOutsideClick)
   window.removeEventListener('keydown', handleEscape)
   clearPowerTimer()
