@@ -17,7 +17,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
+import type { AccentColor, AppData, AppSettings, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -51,6 +51,7 @@ let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let unlistenNotificationFailure: (() => void) | undefined
+let unlistenSettingsSync: (() => void) | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
@@ -734,6 +735,10 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
+    // 弹窗上的切换按钮改设置后由后端广播，这里同步本地状态，避免下次保存用旧值覆盖。
+    unlistenSettingsSync = await getCurrentWindow().listen<AppSettings>('settings-updated', (event) => {
+      data.value.settings = event.payload
+    })
     await refreshTimers()
     clockTimer = window.setInterval(() => {
       now.value = Date.now()
@@ -751,6 +756,7 @@ onUnmounted(() => {
   unlistenNavigation?.()
   unlistenRestTimer?.()
   unlistenNotificationFailure?.()
+  unlistenSettingsSync?.()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
   if (actionMessageTimer) window.clearTimeout(actionMessageTimer)

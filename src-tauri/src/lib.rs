@@ -1085,6 +1085,8 @@ fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
         let _ = window.set_always_on_top(settings.popup_always_on_top);
         let _ = app.emit_to(window.label(), "settings-updated", settings);
     }
+    // 弹窗上的切换按钮也会改设置；主窗口不同步的话，下次在主窗口保存会用旧值覆盖回去。
+    let _ = app.emit_to("main", "settings-updated", settings);
 }
 
 fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Option<AppSettings> {
