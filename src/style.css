@@ -275,11 +275,19 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 
 .popup-shell { display: grid; grid-template-rows: auto 1fr auto; width: 100%; height: 100vh; overflow: hidden; color: var(--popup-text, var(--text)); background: var(--page-bg); }
 .popup-shell[style*="--popup-image"] { position: relative; background-image: linear-gradient(rgba(0, 0, 0, var(--popup-overlay, .55)), rgba(0, 0, 0, var(--popup-overlay, .55))), var(--popup-image); background-position: center; background-repeat: var(--popup-image-repeat, no-repeat); background-size: var(--popup-image-size, cover); }
+/* 有背景图时给文字加描边与阴影，避免浅色图片让文字读不清。 */
+.popup-shell[style*="--popup-image"] .popup-content h1,
+.popup-shell[style*="--popup-image"] .popup-identity strong,
+.popup-shell[style*="--popup-image"] .popup-identity span { color: var(--popup-text, #fff); text-shadow: 0 1px 2px rgba(0, 0, 0, .85), 0 0 14px rgba(0, 0, 0, .55); }
+.popup-shell[style*="--popup-image"] .popup-content .rest-elapsed,
+.popup-shell[style*="--popup-image"] .popup-content p,
+.popup-shell[style*="--popup-image"] .power-countdown span,
+.popup-shell[style*="--popup-image"] .popup-error { color: var(--popup-text, #fff); text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
 .popup-shell[style*="--popup-image"] .popup-header { background: transparent; }
 .popup-shell[style*="--popup-image"] .popup-content { background: transparent; }
 .popup-shell[style*="--popup-image"] .popup-actions { background: transparent; }
-.popup-shell[style*="--popup-image"] .button { border-color: rgba(255, 255, 255, .32); background: rgba(0, 0, 0, .42); color: #fff; }
-.popup-content h1 { font-size: var(--popup-title-size, 32px); }
+.popup-shell[style*="--popup-image"] .button { border-color: rgba(255, 255, 255, .32); background: rgba(0, 0, 0, .42); color: #fff; text-shadow: none; }
+.popup-content h1 { font-size: var(--popup-title-size, var(--font-title)); }
 
 .popup-shell:not(.popup-enter) .popup-header, .popup-shell:not(.popup-enter) .popup-content, .popup-shell:not(.popup-enter) .popup-actions { opacity: 0; transform: translateY(10px); }
 .popup-shell.popup-enter .popup-header { animation: popup-enter .24s ease-out both; }
@@ -293,7 +301,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-identity span { margin-top: 2px; color: var(--muted); font-size: var(--font-xs); }
 .popup-escape-hint { min-width: 36px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 4px 7px 3px; color: var(--muted); background: var(--page-bg); font: 700 10px/1.2 Inter, "Segoe UI", sans-serif; text-align: center; box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
 .popup-content { align-self: center; padding: 21px 27px; }
-.popup-content h1 { max-width: 440px; font-size: var(--font-title); line-height: 1.35; overflow-wrap: anywhere; }
+.popup-content h1 { max-width: 440px; font-size: var(--popup-title-size, var(--font-title)); line-height: 1.35; overflow-wrap: anywhere; }
 .rest-elapsed { margin: 0 0 15px; color: var(--muted); font-size: var(--font-title); line-height: 1; }
 .power-countdown { display: flex; align-items: baseline; gap: 7px; margin-top: 11px; color: var(--muted); }
 .power-countdown strong { color: var(--accent-strong); font-size: var(--font-display); line-height: 1; }
@@ -303,7 +311,7 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
 .popup-actions.split-actions { justify-content: space-between; }
 .popup-fullscreen .popup-content { width: min(760px, calc(100% - 64px)); justify-self: center; padding: 36px 0; }
-.popup-fullscreen .popup-content h1 { max-width: 760px; font-size: 32px; }
+.popup-fullscreen .popup-content h1 { max-width: 760px; }
 .popup-fullscreen .rest-elapsed { font-size: 28px; }
 .popup-fullscreen .power-countdown strong { font-size: 42px; }
 .popup-fullscreen .popup-actions { padding: 16px 28px 42px; }
