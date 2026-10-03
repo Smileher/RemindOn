@@ -178,7 +178,14 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .position-grid button:hover { border-color: var(--accent); color: var(--text); }
 .position-grid button.selected { border-color: var(--accent-strong); color: var(--accent-strong); background: var(--accent-soft); }
 .slider-row { display: flex; align-items: center; gap: 9px; margin-top: 9px; color: var(--muted); font-size: var(--font-xs); }
-.slider-row input[type="range"] { flex: 1; accent-color: var(--accent-strong); }
+/* 自定义轨道与手柄：原生滑块的轨道两端内缩，0% 与 100% 时手柄碰不到边。
+   轨道撑满输入宽度后，手柄在两端正好贴边；填充色由 --fill 变量驱动。 */
+.slider-row input[type="range"] { -webkit-appearance: none; appearance: none; flex: 1; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+.slider-row input[type="range"]::-webkit-slider-runnable-track { height: 6px; border: 0; border-radius: 99px; background: linear-gradient(to right, var(--accent-strong) 0, var(--accent-strong) var(--fill, 0%), var(--border) var(--fill, 0%), var(--border) 100%); }
+.slider-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; margin-top: -4.5px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
+.slider-row input[type="range"]::-moz-range-track { height: 6px; border-radius: 99px; background: var(--border); }
+.slider-row input[type="range"]::-moz-range-progress { height: 6px; border-radius: 99px; background: var(--accent-strong); }
+.slider-row input[type="range"]::-moz-range-thumb { width: 15px; height: 15px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
 .slider-row em { min-width: 38px; color: var(--text); font-style: normal; text-align: right; }
 .color-control { display: flex; align-items: center; gap: 8px; }
 .color-control input[type="color"] { width: 42px; height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 2px; background: var(--surface-hover); cursor: pointer; }

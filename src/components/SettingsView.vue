@@ -138,7 +138,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </div>
         <label class="slider-row">
           <span>{{ t('settings.popupOverlay') }}</span>
-          <input :value="settings.popupOverlayOpacity" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
+          <input :value="settings.popupOverlayOpacity" :style="{ '--fill': `${settings.popupOverlayOpacity}%` }" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
           <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
       </div>
