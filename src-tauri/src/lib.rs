@@ -1996,31 +1996,45 @@ fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
 }
 
 /// macOS 的应用菜单默认是英文，这里按当前语言替换成中文。
+/// 菜单栏只接受子菜单，平铺的菜单项在 macOS 上渲染行为未定义（时有时无），
+/// 所以这里用标准的「应用子菜单 + 窗口子菜单」结构。
 /// Windows 不受影响，Linux 保持发行版默认行为。
 #[cfg(target_os = "macos")]
 fn apply_application_menu(app: &tauri::AppHandle, language: Language) {
-    use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
     let chinese = language == Language::ZhCn;
     let label = |zh: &str, en: &str| if chinese { zh.to_string() } else { en.to_string() };
     let result = (|| -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-        let app_name = label("RemindOn", "RemindOn");
-        let about = PredefinedMenuItem::about(app, Some(&app_name), None)?;
-        let hide = MenuItemBuilder::with_id("hide", label("隐藏", "Hide")).build(app)?;
-        let hide_others = MenuItemBuilder::with_id("hide-others", label("隐藏其他", "Hide Others")).build(app)?;
+        let about = PredefinedMenuItem::about(app, Some("RemindOn"), None)?;
+        let services = PredefinedMenuItem::services(app, Some(&label("服务", "Services")))?;
+        let hide = MenuItemBuilder::with_id("hide", label("隐藏 RemindOn", "Hide RemindOn"))
+            .accelerator("Cmd+H")
+            .build(app)?;
+        let hide_others = MenuItemBuilder::with_id("hide-others", label("隐藏其他", "Hide Others"))
+            .accelerator("Cmd+Alt+H")
+            .build(app)?;
         let show_all = MenuItemBuilder::with_id("show-all", label("全部显示", "Show All")).build(app)?;
+        let quit = MenuItemBuilder::with_id("quit", label("退出 RemindOn", "Quit RemindOn"))
+            .accelerator("Cmd+Q")
+            .build(app)?;
+        let app_submenu = SubmenuBuilder::new(app, "RemindOn")
+            .item(&about)
+            .separator()
+            .item(&services)
+            .separator()
+            .item(&hide)
+            .item(&hide_others)
+            .item(&show_all)
+            .separator()
+            .item(&quit)
+            .build()?;
         let minimize = PredefinedMenuItem::minimize(app, Some(&label("最小化", "Minimize")))?;
         let close = PredefinedMenuItem::close_window(app, Some(&label("关闭窗口", "Close Window")))?;
-        let services = PredefinedMenuItem::services(app, Some(&label("服务", "Services")))?;
-        let quit = MenuItemBuilder::with_id("quit", label("退出", "Quit")).build(app)?;
-        MenuBuilder::new(app)
-            .items(&[&about])
-            .separator()
-            .items(&[&hide, &hide_others, &show_all, &minimize, &close])
-            .separator()
-            .items(&[&services])
-            .separator()
-            .items(&[&quit])
-            .build()
+        let window_submenu = SubmenuBuilder::new(app, label("窗口", "Window"))
+            .item(&minimize)
+            .item(&close)
+            .build()?;
+        MenuBuilder::new(app).items(&[&app_submenu, &window_submenu]).build()
     })();
     if let Ok(menu) = result {
         let _ = app.set_menu(menu);
@@ -2096,6 +2110,9 @@ pub fn run() {
             }));
             app.manage(state.clone());
             setup_tray(app, language)?;
+            // 应用菜单要在启动时就替换好，否则要等第一次保存设置后才生效。
+            #[cfg(target_os = "macos")]
+            apply_application_menu(app.handle(), language);
             if !hide_on_start {
                 show_main_window(app.handle());
             }
