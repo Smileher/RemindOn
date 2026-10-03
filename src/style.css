@@ -280,7 +280,22 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 }
 
 .popup-shell { display: grid; grid-template-rows: auto 1fr auto; width: 100%; height: 100vh; overflow: hidden; color: var(--popup-text, var(--text)); background: var(--page-bg); }
-.popup-shell[style*="--popup-image"] { position: relative; background-image: linear-gradient(rgba(0, 0, 0, var(--popup-overlay, .55)), rgba(0, 0, 0, var(--popup-overlay, .55))), var(--popup-image); background-position: center; background-repeat: var(--popup-image-repeat, no-repeat); background-size: var(--popup-image-size, cover); }
+/* 背景图铺在独立的 ::before 层上：透明图片会露出默认背景色，弹窗打开时该层做透明度渐入，文字先行出现。 */
+.popup-shell[style*="--popup-image"] { position: relative; }
+.popup-shell[style*="--popup-image"]::before {
+  position: absolute; inset: 0; z-index: 0; border-radius: inherit;
+  background-color: var(--page-bg);
+  background-image: linear-gradient(rgba(0, 0, 0, var(--popup-overlay, .55)), rgba(0, 0, 0, var(--popup-overlay, .55))), var(--popup-image);
+  background-position: var(--popup-image-position, center);
+  background-repeat: var(--popup-image-repeat, no-repeat);
+  background-size: var(--popup-image-size, cover);
+  content: "";
+}
+.popup-shell[style*="--popup-image"] .popup-header,
+.popup-shell[style*="--popup-image"] .popup-content,
+.popup-shell[style*="--popup-image"] .popup-actions { position: relative; z-index: 1; }
+.popup-shell.popup-enter[style*="--popup-image"]::before { animation: popup-bg-fade 1.6s .25s ease-out both; }
+@keyframes popup-bg-fade { from { opacity: 0; } to { opacity: 1; } }
 /* 有背景图时给文字加描边与阴影，避免浅色图片让文字读不清。 */
 .popup-shell[style*="--popup-image"] .popup-content h1,
 .popup-shell[style*="--popup-image"] .popup-identity strong,
@@ -352,7 +367,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
   .page-section, .about-overview, .update-panel, .support-section, .about-copyright,
   .support-copy b::after, .update-icon.checking svg, .update-actions svg.checking,
   .update-progress-track.indeterminate span, .popup-shell.popup-enter .popup-header,
-  .popup-shell.popup-enter .popup-content, .popup-shell.popup-enter .popup-actions { animation: none; }
+  .popup-shell.popup-enter .popup-content, .popup-shell.popup-enter .popup-actions,
+  .popup-shell.popup-enter[style*="--popup-image"]::before { animation: none; }
   .popup-shell:not(.popup-enter) .popup-header, .popup-shell:not(.popup-enter) .popup-content,
   .popup-shell:not(.popup-enter) .popup-actions { opacity: 1; transform: none; }
   .update-progress-track span { transition: none; }
