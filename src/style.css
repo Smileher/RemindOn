@@ -170,6 +170,10 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .background-thumb.placeholder { border-style: dashed; opacity: .5; }
 .setting-note { color: var(--subtle); font-size: var(--font-xs); overflow-wrap: anywhere; }
 .fit-segments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.position-grid { display: grid; grid-template-columns: repeat(3, 32px); gap: 5px; margin-top: 4px; }
+.position-grid button { display: grid; place-items: center; width: 32px; height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0; color: var(--muted); background: var(--surface-hover); }
+.position-grid button:hover { border-color: var(--accent); color: var(--text); }
+.position-grid button.selected { border-color: var(--accent-strong); color: var(--accent-strong); background: var(--accent-soft); }
 .slider-row { display: flex; align-items: center; gap: 9px; margin-top: 9px; color: var(--muted); font-size: var(--font-xs); }
 .slider-row input[type="range"] { flex: 1; accent-color: var(--accent-strong); }
 .slider-row em { min-width: 38px; color: var(--text); font-style: normal; text-align: right; }

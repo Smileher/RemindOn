@@ -9,7 +9,7 @@ import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
 import { logError } from '../error'
-import type { AppData, AppSettings, ReminderTriggeredEvent } from '../types'
+import type { AppData, AppSettings, PopupBackgroundPosition, ReminderTriggeredEvent } from '../types'
 import { defaultData } from '../types'
 
 const current = ref<ReminderTriggeredEvent | null>(null)
@@ -68,6 +68,18 @@ async function refreshPopupBackground() {
   }
 }
 
+const backgroundPositionMap: Record<PopupBackgroundPosition, string> = {
+  topLeft: 'left top',
+  top: 'center top',
+  topRight: 'right top',
+  left: 'left center',
+  center: 'center center',
+  right: 'right center',
+  bottomLeft: 'left bottom',
+  bottom: 'center bottom',
+  bottomRight: 'right bottom',
+}
+
 const popupStyleVars = computed(() => {
   const current = settings.value
   const style: Record<string, string> = {}
@@ -78,6 +90,7 @@ const popupStyleVars = computed(() => {
     style['--popup-image'] = `url("${popupBackgroundUrl.value}")`
     style['--popup-image-size'] = size
     style['--popup-image-repeat'] = repeat
+    style['--popup-image-position'] = backgroundPositionMap[current.popupBackgroundPosition] ?? 'center center'
     style['--popup-overlay'] = String(current.popupOverlayOpacity / 100)
   }
   if (current.popupTextColor) style['--popup-text'] = current.popupTextColor

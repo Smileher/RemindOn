@@ -7,6 +7,7 @@ export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest' | 'power'
 export type PopupBackgroundFit = 'cover' | 'contain' | 'repeat' | 'stretch'
+export type PopupBackgroundPosition = 'topLeft' | 'top' | 'topRight' | 'left' | 'center' | 'right' | 'bottomLeft' | 'bottom' | 'bottomRight'
 
 export interface Reminder {
   id: string
@@ -33,6 +34,7 @@ export interface AppSettings {
   theme: Theme
   accentColor: AccentColor
   popupBackgroundFit: PopupBackgroundFit
+  popupBackgroundPosition: PopupBackgroundPosition
   popupTextColor: string
   popupTitleSize: number
   popupOverlayOpacity: number
@@ -79,6 +81,7 @@ export const defaultData = (): AppData => ({
     theme: 'dark',
     accentColor: 'mint',
     popupBackgroundFit: 'cover',
+    popupBackgroundPosition: 'center',
     popupTextColor: '',
     popupTitleSize: 32,
     popupOverlayOpacity: 55,

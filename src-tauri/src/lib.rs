@@ -78,6 +78,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub popup_background_fit: PopupBackgroundFit,
     #[serde(default)]
+    pub popup_background_position: PopupBackgroundPosition,
+    #[serde(default)]
     pub popup_text_color: String,
     #[serde(default = "default_popup_title_size")]
     pub popup_title_size: u32,
@@ -113,6 +115,26 @@ pub enum PopupBackgroundFit {
 impl Default for PopupBackgroundFit {
     fn default() -> Self {
         Self::Cover
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum PopupBackgroundPosition {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+}
+
+impl Default for PopupBackgroundPosition {
+    fn default() -> Self {
+        Self::Center
     }
 }
 
@@ -188,6 +210,7 @@ impl Default for AppSettings {
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
             popup_background_fit: PopupBackgroundFit::Cover,
+            popup_background_position: PopupBackgroundPosition::Center,
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
             popup_overlay_opacity: default_popup_overlay_opacity(),
