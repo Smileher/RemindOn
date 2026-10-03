@@ -31,6 +31,8 @@
 * { box-sizing: border-box; letter-spacing: 0; }
 html, body, #app { width: 100%; height: 100%; }
 body { margin: 0; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: var(--page-bg); font-size: var(--font-base); }
+/* 透明弹窗窗口下去掉 body 的不透明底色，让窗口真正的透明区域露出来。 */
+body.popup-transparent-body { background: transparent; }
 button, input, select, textarea { font: inherit; font-size: var(--font-sm); }
 button { cursor: pointer; }
 
