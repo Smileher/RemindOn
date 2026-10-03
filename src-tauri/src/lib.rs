@@ -946,19 +946,10 @@ fn configure_fullscreen_reminder(
 }
 
 /// 弹窗窗口是否启用透明。透明让弹窗先只显示文字、背景层再渐入。
-/// macOS 各模式都可靠；Windows 的透明窗口要求无装饰，窗口模式弹窗保持不透明。
+/// 仅无装饰的弹窗（全屏模式）启用：macOS 上透明会连原生标题栏一起变透明，
+/// 窗口模式弹窗（有标题栏）在所有平台都保持不透明。
 fn is_transparent_popup(label: &str) -> bool {
-    if !is_reminder_window_label(label) {
-        return false;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        true
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        label != WINDOWED_REMINDER_LABEL
-    }
+    is_reminder_window_label(label) && label != WINDOWED_REMINDER_LABEL
 }
 
 #[tauri::command]
