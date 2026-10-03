@@ -164,7 +164,10 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .danger-actions { border-color: color-mix(in srgb, var(--danger) 38%, var(--border)); }
 .button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 42%, var(--border)); }
 .button.danger:hover { color: #fff; border-color: var(--danger); background: var(--danger); }
-.background-picker { display: grid; gap: 6px; margin-top: 4px; }
+.background-picker { display: flex; align-items: center; gap: 9px; margin-top: 4px; }
+.background-picker .action-row { flex: 1; }
+.background-thumb { width: 42px; height: 42px; flex: 0 0 42px; border: 1px solid var(--border); border-radius: 7px; object-fit: cover; background: var(--surface-hover); }
+.background-thumb.placeholder { border-style: dashed; opacity: .5; }
 .setting-note { color: var(--subtle); font-size: var(--font-xs); overflow-wrap: anywhere; }
 .fit-segments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .slider-row { display: flex; align-items: center; gap: 9px; margin-top: 9px; color: var(--muted); font-size: var(--font-xs); }

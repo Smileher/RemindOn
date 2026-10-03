@@ -13,6 +13,7 @@ const props = defineProps<{
   notificationError: string
   actionMessage: string
   canReset: boolean
+  backgroundPreview: string
 }>()
 
 const emit = defineEmits<{
@@ -91,14 +92,15 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <div class="setting-card stacked-setting">
         <div><strong>{{ t('settings.popupBackground') }}</strong><span>{{ t('settings.popupBackgroundHint') }}</span></div>
         <div class="background-picker">
+          <img v-if="backgroundPreview" class="background-thumb" :src="backgroundPreview" alt="" />
+          <span v-else class="background-thumb placeholder" aria-hidden="true"></span>
           <div class="action-row">
             <button class="button" type="button" @click="emit('pickPopupImage')"><Image :size="14" />{{ t('settings.popupChooseImage') }}</button>
-            <button v-if="settings.popupBackgroundImage" class="button" type="button" @click="emit('clearPopupImage')"><RotateCcw :size="14" />{{ t('settings.popupClearImage') }}</button>
+            <button v-if="backgroundPreview" class="button" type="button" @click="emit('clearPopupImage')"><RotateCcw :size="14" />{{ t('settings.popupClearImage') }}</button>
           </div>
-          <small v-if="settings.popupBackgroundImage" class="setting-note">{{ settings.popupBackgroundImage }}</small>
         </div>
       </div>
-      <div v-if="settings.popupBackgroundImage" class="setting-card stacked-setting">
+      <div v-if="backgroundPreview" class="setting-card stacked-setting">
         <div><strong>{{ t('settings.popupBackgroundFit') }}</strong><span>{{ t('settings.popupBackgroundFitHint') }}</span></div>
         <div class="segmented fit-segments">
           <button v-for="option in fitOptions" :key="option.value" :class="{ selected: settings.popupBackgroundFit === option.value }" type="button" @click="emit('update:setting', 'popupBackgroundFit', option.value)">{{ option.label }}</button>
@@ -145,14 +147,9 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div class="action-row">
           <button class="button" type="button" @click="emit('importData')"><Upload :size="14" />{{ t('settings.import') }}</button>
           <button class="button" type="button" @click="emit('exportData')"><Download :size="14" />{{ t('settings.export') }}</button>
+          <button v-if="canReset" class="button danger" type="button" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
         </div>
         <small v-if="actionMessage" class="status-message">{{ actionMessage }}</small>
-      </div>
-      <div v-if="canReset" class="data-actions danger-actions">
-        <div><strong>{{ t('settings.reset') }}</strong><span>{{ t('settings.resetHint') }}</span></div>
-        <div class="action-row">
-          <button class="button danger" type="button" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
-        </div>
       </div>
     </div>
   </section>

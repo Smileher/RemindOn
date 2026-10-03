@@ -55,19 +55,13 @@ const popupClass = computed(() => [
 ])
 
 // 自定义外观通过内联 CSS 变量下发，样式表只负责消费这些变量。
-// 背景图由 Rust 读取后转成 data URL，这样不依赖资源协议与打包路径。
+// 背景图没有配置项：文件存在就显示，删掉文件就没有背景。
 const popupBackgroundUrl = ref('')
 
 async function refreshPopupBackground() {
-  const name = settings.value.popupBackgroundImage
-  if (!name) {
-    popupBackgroundUrl.value = ''
-    return
-  }
   try {
-    const encoded = await invoke<string>('read_popup_image', { name })
-    const extension = name.split('.').pop() || 'png'
-    popupBackgroundUrl.value = `data:image/${extension};base64,${encoded}`
+    const dataUrl = await invoke<string | null>('read_popup_image')
+    popupBackgroundUrl.value = dataUrl ?? ''
   } catch (error) {
     logError('read popup image', error)
     popupBackgroundUrl.value = ''
@@ -77,7 +71,7 @@ async function refreshPopupBackground() {
 const popupStyleVars = computed(() => {
   const current = settings.value
   const style: Record<string, string> = {}
-  if (current.popupBackgroundImage && popupBackgroundUrl.value) {
+  if (popupBackgroundUrl.value) {
     const fit = current.popupBackgroundFit
     const size = fit === 'stretch' ? '100% 100%' : fit === 'repeat' ? 'auto' : fit === 'contain' ? 'contain' : 'cover'
     const repeat = fit === 'repeat' ? 'repeat' : 'no-repeat'
