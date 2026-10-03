@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Download, Image, RotateCcw, Upload } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
+import {
+  ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight,
+  ArrowUp, ArrowUpLeft, ArrowUpRight, Circle, Download, Image, RotateCcw, Upload,
+} from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { AccentColor, AppSettings, Language, PopupBackgroundFit, Theme } from '../types'
+import type { AccentColor, AppSettings, Language, PopupBackgroundFit, PopupBackgroundPosition, Theme } from '../types'
 
 const props = defineProps<{
   language: Language
@@ -31,6 +34,24 @@ const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() =
   { value: 'stretch', label: t('settings.fitStretch') },
   { value: 'repeat', label: t('settings.fitRepeat') },
 ])
+
+const positionOptions = computed<{ value: PopupBackgroundPosition; label: string; icon: typeof ArrowUp }[]>(() => [
+  { value: 'topLeft', label: t('settings.posTopLeft'), icon: ArrowUpLeft },
+  { value: 'top', label: t('settings.posTop'), icon: ArrowUp },
+  { value: 'topRight', label: t('settings.posTopRight'), icon: ArrowUpRight },
+  { value: 'left', label: t('settings.posLeft'), icon: ArrowLeft },
+  { value: 'center', label: t('settings.posCenter'), icon: Circle },
+  { value: 'right', label: t('settings.posRight'), icon: ArrowRight },
+  { value: 'bottomLeft', label: t('settings.posBottomLeft'), icon: ArrowDownLeft },
+  { value: 'bottom', label: t('settings.posBottom'), icon: ArrowDown },
+  { value: 'bottomRight', label: t('settings.posBottomRight'), icon: ArrowDownRight },
+])
+
+// 拖动过程只更新本地值，松手才写回配置；否则保存的异步回包会把滑块拽回旧值。
+const overlayDraft = ref(props.settings.popupOverlayOpacity)
+watch(() => props.settings.popupOverlayOpacity, (value) => {
+  overlayDraft.value = value
+})
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -105,10 +126,22 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div class="segmented fit-segments">
           <button v-for="option in fitOptions" :key="option.value" :class="{ selected: settings.popupBackgroundFit === option.value }" type="button" @click="emit('update:setting', 'popupBackgroundFit', option.value)">{{ option.label }}</button>
         </div>
+        <div><strong>{{ t('settings.popupBackgroundPosition') }}</strong><span>{{ t('settings.popupBackgroundPositionHint') }}</span></div>
+        <div class="position-grid" role="group" :aria-label="t('settings.popupBackgroundPosition')">
+          <button
+            v-for="option in positionOptions"
+            :key="option.value"
+            :class="{ selected: settings.popupBackgroundPosition === option.value }"
+            type="button"
+            :aria-label="option.label"
+            :title="option.label"
+            @click="emit('update:setting', 'popupBackgroundPosition', option.value)"
+          ><component :is="option.icon" :size="14" /></button>
+        </div>
         <label class="slider-row">
           <span>{{ t('settings.popupOverlay') }}</span>
-          <input :value="settings.popupOverlayOpacity" type="range" min="0" max="90" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
-          <em>{{ settings.popupOverlayOpacity }}%</em>
+          <input v-model.number="overlayDraft" type="range" min="0" max="100" step="5" @change="emit('update:setting', 'popupOverlayOpacity', overlayDraft)" />
+          <em>{{ overlayDraft }}%</em>
         </label>
       </div>
       <div class="setting-card">
