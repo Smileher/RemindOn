@@ -109,7 +109,28 @@ macOS 分发到别人机器时，未签名应用会被 Gatekeeper 拦，需要 A
 
 用 Finder 打开这个目录：`Cmd + Shift + G`，粘贴 `~/Library/Application Support/`，回车。
 
-### 4. 沙箱权限弹窗
+### 4. 双设备协作（Windows + macOS）
+
+两台机器连同一个 GitHub 仓库（`master` 分支），可以随意切换。macOS 侧提交身份为 `MacDevice <vchenhe@live.com>`，Windows 侧为 `chenhe`，在 GitHub 提交历史里能分辨来源。
+
+**固定流程**：改代码前先 `git pull` 拿对方改动，改完 `git push` 推回去。
+
+**推荐别名**（加到 `~/.zshrc`）：
+
+```zsh
+alias gs='git status'
+alias gp='git push'
+alias gl='git pull --rebase'
+alias glog='git log --oneline --graph --decorate --all -20'
+```
+
+**两边都能做的**：前端开发、Rust 编译、调试断点、单元测试、macOS 侧打 DMG。
+
+**只能在 Windows 做的**：MSIX 商店包、Microsoft Store 上传。原因是 `scripts/build-store.ps1` 依赖 `makeappx.exe`、MSVC 工具链、`Cert:\` 证书存储和 `vswhere.exe`，这些 Windows 独有，Mac 上无法替代。商店发布流程留在 Windows 上走。
+
+**`Cargo.lock` 冲突**：两台机器各自 build 可能写出不同的 lock 文件。切换设备前如果提示冲突，先 `git checkout -- src-tauri/Cargo.lock` 放弃本地改动再 pull，避免反复冲突。
+
+### 5. 沙箱权限弹窗
 
 macOS 首次触发系统能力时会弹窗询问，需要同意：
 
@@ -174,6 +195,8 @@ lsof -ti:1420 | xargs kill
 - 锁屏走系统的 `CGSession -suspend`
 - 关机和重启走 `osascript` 调用 System Events
 - 全屏处理对 macOS 单独写了分支（第 572、828、849 行附近）
+
+2026-10-03 补充验证：合并 Windows 侧 4 个提交（含商店版图标资源、通知修复、新增 `src-tauri/src/notification.rs`）后，Mac 上重新编译与全部测试仍通过，说明双设备并行开发不会互相破坏。
 
 ## 七、目录结构
 
