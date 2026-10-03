@@ -314,7 +314,9 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-shell[style*="--popup-image"] .button { border-color: rgba(255, 255, 255, .32); background: rgba(0, 0, 0, .42); color: #fff; text-shadow: none; }
 .popup-content h1 { font-size: var(--popup-title-size, var(--font-title)); }
 
-.popup-shell:not(.popup-enter) .popup-header, .popup-shell:not(.popup-enter) .popup-content, .popup-shell:not(.popup-enter) .popup-actions { opacity: 0; transform: translateY(10px); }
+/* 窗口复用时旧帧会残留：非进入状态隐藏整个容器，窗口再显示时是一帧干净画面，
+   等前端把新内容准备好（popup-enter 加上后）再随动画出现，避免偶发闪屏。 */
+.popup-shell:not(.popup-enter) { visibility: hidden; }
 .popup-shell.popup-enter .popup-header { animation: popup-enter .24s ease-out both; }
 .popup-shell.popup-enter .popup-content { animation: popup-enter .3s cubic-bezier(.2, .75, .25, 1) both; }
 .popup-shell.popup-enter .popup-actions { animation: popup-enter .27s .04s ease-out both; }
@@ -377,7 +379,5 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
   .popup-shell.popup-enter .popup-content, .popup-shell.popup-enter .popup-actions,
   .popup-shell.popup-enter.popup-see-through::before,
   .popup-shell.popup-enter[style*="--popup-image"]::before { animation: none; }
-  .popup-shell:not(.popup-enter) .popup-header, .popup-shell:not(.popup-enter) .popup-content,
-  .popup-shell:not(.popup-enter) .popup-actions { opacity: 1; transform: none; }
   .update-progress-track span { transition: none; }
 }
