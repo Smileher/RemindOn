@@ -107,6 +107,10 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
           ></button>
         </div>
       </div>
+    </div>
+
+    <div class="settings-group">
+      <p class="settings-group-title">{{ t('settings.groupPopup') }}</p>
       <div class="setting-card stacked-setting">
         <div><strong>{{ t('settings.popupBackground') }}</strong><span>{{ t('settings.popupBackgroundHint') }}</span></div>
         <div class="background-picker">
