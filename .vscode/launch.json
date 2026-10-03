@@ -10,16 +10,24 @@
       "autoAttachChildProcesses": false
     },
     {
-      "name": "RemindOn: Rust 断点调试（Debug EXE）",
+      "name": "RemindOn: Rust 断点调试（Debug 可执行文件）",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/src-tauri/target/debug/remindon.exe",
+      "program": "${workspaceFolder}/src-tauri/target/debug/${input:pickTarget}",
       "cwd": "${workspaceFolder}",
-      "preLaunchTask": "RemindOn: 构建 Debug EXE",
+      "preLaunchTask": "RemindOn: 构建 Debug 可执行文件",
       "sourceLanguages": ["rust"],
       "env": {
         "RUST_BACKTRACE": "1"
       }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "pickTarget",
+      "type": "promptString",
+      "description": "Debug 构建产物名（macOS 为 remindon，Windows 为 remindon.exe）",
+      "default": "remindon"
     }
   ]
 }
