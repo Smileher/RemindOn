@@ -36,6 +36,8 @@ const powerCountdown = ref(60)
 const powerError = ref('')
 const popupAnimating = ref(false)
 const popupAnimationKey = ref(0)
+// 窗口透明时背景层交给 ::before 渐入，文字先浮现；不透明窗口维持纯色底。
+const seeThrough = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
 let unlistenRestCancelled: (() => void) | undefined
@@ -51,7 +53,11 @@ let lastSessionId = 0
 const popupClass = computed(() => [
   `theme-${settings.value.theme}`,
   `accent-${settings.value.accentColor}`,
-  { 'popup-fullscreen': settings.value.popupFullscreen, 'popup-enter': popupAnimating.value },
+  {
+    'popup-fullscreen': settings.value.popupFullscreen,
+    'popup-enter': popupAnimating.value,
+    'popup-see-through': seeThrough.value,
+  },
 ])
 
 // 自定义外观通过内联 CSS 变量下发，样式表只负责消费这些变量。
@@ -352,6 +358,11 @@ onMounted(async () => {
     // The standalone Vite preview has no Tauri command bridge.
   }
   await refreshPopupBackground()
+  try {
+    seeThrough.value = await invoke<boolean>('popup_window_is_transparent', { label: currentWindow.label })
+  } catch {
+    seeThrough.value = false
+  }
   try {
     unlistenReset = await currentWindow.listen('reminders-reset', () => void resetReminders())
   } catch {

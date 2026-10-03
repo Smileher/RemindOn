@@ -945,15 +945,38 @@ fn configure_fullscreen_reminder(
     }
 }
 
+/// 弹窗窗口是否启用透明。透明让弹窗先只显示文字、背景层再渐入。
+/// macOS 各模式都可靠；Windows 的透明窗口要求无装饰，窗口模式弹窗保持不透明。
+fn is_transparent_popup(label: &str) -> bool {
+    if !is_reminder_window_label(label) {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        true
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        label != WINDOWED_REMINDER_LABEL
+    }
+}
+
+#[tauri::command]
+fn popup_window_is_transparent(label: String) -> bool {
+    is_transparent_popup(&label)
+}
+
 fn create_reminder_window(
     app: &AppHandle,
     label: String,
     settings: AppSettings,
 ) -> Result<WebviewWindow, String> {
+    let transparent = is_transparent_popup(&label);
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html#/reminder".into()))
         .title(i18n::notification_window_title(settings.language))
         .visible(false)
         .decorations(false)
+        .transparent(transparent)
         .resizable(false)
         .maximizable(false)
         .skip_taskbar(true)
@@ -2146,6 +2169,7 @@ pub fn run() {
             read_popup_image,
             clear_popup_image,
             take_pending_navigation,
+            popup_window_is_transparent,
             open_power_settings,
             updater::get_update_mode,
             updater::get_update_status,
