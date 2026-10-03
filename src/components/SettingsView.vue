@@ -141,6 +141,10 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
           <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
       </div>
+      <label class="setting-card setting-toggle">
+        <div><strong>{{ t('settings.popupFade') }}</strong><span>{{ t('settings.popupFadeHint') }}</span></div>
+        <input :checked="settings.popupFadeEnabled" type="checkbox" @change="emit('update:setting', 'popupFadeEnabled', ($event.target as HTMLInputElement).checked)" />
+      </label>
       <div class="setting-card">
         <div><strong>{{ t('settings.popupText') }}</strong><span>{{ t('settings.popupTextHint') }}</span></div>
         <div class="text-controls">

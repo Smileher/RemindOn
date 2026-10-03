@@ -297,7 +297,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
   content: "";
 }
 .popup-shell.popup-see-through > *, .popup-shell[style*="--popup-image"] > * { position: relative; z-index: 1; }
-.popup-shell.popup-enter.popup-see-through::before, .popup-shell.popup-enter[style*="--popup-image"]::before { animation: popup-bg-fade 1.6s .25s ease-out both; }
+.popup-shell.popup-enter:not(.popup-no-fade).popup-see-through::before,
+.popup-shell.popup-enter:not(.popup-no-fade)[style*="--popup-image"]::before { animation: popup-bg-fade 5s .3s ease-out both; }
 @keyframes popup-bg-fade { from { opacity: 0; } to { opacity: 1; } }
 /* 有背景图时给文字加描边与阴影，避免浅色图片让文字读不清。 */
 .popup-shell[style*="--popup-image"] .popup-content h1,

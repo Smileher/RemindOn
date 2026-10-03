@@ -57,6 +57,7 @@ const popupClass = computed(() => [
     'popup-fullscreen': settings.value.popupFullscreen,
     'popup-enter': popupAnimating.value,
     'popup-see-through': seeThrough.value,
+    'popup-no-fade': !settings.value.popupFadeEnabled,
   },
 ])
 
