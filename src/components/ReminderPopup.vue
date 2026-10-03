@@ -4,7 +4,7 @@ import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { confirm } from '@tauri-apps/plugin-dialog'
-import { Check, ChevronDown, Clock3, Settings2 } from '@lucide/vue'
+import { Check, ChevronDown, Clock3, Maximize2, Minimize2, Settings2 } from '@lucide/vue'
 import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
@@ -152,6 +152,15 @@ const restElapsed = computed(() => t('popup.rested', {
   minutes: Math.floor(restElapsedSeconds.value / 60),
   seconds: restElapsedSeconds.value % 60,
 }))
+
+async function toggleFullscreenMode() {
+  try {
+    // 后端会保存设置并按新模式换窗，本窗口随后收到 reminder-closed 自动清理。
+    await invoke('toggle_popup_fullscreen')
+  } catch (error) {
+    logError('toggle popup fullscreen', error)
+  }
+}
 
 async function closePopup() {
   snoozeMenu.value?.removeAttribute('open')
@@ -432,7 +441,16 @@ onUnmounted(() => {
   <main :key="popupAnimationKey" :class="['popup-shell', ...popupClass]" :style="popupStyleVars">
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
-      <kbd class="popup-escape-hint">ESC</kbd>
+      <div class="popup-header-actions">
+        <button
+          class="popup-mode-button"
+          type="button"
+          :title="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
+          :aria-label="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
+          @click="toggleFullscreenMode"
+        ><Minimize2 v-if="settings.popupFullscreen" :size="13" /><Maximize2 v-else :size="13" /></button>
+        <kbd class="popup-escape-hint">ESC</kbd>
+      </div>
     </header>
     <section class="popup-content">
       <p v-if="current?.isRest" class="rest-elapsed">{{ restElapsed }}</p>

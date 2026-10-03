@@ -325,6 +325,9 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-identity strong { color: var(--text); font-size: var(--font-sm); }
 .popup-identity span { margin-top: 2px; color: var(--muted); font-size: var(--font-xs); }
 .popup-escape-hint { min-width: 36px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 4px 7px 3px; color: var(--muted); background: var(--page-bg); font: 700 10px/1.2 Inter, "Segoe UI", sans-serif; text-align: center; box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
+.popup-header-actions { display: flex; align-items: center; gap: 8px; }
+.popup-mode-button { display: grid; place-items: center; width: 24px; height: 22px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 0; color: var(--muted); background: var(--page-bg); box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
+.popup-mode-button:hover { border-color: var(--accent); color: var(--text); }
 .popup-content { align-self: center; padding: 21px 27px; }
 .popup-content h1 { max-width: 440px; font-size: var(--popup-title-size, var(--font-title)); line-height: 1.35; overflow-wrap: anywhere; }
 .rest-elapsed { margin: 0 0 15px; color: var(--muted); font-size: var(--font-title); line-height: 1; }
