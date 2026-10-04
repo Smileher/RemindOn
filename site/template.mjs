@@ -39,7 +39,8 @@ const iconColors = ['violet', 'pink', 'cyan']
 export function renderPage(language, release) {
   const t = locales[language]
   const e = escapeHtml
-  const windowsPackages = t.packages.filter((pkg) => pkg.icon === 'windows')
+  const storePackage = t.packages.find((pkg) => pkg.key === 'store')
+  const windowsPackages = t.packages.filter((pkg) => pkg.icon === 'windows' && pkg.key !== 'store')
   const macPackage = t.packages.find((pkg) => pkg.key === 'mac')
   const url = `${origin}${basePath}${t.path}`
   const logo = `${basePath}assets/remindon.svg`
@@ -50,6 +51,7 @@ export function renderPage(language, release) {
   ]
   const trustRow = [t.platforms, ...t.trust].map((item) => `<span>${e(item)}</span>`).join('<span class="sep" aria-hidden="true"></span>')
   const mockup = t.mockup
+  const macSize = (release.downloads[macPackage.key].size / 1024 / 1024).toFixed(1)
 
   const mockupNav = mockup.nav.map((label, i) => `<li${i === 0 ? ' class="active"' : ''}>${icon(mockup.navIcons[i], '', 14)}<span>${e(label)}</span></li>`).join('')
 
@@ -154,8 +156,17 @@ export function renderPage(language, release) {
     <section class="download-section section" id="download" aria-labelledby="download-title">
       <div class="wrap"><div class="download-heading"><div class="section-heading"><p class="eyebrow"><span class="pulse" aria-hidden="true"></span>${e(t.downloadLabel)}</p><h2 id="download-title">${e(t.downloadTitle)}</h2><p>${e(t.downloadIntro)}</p></div><div class="release-meta"><a class="version-badge" href="${e(release.url)}"><span class="pulse" aria-hidden="true"></span>v${e(release.version)}${icon('arrow', 'arrow', 14)}</a><span>${e(t.published)} <time datetime="${e(release.publishedAt)}">${e(releaseDate)}</time></span></div></div>
       <div class="download-grid">
-        <article class="platform-card"><div class="platform-heading"><span class="platform-icon">${icon('windows', '', 22)}</span><div><h3>Windows</h3><p>${e(t.windowsIntro)}</p></div></div><div class="platform-options" aria-label="${e(t.chooseVersion)}">${windowsPackages.map((pkg) => { const external = Boolean(pkg.externalUrl); const download = external ? { url: pkg.externalUrl } : release.downloads[pkg.key]; return `<a class="platform-option${external ? ' store-option' : ''}" href="${e(download.url)}"><span class="platform-option-copy"><strong>${e(pkg.arch)}</strong><small>${e(pkg.text)}</small></span><span class="platform-option-action">${e(pkg.action)}${icon(external ? 'arrow' : 'download', 'arrow', 15)}</span></a>` }).join('')}</div></article>
-        <article class="platform-card"><div class="platform-heading"><span class="platform-icon">${icon('apple', '', 22)}</span><div><h3>${e(macPackage.title)}</h3><p>${e(t.macIntro)}</p></div></div><div class="mac-package"><span class="package-badge mono">${e(macPackage.arch)}</span><strong>${e(macPackage.text)}</strong><a class="btn btn-primary" href="${e(release.downloads[macPackage.key].url)}">${icon('download', '', 16)}${e(macPackage.action)}</a><span class="package-size mono">${(release.downloads[macPackage.key].size / 1024 / 1024).toFixed(1)} MiB</span></div></article>
+        <article class="platform-card">
+          <div class="platform-heading"><span class="platform-icon">${icon('windows', '', 22)}</span><div><h3>Windows</h3><p>${e(t.windowsIntro)}</p></div></div>
+          <a class="store-primary" href="${e(storePackage.externalUrl)}"><span class="store-primary-copy"><span class="store-badge mono">${e(t.storeBadge)}</span><strong>${e(t.storePrimary)}</strong><small>${e(t.storeNote)}</small></span>${icon('arrow', 'arrow', 16)}</a>
+          <p class="platform-subhead mono">${e(t.otherVersions)}</p>
+          <div class="platform-options" aria-label="${e(t.chooseVersion)}">${windowsPackages.map((pkg) => { const download = release.downloads[pkg.key]; return `<a class="platform-option" href="${e(download.url)}"><span class="platform-option-copy"><strong>${e(pkg.arch)}</strong><small>${e(pkg.text)}</small></span><span class="platform-option-action">${e(pkg.action)}${icon('download', 'arrow', 15)}</span></a>` }).join('')}</div>
+        </article>
+        <article class="platform-card">
+          <div class="platform-heading"><span class="platform-icon">${icon('apple', '', 22)}</span><div><h3>${e(macPackage.title)}</h3><p>${e(t.macIntro)}</p></div></div>
+          <a class="store-primary mac-primary" href="${e(release.downloads[macPackage.key].url)}"><span class="store-primary-copy"><strong>${e(macPackage.action)}</strong><small>${e(macPackage.arch)}</small></span>${icon('download', 'arrow', 16)}</a>
+          <p class="platform-subhead mac-note mono">${e(macPackage.text)} · ${macSize} MiB</p>
+        </article>
       </div>
       <div class="download-bottom"><p>${e(t.downloadNote)}</p><a class="text-link" href="${repository}/releases">${e(t.allReleases)}${icon('arrow', 'arrow', 15)}</a></div></div>
     </section>
