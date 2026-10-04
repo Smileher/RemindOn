@@ -40,6 +40,7 @@ const popupAnimationKey = ref(0)
 const seeThrough = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
+let unlistenImage: (() => void) | undefined
 let unlistenRestCancelled: (() => void) | undefined
 let unlistenReset: (() => void) | undefined
 let unlistenClosed: (() => void) | undefined
@@ -64,14 +65,16 @@ const popupClass = computed(() => [
 // 自定义外观通过内联 CSS 变量下发，样式表只负责消费这些变量。
 // 背景图没有配置项：文件存在就显示，删掉文件就没有背景。
 const popupBackgroundUrl = ref('')
+let imageReadToken = 0
 
 async function refreshPopupBackground() {
+  const token = ++imageReadToken
   try {
     const dataUrl = await invoke<string | null>('read_popup_image')
-    popupBackgroundUrl.value = dataUrl ?? ''
+    if (token === imageReadToken) popupBackgroundUrl.value = dataUrl ?? ''
   } catch (error) {
     logError('read popup image', error)
-    popupBackgroundUrl.value = ''
+    if (token === imageReadToken) popupBackgroundUrl.value = ''
   }
 }
 
@@ -394,7 +397,6 @@ onMounted(async () => {
     unlistenSettings = await currentWindow.listen<AppSettings>('settings-updated', async (event) => {
       const previous = settings.value
       settings.value = event.payload
-      await refreshPopupBackground()
       try {
         await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
       } catch {
@@ -414,6 +416,13 @@ onMounted(async () => {
     // The standalone Vite preview has no Tauri event bridge.
   }
   try {
+    unlistenImage = await currentWindow.listen('popup-image-updated', () => void refreshPopupBackground())
+    // 监听建立前可能恰好发生选图，再读一次保证初始化没有漏掉变化。
+    await refreshPopupBackground()
+  } catch {
+    // The standalone Vite preview has no Tauri event bridge.
+  }
+  try {
     unlistenRestCancelled = await currentWindow.listen('rest-cancelled', () => void cancelRest())
   } catch {
     // The standalone Vite preview has no Tauri event bridge.
@@ -429,6 +438,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   notificationSequence += 1
+  imageReadToken += 1
   document.body.classList.remove('popup-transparent-body')
   document.removeEventListener('click', closeSnoozeMenuOnOutsideClick)
   window.removeEventListener('keydown', handleEscape)
@@ -436,6 +446,7 @@ onUnmounted(() => {
   clearRestTimer()
   unlisten?.()
   unlistenSettings?.()
+  unlistenImage?.()
   unlistenRestCancelled?.()
   unlistenReset?.()
   unlistenClosed?.()

@@ -1871,6 +1871,7 @@ fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> 
     let target = directory.join("popup-background.img");
     fs::copy(&origin, &target).map_err(|error| format!("Failed to copy the image: {error}"))?;
     let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    emit_to_reminder_windows(&app, "popup-image-updated", ());
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
@@ -1963,6 +1964,7 @@ fn clear_popup_image(app: AppHandle) -> Result<(), String> {
             }
         }
     }
+    emit_to_reminder_windows(&app, "popup-image-updated", ());
     Ok(())
 }
 

@@ -43,6 +43,31 @@ test('mode changes preserve the rest start and automatic power deadline', async 
   assert.equal(power.calls.filter((name) => name === 'execute_power_action').length, 1)
 })
 
+test('image changes refresh cached popups without rereading images for settings', async () => {
+  const popup = await mountPopup()
+  const reads = popup.calls.filter((name) => name === 'read_popup_image').length
+  await popup.emitTo('reminder', 'settings-updated', defaultData().settings)
+  assert.equal(popup.calls.filter((name) => name === 'read_popup_image').length, reads)
+  popup.setInvoke('read_popup_image', async () => 'data:image/jpeg;base64,new')
+  await popup.emitTo('reminder', 'popup-image-updated')
+  assert.equal(popup.state.popupBackgroundUrl.value, 'data:image/jpeg;base64,new')
+  popup.setInvoke('read_popup_image', async () => null)
+  await popup.emitTo('reminder', 'popup-image-updated')
+  assert.equal(popup.state.popupBackgroundUrl.value, '')
+})
+
+test('a delayed old image read cannot restore an image after clearing', async () => {
+  const popup = await mountPopup()
+  let resolveOld
+  popup.setInvoke('read_popup_image', () => new Promise((resolve) => { resolveOld = resolve }))
+  const pending = popup.state.refreshPopupBackground()
+  popup.setInvoke('read_popup_image', async () => null)
+  await popup.state.refreshPopupBackground()
+  resolveOld('data:image/png;base64,old')
+  await pending
+  assert.equal(popup.state.popupBackgroundUrl.value, '')
+})
+
 test('a late initial read cannot replace a newer trigger', async () => {
   const popup = await mountPopup({ readActive: async (listeners) => {
     listeners.get('reminder-triggered').callback({ payload: powerEvent })
