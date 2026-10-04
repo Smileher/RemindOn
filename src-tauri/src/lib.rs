@@ -498,6 +498,18 @@ fn snooze_rest_round(state: &AppState, seconds: u32) -> bool {
 
 fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     data.version = DATA_VERSION;
+    data.settings.popup_title_size = data.settings.popup_title_size.clamp(20, 72);
+    data.settings.popup_overlay_opacity = data.settings.popup_overlay_opacity.min(100);
+    let color = data.settings.popup_text_color.trim();
+    if color.is_empty()
+        || (color.len() == 7
+            && color.starts_with('#')
+            && color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit))
+    {
+        data.settings.popup_text_color = color.to_string();
+    } else {
+        data.settings.popup_text_color.clear();
+    }
     // 填充方式已精简为整张填充与原始尺寸两种，旧配置里的其它取值统一迁移成整张填充。
     if !matches!(
         data.settings.popup_background_fit,
@@ -2506,6 +2518,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_appearance_values_are_normalized_before_saving_or_importing() {
+        let mut data = AppData::default();
+        data.settings.popup_title_size = 999;
+        data.settings.popup_overlay_opacity = 200;
+        data.settings.popup_text_color = "not-a-color".into();
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.settings.popup_title_size, 72);
+        assert_eq!(data.settings.popup_overlay_opacity, 100);
+        assert!(data.settings.popup_text_color.is_empty());
+
+        data.settings.popup_title_size = 0;
+        data.settings.popup_overlay_opacity = 0;
+        data.settings.popup_text_color = " #Ab01Ff ".into();
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.settings.popup_title_size, 20);
+        assert_eq!(data.settings.popup_overlay_opacity, 0);
+        assert_eq!(data.settings.popup_text_color, "#Ab01Ff");
+    }
 
     #[test]
     fn reopening_cancels_reclamation_and_reclosing_starts_a_new_delay() {
