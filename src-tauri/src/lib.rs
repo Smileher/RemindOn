@@ -35,6 +35,15 @@ const MAIN_WINDOW_WIDTH: f64 = 780.0;
 const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
 
+/// 窗口背景色需与前端 `--page-bg` 保持一致。
+///
+/// macOS 标题栏设为透明后，标题栏区域透出的就是窗口背景色，
+/// 不再依赖系统外观（NSApp.appearance）的实时过渡，因此切换深浅色必然同步。
+#[cfg(target_os = "macos")]
+const WINDOW_BG_DARK: tauri::window::Color = tauri::window::Color(32, 34, 37, 255);
+#[cfg(target_os = "macos")]
+const WINDOW_BG_LIGHT: tauri::window::Color = tauri::window::Color(238, 241, 245, 255);
+
 fn default_rest_message() -> String {
     i18n::default_rest_message(Language::ZhCn).to_string()
 }
@@ -884,6 +893,13 @@ fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
     let _ = window.set_title(i18n::notification_window_title(settings.language));
     let _ = window.set_always_on_top(settings.popup_always_on_top);
     let _ = window.set_decorations(true);
+    // 窗口模式弹窗有原生标题栏，同样用透明标题栏 + 显式背景色跟随深浅色。
+    // 全屏弹窗是 transparent 的，不能上色，所以只在窗口模式生效。
+    #[cfg(target_os = "macos")]
+    if !is_transparent_popup(window.label()) {
+        let _ = window.set_title_bar_style(tauri::TitleBarStyle::Transparent);
+        let _ = window.set_background_color(Some(background_color_for(&settings.theme)));
+    }
     let _ = window.set_resizable(false);
     let _ = window.set_maximizable(false);
     let _ = window.set_skip_taskbar(false);
@@ -1083,10 +1099,16 @@ fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
     for window in reminder_windows(app) {
         let _ = window.set_title(i18n::notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
+        // 原生标题栏跟随深浅色靠的是窗口背景色，必须在 Rust 侧同步。
+        // 前端 setTheme 只改 NSApp.appearance，管不到已渲染的标题栏材质。
+        apply_window_appearance(&window, &settings.theme);
         let _ = app.emit_to(window.label(), "settings-updated", settings);
     }
     // 弹窗上的切换按钮也会改设置；主窗口不同步的话，下次在主窗口保存会用旧值覆盖回去。
     let _ = app.emit_to("main", "settings-updated", settings);
+    if let Some(window) = app.get_webview_window("main") {
+        apply_window_appearance(&window, &settings.theme);
+    }
 }
 
 fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Option<AppSettings> {
@@ -1946,7 +1968,147 @@ fn tauri_theme(theme: &Theme) -> Option<tauri::Theme> {
     }
 }
 
-fn create_main_window(app: &AppHandle, theme: Option<tauri::Theme>) -> Result<WebviewWindow, String> {
+/// 读系统当前是否深色（`AppleInterfaceStyle` = Dark）。
+#[cfg(target_os = "macos")]
+fn system_prefers_dark() -> bool {
+    use std::ffi::c_void;
+
+    extern "C" {
+        fn CFPreferencesCopyAppValue(key: *const c_void, app_id: *const c_void) -> *mut c_void;
+        fn CFRelease(cf: *const c_void);
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            c_str: *const std::ffi::c_char,
+            encoding: u32,
+        ) -> *mut c_void;
+        fn CFStringCompare(a: *const c_void, b: *const c_void, options: u64) -> i32;
+    }
+    const UTF8: u32 = 0x0800_0100;
+    unsafe {
+        let key = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"AppleInterfaceStyle".as_ptr(),
+            UTF8,
+        );
+        let domain = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"Apple Global Domain".as_ptr(),
+            UTF8,
+        );
+        let value = CFPreferencesCopyAppValue(key, domain);
+        CFRelease(key);
+        CFRelease(domain);
+        // 缺省即浅色。
+        if value.is_null() {
+            return false;
+        }
+        let dark = CFStringCreateWithCString(std::ptr::null(), c"Dark".as_ptr(), UTF8);
+        let equal = CFStringCompare(value, dark, 0) == 0;
+        CFRelease(dark);
+        CFRelease(value);
+        equal
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_prefers_dark() -> bool {
+    false
+}
+
+/// 把主题里的 System 解析成实际生效的深浅色。
+///
+/// 窗口背景色必须是具体颜色，写不了"跟随系统"，所以 System 在这里落地成
+/// 当前系统的实际配色；系统外观变化时由 `start_system_theme_watcher` 重新应用。
+fn resolve_theme(theme: &Theme) -> Theme {
+    match theme {
+        Theme::System => {
+            if system_prefers_dark() {
+                Theme::Dark
+            } else {
+                Theme::Light
+            }
+        }
+        other => other.clone(),
+    }
+}
+
+/// 把某一主题对应的原生外观（appearance + 窗口背景色）同步到单个窗口。
+///
+/// macOS 关键点：标题栏是 vibrancy 材质，其颜色由 **窗口背景色** 决定，
+/// 而非 NSApp.appearance。appearance 的实时过渡会被 setLevel、窗口复用等动作打断，
+/// 导致标题栏卡在旧配色。所以这里同时设置背景色，让标题栏颜色变成显式赋值的结果。
+#[cfg(target_os = "macos")]
+fn apply_window_appearance(window: &WebviewWindow, theme: &Theme) {
+    let resolved = resolve_theme(theme);
+    // System 保持 None 让窗口继续跟随系统外观，只有显式 Dark/Light 才钉死。
+    let _ = window.set_theme(match theme {
+        Theme::System => None,
+        _ => tauri_theme(&resolved),
+    });
+    // 透明弹窗自身是透明的，不能给窗口上色，否则会盖掉背景图。
+    if !window.label().starts_with(REMINDER_LABEL) || window.label() == WINDOWED_REMINDER_LABEL {
+        let background = match resolved {
+            Theme::Light => WINDOW_BG_LIGHT,
+            _ => WINDOW_BG_DARK,
+        };
+        let _ = window.set_background_color(Some(background));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_window_appearance(window: &WebviewWindow, theme: &Theme) {
+    let _ = window.set_theme(tauri_theme(theme));
+}
+
+/// 把主题同步到主窗口与所有提醒弹窗，用于设置变更与启动时统一对齐。
+fn apply_theme_to_windows(app: &AppHandle, theme: &Theme) {
+    if let Some(window) = app.get_webview_window("main") {
+        apply_window_appearance(&window, theme);
+    }
+    for window in reminder_windows(app) {
+        apply_window_appearance(&window, theme);
+    }
+}
+
+/// 轮询系统外观，跟随系统模式下系统深浅色切换时同步窗口背景色。
+///
+/// 只在偏好为 System 时才真正生效；显式 Dark/Light 不受影响。
+fn start_system_theme_watcher(app: AppHandle, state: AppState) {
+    thread::Builder::new()
+        .name("system-theme-watcher".into())
+        .spawn(move || {
+            let mut last = system_prefers_dark();
+            loop {
+                thread::sleep(StdDuration::from_secs(2));
+                let now = system_prefers_dark();
+                if now == last {
+                    continue;
+                }
+                last = now;
+                // 设置可能被并发改写，取锁后再判断当前偏好。
+                if !matches!(app_data(&state).settings.theme, Theme::System) {
+                    continue;
+                }
+                apply_theme_to_windows(&app, &Theme::System);
+            }
+        })
+        .ok();
+}
+
+/// macOS 上把窗口背景色钉到当前主题，创建时用，避免透明标题栏闪出默认灰。
+#[cfg(target_os = "macos")]
+fn background_color_for(theme: &Theme) -> tauri::window::Color {
+    match resolve_theme(theme) {
+        Theme::Light => WINDOW_BG_LIGHT,
+        _ => WINDOW_BG_DARK,
+    }
+}
+
+fn create_main_window(
+    app: &AppHandle,
+    theme: Option<tauri::Theme>,
+    app_theme: &Theme,
+) -> Result<WebviewWindow, String> {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("RemindOn")
         .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
@@ -1958,6 +2120,12 @@ fn create_main_window(app: &AppHandle, theme: Option<tauri::Theme>) -> Result<We
     if let Some(theme) = theme {
         builder = builder.theme(Some(theme));
     }
+    // 透明标题栏：只让材质透出窗口背景色，不加 FullSizeContentView，
+    // 因此拖动 / 双击最大化还原 / 最小化 / 关闭 / 阴影圆角全部保持原生行为。
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Transparent)
+        .background_color(background_color_for(app_theme));
     builder
         .build()
         .map_err(|error| format!("Failed to create main window: {error}"))
@@ -1975,17 +2143,17 @@ fn ensure_main_window(
         .lock()
         .expect("window cache lock poisoned")
         .reuse("main");
+    let app_theme = app_data(state).settings.theme;
     let window = match app.get_webview_window("main") {
         Some(window) => {
             // 缓存的窗口可能停留在上一次主题，显示前按当前设置同步原生标题栏。
-            let theme = tauri_theme(&app_data(state).settings.theme);
-            let _ = window.set_theme(theme);
+            apply_window_appearance(&window, &app_theme);
             window
         }
         None => {
             state.0.main_ready.store(false, Ordering::SeqCst);
-            let theme = tauri_theme(&app_data(state).settings.theme);
-            create_main_window(app, theme)?
+            let theme = tauri_theme(&app_theme);
+            create_main_window(app, theme, &app_theme)?
         }
     };
     if let Some(navigation) = navigation {
@@ -2202,7 +2370,11 @@ pub fn run() {
             if !hide_on_start {
                 show_main_window(app.handle());
             }
-            spawn_scheduler(app.handle().clone(), state);
+            spawn_scheduler(app.handle().clone(), state.clone());
+            // 启动即对齐一次原生外观（含窗口背景色），避免标题栏先显示默认灰再跳变。
+            let startup_theme = app_data(&state).settings.theme;
+            apply_theme_to_windows(app.handle(), &startup_theme);
+            start_system_theme_watcher(app.handle().clone(), state);
             updater::start_background_update_checks(
                 app.handle().clone(),
                 app.state::<AppState>().inner().clone(),
