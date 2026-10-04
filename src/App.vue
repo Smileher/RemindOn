@@ -356,8 +356,9 @@ async function removeReminder(id: string) {
 async function applyNativeTheme(theme: Theme) {
   try {
     await setTheme(theme === 'system' ? null : theme)
-  } catch {
+  } catch (error) {
     // The standalone Vite preview has no native title bar to update.
+    logError('apply native theme', error)
   }
 }
 

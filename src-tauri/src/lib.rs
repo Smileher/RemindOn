@@ -1937,15 +1937,28 @@ fn update_tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri:
     Ok(())
 }
 
-fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+// 项目自定义主题含 System，映射为跟随系统的 None；原生标题栏只认 Dark/Light。
+fn tauri_theme(theme: &Theme) -> Option<tauri::Theme> {
+    match theme {
+        Theme::Dark => Some(tauri::Theme::Dark),
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::System => None,
+    }
+}
+
+fn create_main_window(app: &AppHandle, theme: Option<tauri::Theme>) -> Result<WebviewWindow, String> {
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("RemindOn")
         .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
         .min_inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
         .resizable(true)
         .center()
-        .visible(false)
-        .theme(Some(tauri::Theme::Dark))
+        .visible(false);
+    // 主窗口创建时即按用户设置钉好主题，避免重建后回落到硬编码的深色。
+    if let Some(theme) = theme {
+        builder = builder.theme(Some(theme));
+    }
+    builder
         .build()
         .map_err(|error| format!("Failed to create main window: {error}"))
 }
@@ -1963,10 +1976,16 @@ fn ensure_main_window(
         .expect("window cache lock poisoned")
         .reuse("main");
     let window = match app.get_webview_window("main") {
-        Some(window) => window,
+        Some(window) => {
+            // 缓存的窗口可能停留在上一次主题，显示前按当前设置同步原生标题栏。
+            let theme = tauri_theme(&app_data(state).settings.theme);
+            let _ = window.set_theme(theme);
+            window
+        }
         None => {
             state.0.main_ready.store(false, Ordering::SeqCst);
-            create_main_window(app)?
+            let theme = tauri_theme(&app_data(state).settings.theme);
+            create_main_window(app, theme)?
         }
     };
     if let Some(navigation) = navigation {
