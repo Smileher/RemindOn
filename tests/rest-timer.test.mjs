@@ -46,6 +46,10 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   let hideCount = 0
   let readStatus = async () => status
   let saveData = async (value) => structuredClone(value)
+  let confirmReset = async () => false
+  const invokeHandlers = new Map()
+  const nativeHandlers = new Map()
+  const errors = []
   function emitTo(target, name, payload) {
     const listener = listeners.get(name)
     if (listener && (listener.target === null || listener.target === target)) {
@@ -54,13 +58,15 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   }
   const modules = {
     vue: { ...vue, onMounted: (callback) => { mounted = callback }, onUnmounted: noop },
-    '@tauri-apps/api/app': { getVersion: async () => '0.9.0', setTheme: async () => {} },
+    '@tauri-apps/api/app': { getVersion: async () => '0.9.0', setTheme: async (theme) => nativeHandlers.get('setTheme')?.(theme) },
     '@tauri-apps/api/core': {
       invoke: async (command, args) => {
         calls.push(command)
+        if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return structuredClone(settingsData)
         if (command === 'save_data') return saveData(JSON.parse(JSON.stringify(args.data)), args)
         if (command === 'read_popup_image') return null
+        if (command === 'clear_popup_image') return
         if (command === 'hide_idle_window') { hideCount += 1; return }
         if (command === 'get_rest_timer_status') {
           assert.ok(listeners.has('rest-timer-updated'), 'subscribe before reading initial status')
@@ -80,8 +86,8 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         listen: async (name, callback) => { listeners.set(name, { target: 'main', callback }); return noop },
       }),
     },
-    '@tauri-apps/plugin-dialog': { ask: noop, confirm: async () => false, open: noop, save: noop },
-    '@tauri-apps/plugin-autostart': { disable: noop, enable: noop, isEnabled: async () => false },
+    '@tauri-apps/plugin-dialog': { ask: noop, confirm: () => confirmReset(), open: noop, save: noop },
+    '@tauri-apps/plugin-autostart': { disable: async () => nativeHandlers.get('disable')?.(), enable: async () => nativeHandlers.get('enable')?.(), isEnabled: async () => false },
     '@tauri-apps/plugin-notification': { sendNotification: noop, onAction: async () => ({ unregister: async () => {} }), isPermissionGranted: async () => true, requestPermission: async () => 'granted' },
     '@lucide/vue': new Proxy({}, { get: () => ({ render: noop }) }),
     './components/ReminderPopup.vue': { default: { render: noop } },
@@ -95,7 +101,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     './assets/donate.png': { default: 'donate.png' },
     './i18n': { translate },
     './types': { defaultData },
-    './error': { logError: (_context, error) => { throw error } },
+    './error': { logError: (context, error) => { errors.push({ context, error }) } },
     './composables/useUpdater': {
       useUpdater: () => ({
         mode: vue.ref('development'), status: vue.ref('idle'), newVersion: vue.ref(''),
@@ -133,9 +139,12 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   const render = load(templateCode).render
   await mounted()
   return {
-    state, calls,
+    state, calls, errors,
     setReadStatus: (callback) => { readStatus = callback },
     setSaveData: (callback) => { saveData = callback },
+    setConfirm: (callback) => { confirmReset = callback },
+    setInvoke: (command, callback) => { invokeHandlers.set(command, callback) },
+    setNative: (name, callback) => { nativeHandlers.set(name, callback) },
     emit: (name, payload) => emitTo('main', name, payload),
     emitTo,
     focus: (isFocused) => focused({ payload: isFocused }),
@@ -185,6 +194,59 @@ test('explicit main-window mode changes are included in the save', async () => {
   app.setSaveData(async (data, args) => { savedArgs = args; return data })
   await app.state.updateSetting('popupFullscreen', false)
   assert.equal(savedArgs.popupFullscreen, false)
+})
+
+test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings = defaultData().settings
+  app.state.data.value.settings.language = 'en'
+  app.state.data.value.settings.restMessage = translate('en', 'rest.defaultMessage')
+  app.state.data.value.settings.shutdownReminderMessage = translate('en', 'power.defaultShutdownMessage')
+  app.state.data.value.reminders = [{ id: 'keep', title: 'keep reminder' }]
+  app.state.popupBackgroundPreview.value = 'data:image/png;base64,image'
+  assert.equal(app.state.canResetSettings.value, true)
+  app.setConfirm(async () => true)
+  await app.state.resetSettings()
+  assert.equal(app.state.data.value.settings.language, 'en')
+  assert.equal(app.state.data.value.settings.restMessage, translate('en', 'rest.defaultMessage'))
+  assert.equal(app.state.data.value.settings.shutdownReminderMessage, translate('en', 'power.defaultShutdownMessage'))
+  assert.equal(app.state.data.value.reminders[0].id, 'keep')
+  assert.equal(app.state.popupBackgroundPreview.value, '')
+  assert.equal(app.state.canResetSettings.value, false)
+})
+
+test('failed reset restores settings, autostart and theme without clearing the image', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings.autostart = true
+  app.state.data.value.settings.theme = 'light'
+  app.state.popupBackgroundPreview.value = 'data:image/png;base64,image'
+  const before = JSON.stringify(app.state.data.value.settings)
+  const nativeCalls = []
+  app.setNative('disable', async () => nativeCalls.push('disable'))
+  app.setNative('enable', async () => nativeCalls.push('enable'))
+  app.setNative('setTheme', async (theme) => nativeCalls.push(theme))
+  app.setSaveData(async () => { throw new Error('disk full') })
+  app.setConfirm(async () => true)
+  await app.state.resetSettings()
+  assert.equal(JSON.stringify(app.state.data.value.settings), before)
+  assert.ok(nativeCalls.includes('enable'))
+  assert.equal(nativeCalls.at(-1), 'light')
+  assert.equal(app.calls.includes('clear_popup_image'), false)
+  assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.saveFailed'))
+})
+
+test('image removal failure keeps the saved defaults and reports the actual image state', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings.theme = 'light'
+  app.state.popupBackgroundPreview.value = 'data:image/png;base64,image'
+  app.setInvoke('clear_popup_image', async () => { throw new Error('permission denied') })
+  app.setInvoke('read_popup_image', async () => 'data:image/png;base64,image')
+  app.setConfirm(async () => true)
+  await app.state.resetSettings()
+  assert.equal(app.state.data.value.settings.theme, 'dark')
+  assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.imageFailed'))
 })
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {

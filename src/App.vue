@@ -148,9 +148,9 @@ const canResetSettings = computed(() => {
     ...defaults,
     language,
     restMessage: translate(language, 'rest.defaultMessage'),
-    shutdownReminderMessage: translate(language, `power.default${current.powerAction === 'lock' ? 'Lock' : current.powerAction === 'restart' ? 'Restart' : 'Shutdown'}Message` as MessageKey),
+    shutdownReminderMessage: translate(language, 'power.defaultShutdownMessage'),
   }
-  return (Object.keys(localized) as Array<keyof typeof localized>).some(
+  return Boolean(popupBackgroundPreview.value) || (Object.keys(localized) as Array<keyof typeof localized>).some(
     (key) => JSON.stringify(current[key]) !== JSON.stringify(localized[key]),
   )
 })
@@ -622,32 +622,51 @@ async function resetSettings() {
   })
   if (!confirmed) return
 
+  await persistQueue
   const previous = data.value.settings
   const defaults = defaultData().settings
-  data.value.settings = { ...defaults, language: previous.language }
+  data.value.settings = {
+    ...defaults,
+    language: previous.language,
+    restMessage: translate(previous.language, 'rest.defaultMessage'),
+    shutdownReminderMessage: translate(previous.language, 'power.defaultShutdownMessage'),
+  }
   restMessageDraft.value = data.value.settings.restMessage
   shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
   try {
     if (previous.autostart) await disable()
-    await applyNativeTheme(data.value.settings.theme)
-    await persist()
+    await setTheme(data.value.settings.theme === 'system' ? null : data.value.settings.theme)
+    await persist(defaults.popupFullscreen)
     await refreshTimers()
-    // 重置参数要连背景图一起清掉，否则弹窗还会挂着旧图。
-    try {
-      await invoke('clear_popup_image')
-    } catch (error) {
-      logError('clear popup image on reset', error)
-    }
-    popupBackgroundPreview.value = ''
-    autostartError.value = ''
-    notificationError.value = ''
-    actionMessage.value = t('status.resetDone')
   } catch (error) {
     data.value.settings = previous
     restMessageDraft.value = previous.restMessage
     shutdownMessageDraft.value = previous.shutdownReminderMessage
+    const rollback = await Promise.allSettled([
+      previous.autostart ? enable() : disable(),
+      setTheme(previous.theme === 'system' ? null : previous.theme),
+    ])
+    for (const result of rollback) {
+      if (result.status === 'rejected') logError('restore system settings after reset', result.reason)
+    }
+    if (rollback[0].status === 'rejected') {
+      autostartError.value = t('status.autostartFailed', { error: formatError(rollback[0].reason) })
+    }
     logError('reset settings', error)
     actionMessage.value = t('status.saveFailed')
+    return
+  }
+  autostartError.value = ''
+  notificationError.value = ''
+  // 参数已落盘，删图失败时保留真实图片状态并提示，不回滚成旧参数。
+  try {
+    await invoke('clear_popup_image')
+    popupBackgroundPreview.value = ''
+    actionMessage.value = t('status.resetDone')
+  } catch (error) {
+    logError('clear popup image on reset', error)
+    await loadPopupImagePreview()
+    actionMessage.value = t('status.imageFailed')
   }
 }
 
