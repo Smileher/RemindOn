@@ -60,6 +60,8 @@ export interface ReminderTriggeredEvent {
   isShutdown: boolean
   powerAction?: PowerAction | null
   isTest: boolean
+  restStartedAtMs?: number | null
+  powerDeadlineMs?: number | null
 }
 
 export interface RestTimerStatus {

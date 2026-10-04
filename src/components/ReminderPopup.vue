@@ -178,12 +178,12 @@ function clearRestTimer() {
   restTimer = undefined
 }
 
-function startRestTimer() {
+function startRestTimer(startedAtMs?: number | null) {
   clearRestTimer()
-  restElapsedSeconds.value = 0
-  restStartedAt = Date.now()
+  restStartedAt = startedAtMs ?? Date.now()
+  restElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - restStartedAt) / 1000))
   restTimer = window.setInterval(() => {
-    restElapsedSeconds.value = Math.floor((Date.now() - restStartedAt) / 1000)
+    restElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - restStartedAt) / 1000))
   }, 1000)
 }
 
@@ -287,10 +287,10 @@ async function openPowerSettings() {
   }
 }
 
-function startPowerCountdown() {
+function startPowerCountdown(deadlineMs?: number | null) {
   clearPowerTimer()
-  powerCountdown.value = 60
-  powerDeadline = Date.now() + 60_000
+  powerDeadline = deadlineMs ?? Date.now() + 60_000
+  powerCountdown.value = Math.max(0, Math.ceil((powerDeadline - Date.now()) / 1000))
   powerTimer = window.setInterval(() => {
     const remaining = Math.ceil((powerDeadline - Date.now()) / 1000)
     powerCountdown.value = Math.max(0, remaining)
@@ -328,8 +328,8 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
     // Theme synchronization must not prevent a due notification from opening.
   }
   if (sequence !== notificationSequence) return
-  if (isAutomaticPower.value) startPowerCountdown()
-  else if (event.isRest) startRestTimer()
+  if (isAutomaticPower.value) startPowerCountdown(event.powerDeadlineMs)
+  else if (event.isRest) startRestTimer(event.restStartedAtMs)
   popupAnimationKey.value += 1
   popupAnimating.value = true
   await nextTick()

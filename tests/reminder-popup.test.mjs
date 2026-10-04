@@ -25,6 +25,24 @@ test('new settings enable fullscreen reminders by default', () => {
   assert.equal(defaultData().settings.popupFullscreen, true)
 })
 
+test('mode changes preserve the rest start and automatic power deadline', async () => {
+  const popup = await mountPopup()
+  const startedAt = popup.now()
+  await popup.state.handleTrigger({ ...restEvent, restStartedAtMs: startedAt })
+  await popup.advance(20_000)
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 2, restStartedAtMs: startedAt })
+  assert.equal(popup.state.restElapsedSeconds.value, 20)
+
+  const power = await mountPopup()
+  const deadline = power.now() + 60_000
+  await power.state.handleTrigger({ ...powerEvent, powerDeadlineMs: deadline })
+  await power.advance(40_000)
+  await power.state.handleTrigger({ ...powerEvent, sessionId: 3, powerDeadlineMs: deadline })
+  assert.equal(power.state.powerCountdown.value, 20)
+  await power.advance(20_000)
+  assert.equal(power.calls.filter((name) => name === 'execute_power_action').length, 1)
+})
+
 test('a late initial read cannot replace a newer trigger', async () => {
   const popup = await mountPopup({ readActive: async (listeners) => {
     listeners.get('reminder-triggered').callback({ payload: powerEvent })
@@ -154,6 +172,7 @@ async function mountPopup({ label = 'reminder', active = null, readActive } = {}
   await mounted()
   return {
     state, calls, intervals,
+    now: () => clockNow,
     setReadData: (callback) => { readData = callback },
     setNative: (name, callback) => nativeHandlers.set(name, callback),
     setInvoke: (name, callback) => invokeHandlers.set(name, callback),

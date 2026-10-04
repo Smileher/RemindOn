@@ -306,6 +306,8 @@ struct ReminderTriggeredEvent {
     is_shutdown: bool,
     power_action: Option<PowerAction>,
     is_test: bool,
+    rest_started_at_ms: Option<i64>,
+    power_deadline_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1160,6 +1162,13 @@ fn dispatch_trigger(
     };
     emit_rest_timer_updated(app, state);
     event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
+    let now_ms = Local::now().timestamp_millis();
+    if event.is_rest && event.rest_started_at_ms.is_none() {
+        event.rest_started_at_ms = Some(now_ms);
+    }
+    if event.is_shutdown && event.power_action.is_some() && event.power_deadline_ms.is_none() {
+        event.power_deadline_ms = Some(now_ms + 60_000);
+    }
     activate_reminder_session(app, state, event.clone());
     let labels = match prepare_reminder_windows(app, state, &settings) {
         Ok(labels) => labels,
@@ -1235,6 +1244,8 @@ fn process_due(app: &AppHandle, state: &AppState) {
                 is_shutdown: false,
                 power_action: None,
                 is_test: false,
+                rest_started_at_ms: None,
+                power_deadline_ms: None,
             });
             changed = true;
             match reminder.reminder_type {
@@ -1277,6 +1288,8 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         is_shutdown: false,
                         power_action: None,
                         is_test: false,
+                        rest_started_at_ms: None,
+                        power_deadline_ms: None,
                     });
                     *state
                         .0
@@ -1309,6 +1322,8 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         is_shutdown: true,
                         power_action: Some(data.settings.power_action.clone()),
                         is_test: false,
+                        rest_started_at_ms: None,
+                        power_deadline_ms: None,
                     });
                 }
                 *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
@@ -1737,6 +1752,8 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             is_shutdown: false,
             power_action: None,
             is_test: true,
+            rest_started_at_ms: None,
+            power_deadline_ms: None,
         },
         TestReminderKind::Rest => ReminderTriggeredEvent {
             session_id: 0,
@@ -1747,6 +1764,8 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             is_shutdown: false,
             power_action: None,
             is_test: true,
+            rest_started_at_ms: None,
+            power_deadline_ms: None,
         },
         TestReminderKind::Power => ReminderTriggeredEvent {
             session_id: 0,
@@ -1757,6 +1776,8 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             is_shutdown: true,
             power_action: Some(settings.power_action.clone()),
             is_test: true,
+            rest_started_at_ms: None,
+            power_deadline_ms: None,
         },
     }
 }
