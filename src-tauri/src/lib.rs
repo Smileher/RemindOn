@@ -2085,15 +2085,11 @@ fn system_prefers_dark() -> bool {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn system_prefers_dark() -> bool {
-    false
-}
-
 /// 把主题里的 System 解析成实际生效的深浅色。
 ///
 /// 窗口背景色必须是具体颜色，写不了"跟随系统"，所以 System 在这里落地成
 /// 当前系统的实际配色；系统外观变化时由 `start_system_theme_watcher` 重新应用。
+#[cfg(target_os = "macos")]
 fn resolve_theme(theme: &Theme) -> Theme {
     match theme {
         Theme::System => {
@@ -2148,12 +2144,13 @@ fn apply_theme_to_windows(app: &AppHandle, theme: &Theme) {
 /// 轮询系统外观，跟随系统模式下系统深浅色切换时同步窗口背景色。
 ///
 /// 只在偏好为 System 时才真正生效；显式 Dark/Light 不受影响。
+#[cfg(target_os = "macos")]
 fn start_system_theme_watcher(app: AppHandle, state: AppState) {
     thread::Builder::new()
         .name("system-theme-watcher".into())
         .spawn(move || {
             let mut last = system_prefers_dark();
-            loop {
+            while !state.0.scheduler_stop.load(Ordering::SeqCst) {
                 thread::sleep(StdDuration::from_secs(2));
                 let now = system_prefers_dark();
                 if now == last {
@@ -2182,7 +2179,7 @@ fn background_color_for(theme: &Theme) -> tauri::window::Color {
 fn create_main_window(
     app: &AppHandle,
     theme: Option<tauri::Theme>,
-    app_theme: &Theme,
+    _app_theme: &Theme,
 ) -> Result<WebviewWindow, String> {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("RemindOn")
@@ -2200,7 +2197,7 @@ fn create_main_window(
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Transparent)
-        .background_color(background_color_for(app_theme));
+        .background_color(background_color_for(_app_theme));
     builder
         .build()
         .map_err(|error| format!("Failed to create main window: {error}"))
@@ -2421,6 +2418,7 @@ pub fn run() {
             // 启动即对齐一次原生外观（含窗口背景色），避免标题栏先显示默认灰再跳变。
             let startup_theme = app_data(&state).settings.theme;
             apply_theme_to_windows(app.handle(), &startup_theme);
+            #[cfg(target_os = "macos")]
             start_system_theme_watcher(app.handle().clone(), state);
             updater::start_background_update_checks(
                 app.handle().clone(),
