@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
-import { checkScreenshots, fetchLatestRelease, parseRelease, screenshotNames } from '../build.mjs'
+import { fetchLatestRelease, parseRelease } from '../build.mjs'
 import { locales } from '../content.mjs'
 import { renderPage, repository } from '../template.mjs'
 
@@ -21,36 +18,36 @@ test('a new version updates GitHub downloads and the Store entry on both pages',
   assert.equal(release.version, '0.8.0')
   assert.deepEqual(Object.keys(release.downloads), ['windows', 'windowsArm64', 'portable', 'portableArm64', 'mac'])
   for (const language of Object.keys(locales)) {
-    const html = renderPage(language, release, screenshotNames)
+    const html = renderPage(language, release)
     assert.match(html, /v0\.8\.0/)
     assert.doesNotMatch(html, /v0\.7\.0|app\.tar\.gz/)
     for (const asset of Object.values(release.downloads)) assert.ok(html.includes(`href="${asset.url}"`))
     assert.match(html, /apps\.microsoft\.com\/detail\/9P9K31N2CJBW/)
     assert.equal((html.match(/class="platform-card"/g) || []).length, 2)
-    assert.match(html, new RegExp(`overview-${language}-dark.webp`))
-    assert.match(html, new RegExp(`overview-${language}-light.webp`))
-    assert.ok(html.includes('media="(prefers-color-scheme: dark)"'))
     assert.ok(html.includes(`<html lang="${locales[language].lang}">`))
     assert.ok(html.includes(`href="https://smileher.github.io/RemindOn/${locales[language].path}"`))
     assert.ok(html.includes('href="/RemindOn/assets/style.css"'))
     assert.ok(html.includes('src="/RemindOn/assets/theme.js"'))
-    assert.doesNotMatch(html, /undefined|screenshot-placeholder/)
+    assert.doesNotMatch(html, /undefined|screenshot-placeholder|\.webp/)
   }
 })
 
 test('the landing renders the glass structure and bilingual mockup copy', () => {
   const release = parseRelease(releaseFixture())
   for (const language of Object.keys(locales)) {
-    const html = renderPage(language, release, screenshotNames)
+    const html = renderPage(language, release)
     assert.ok(html.includes('class="nav-inner"'))
     assert.ok(html.includes('class="mockup-frame"'))
     assert.ok(html.includes('class="gradient-text"'))
     assert.equal((html.match(/class="feature"/g) || []).length, 7)
     assert.equal((html.match(/<details class="faq-item"/g) || []).length, locales[language].faqs.length)
     const mockup = locales[language].mockup
-    assert.ok(html.includes(mockup.reminders[0].name))
-    assert.ok(html.includes(mockup.toastTitle))
-    assert.ok(html.includes(mockup.countdownTime))
+    assert.ok(html.includes(mockup.title))
+    assert.ok(html.includes(mockup.status))
+    assert.ok(html.includes(mockup.message))
+    assert.ok(html.includes(mockup.nav[0]))
+    assert.ok(html.includes(mockup.settings))
+    assert.ok(html.includes(mockup.about))
     assert.ok(html.includes(`RemindOn · v${release.version}`))
     for (const trust of locales[language].trust) assert.ok(html.includes(trust))
     assert.doesNotMatch(html, /undefined/)
@@ -96,25 +93,4 @@ test('one API response supplies the complete release snapshot', async () => {
   })
   assert.equal(requests, 1)
   assert.equal(release.version, '0.9.0')
-})
-
-test('local preview shows a placeholder until both theme screenshots exist', () => {
-  const release = parseRelease(releaseFixture())
-  const html = renderPage('zh', release, ['overview-zh-light.webp'])
-  assert.match(html, /软件界面截图待补充/)
-  assert.doesNotMatch(html, /<picture>/)
-  assert.match(html, /RemindOn_0\.7\.0_x64-setup\.exe/)
-})
-
-test('production requires all four WebP files, preview permits missing files', async (context) => {
-  const directory = await mkdtemp(join(tmpdir(), 'remindon-site-screenshots-'))
-  // mkdtemp returns a new, absolute task-owned directory; cleanup only that directory.
-  context.after(() => rm(directory, { recursive: true, force: true }))
-  assert.deepEqual(await checkScreenshots(directory, true), [])
-  await assert.rejects(checkScreenshots(directory), /Add screenshots before deployment/)
-  const webp = Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64')
-  for (const name of screenshotNames) await writeFile(join(directory, name), webp)
-  assert.deepEqual(await checkScreenshots(directory), screenshotNames)
-  await writeFile(join(directory, screenshotNames[0]), 'not a WebP', 'utf8')
-  await assert.rejects(checkScreenshots(directory, true), /not a valid WebP/)
 })

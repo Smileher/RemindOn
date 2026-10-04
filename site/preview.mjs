@@ -5,9 +5,9 @@ import { extname, join, resolve, sep } from 'node:path'
 import { buildSite, outputDir } from './build.mjs'
 import { basePath } from './template.mjs'
 
-await buildSite({ preview: true })
+await buildSite()
 
-const contentTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.xml': 'application/xml; charset=utf-8' }
+const contentTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.xml': 'application/xml; charset=utf-8' }
 const server = createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname)
@@ -40,4 +40,4 @@ const server = createServer(async (request, response) => {
     response.writeHead(error.code === 'ENOENT' || error.code === 'ENOTDIR' ? 404 : 400).end('Not found')
   }
 })
-server.listen(4173, '127.0.0.1', () => console.log(`Preview: http://127.0.0.1:4173${basePath}\nAfter changing the site or screenshots, stop and restart this command.`))
+server.listen(4173, '127.0.0.1', () => console.log(`Preview: http://127.0.0.1:4173${basePath}\nAfter changing the site, stop and restart this command.`))

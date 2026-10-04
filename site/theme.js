@@ -15,8 +15,6 @@
   function applyTheme() {
     const dark = preference === 'dark' || (preference === 'system' && systemTheme.matches)
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-    const screenshot = document.querySelector('.product-preview source')
-    if (screenshot) screenshot.media = dark ? 'all' : 'not all'
     document.querySelectorAll('[data-theme-value]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.themeValue === preference))
     })

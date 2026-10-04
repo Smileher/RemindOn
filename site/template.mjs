@@ -20,6 +20,7 @@ const paths = {
   folder: '<path d="M3 7V5a2 2 0 0 1 2-2h4l3 4h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 14h6m-3-3v6"/>',
   sliders: '<path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6M9 8h6m2 8h6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>',
   windows: '<path d="m3 5 8-1v7H3Zm10-1 8-1v8h-8ZM3 13h8v7l-8-1Zm10 0h8v8l-8-1Z"/>',
   apple: '<path d="M15 3c0 2-1.5 3-3 3 0-2 1-3 3-3Zm-3 5c-2-2-7-1-7 4 0 4 3 9 5 9 1 0 1-1 2-1s2 1 3 1c2 0 4-3 4-5-3-1-4-5-1-7-2-2-4-2-6-1Z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -35,18 +36,13 @@ function icon(name, className = '', size = 24) {
 
 const iconColors = ['violet', 'pink', 'cyan']
 
-export function renderPage(language, release, screenshots) {
+export function renderPage(language, release) {
   const t = locales[language]
   const e = escapeHtml
   const windowsPackages = t.packages.filter((pkg) => pkg.icon === 'windows')
   const macPackage = t.packages.find((pkg) => pkg.key === 'mac')
   const url = `${origin}${basePath}${t.path}`
   const logo = `${basePath}assets/remindon.svg`
-  const screenshot = (theme) => `overview-${language}-${theme}.webp`
-  const hasScreenshots = ['light', 'dark'].every((theme) => screenshots.includes(screenshot(theme)))
-  const productImage = hasScreenshots
-    ? `<picture><source media="(prefers-color-scheme: dark)" srcset="${basePath}assets/screenshots/${screenshot('dark')}"><img class="product-image" src="${basePath}assets/screenshots/${screenshot('light')}" alt="${e(t.screenshotAlt)}" width="1560" height="1080" loading="lazy" decoding="async"></picture>`
-    : `<div class="screenshot-placeholder"><div class="placeholder-inner"><img src="${logo}" width="64" height="64" alt=""><strong>${e(t.placeholder)}</strong><span>${e(t.placeholderDetail)}</span></div></div>`
   const releaseDate = new Intl.DateTimeFormat(t.lang, { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(release.publishedAt))
   const allFeatures = [
     ...t.features.map((feature) => ({ ...feature, tags: feature.tags || [] })),
@@ -55,12 +51,7 @@ export function renderPage(language, release, screenshots) {
   const trustRow = [t.platforms, ...t.trust].map((item) => `<span>${e(item)}</span>`).join('<span class="sep" aria-hidden="true"></span>')
   const mockup = t.mockup
 
-  const mockupReminders = mockup.reminders.map((reminder, i) => `
-                <div class="mu-reminder${i === 0 ? ' featured' : ''}">
-                  <span class="mu-r-icon">${icon('calendar', '', 15)}</span>
-                  <span class="mu-r-copy"><strong>${e(reminder.name)}</strong><span class="mono">${e(reminder.time)} · ${e(reminder.repeat)}</span></span>
-                  <span class="mu-toggle${i < 2 ? ' on' : ''}" aria-hidden="true"></span>
-                </div>`).join('')
+  const mockupNav = mockup.nav.map((label, i) => `<li${i === 0 ? ' class="active"' : ''}>${icon(mockup.navIcons[i], '', 14)}<span>${e(label)}</span></li>`).join('')
 
   return `<!doctype html>
 <html lang="${t.lang}">
@@ -123,35 +114,31 @@ export function renderPage(language, release, screenshots) {
               <div class="mockup-ui" aria-hidden="true">
                 <aside class="mu-side">
                   <div class="mu-ws"><span class="mu-ws-mark">${icon('bell', '', 12)}</span><span class="mu-ws-name">RemindOn</span></div>
-                  <p class="mu-side-label">${e(mockup.sideLabel)}</p>
-                  <ul class="mu-proj">
-                    <li class="active">${icon('calendar', '', 14)}<span>${e(mockup.nav[0])}</span></li>
-                    <li>${icon('coffee', '', 14)}<span>${e(mockup.nav[1])}</span></li>
-                    <li>${icon('power', '', 14)}<span>${e(mockup.nav[2])}</span></li>
+                  <ul class="mu-proj">${mockupNav}
+                    <li>${icon('sliders', '', 14)}<span>${e(mockup.settings)}</span></li>
+                    <li>${icon('info', '', 14)}<span>${e(mockup.about)}</span></li>
                   </ul>
-                  <div class="mu-user"><span class="mu-avatar">${icon('sliders', '', 12)}</span><span class="mu-user-name">${e(mockup.settings)}</span></div>
+                  <div class="mu-user"><span class="mu-avatar">${icon('sliders', '', 12)}</span><span class="mu-user-name">v${e(release.version)}</span></div>
                 </aside>
                 <div class="mu-main">
                   <div class="mu-head">
                     <div class="mu-head-copy"><p class="mu-eyebrow mono">${e(mockup.eyebrow)}</p><h4>${e(mockup.title)}</h4><p class="mu-sub">${e(mockup.subtitle)}</p></div>
-                    <div class="mu-actions"><span class="mu-btn ghost">${e(mockup.test)}</span><span class="mu-btn grad">${icon('plus', '', 12)}${e(mockup.add)}</span></div>
+                    <div class="mu-actions"><span class="mu-btn ghost">${icon('bell', '', 12)}${e(mockup.test)}</span></div>
                   </div>
-                  <div class="mu-list">${mockupReminders}
+                  <div class="mu-status">
+                    <div class="mu-status-top"><span class="mu-status-icon">${icon('coffee', '', 16)}</span><span class="mu-status-copy"><small>${e(mockup.nextLabel)}</small><strong>${e(mockup.status)}</strong></span><span class="mu-toggle on" aria-hidden="true"></span></div>
+                    <div class="mu-bar"><span class="mu-bar-fill" style="width:${e(mockup.progress)}%"></span></div>
+                    <p>${e(mockup.scheduleHint)}</p>
+                  </div>
+                  <div class="mu-setting">
+                    <div><strong>${e(mockup.intervalLabel)}</strong><span>${e(mockup.intervalHint)}</span></div>
+                    <span class="mu-number mono">${e(mockup.interval)} <i>${e(mockup.minutesUnit)}</i></span>
+                  </div>
+                  <div class="mu-setting stacked">
+                    <div><strong>${e(mockup.messageLabel)}</strong><span>${e(mockup.messageHint)}</span></div>
+                    <span class="mu-input mono">${e(mockup.message)}</span>
                   </div>
                 </div>
-                <aside class="mu-panel">
-                  <div class="mu-panel-head"><span class="mu-spark">${icon('bell', '', 11)}</span><span>${e(mockup.panelLabel)}</span><span class="mu-live mono">${e(mockup.live)}</span></div>
-                  <div class="mu-toastcard">
-                    <strong>${e(mockup.toastTitle)}</strong>
-                    <p>${e(mockup.toastText)}</p>
-                    <div class="mu-chips"><span class="chip">${e(mockup.snooze)}</span><span class="chip grad">${e(mockup.ok)}</span></div>
-                  </div>
-                  <div class="mu-count">
-                    <div class="mu-count-head">${icon('clock', '', 13)}<span>${e(mockup.countdownLabel)}</span><span class="mono">${e(mockup.countdownTime)}</span></div>
-                    <div class="mu-bar"><span class="mu-bar-fill"></span></div>
-                    <p class="mono">${e(mockup.countdownTitle)} · ${e(mockup.countdownNote)}</p>
-                  </div>
-                </aside>
               </div>
             </div>
           </div>
@@ -162,12 +149,6 @@ export function renderPage(language, release, screenshots) {
       <div class="wrap">
         <div class="section-head"><p class="eyebrow">${e(t.featuresLabel)}</p><h2 id="features-title">${e(t.featuresTitle)}</h2><p>${e(t.featuresIntro)}</p></div>
         <div class="features-grid">${allFeatures.map((feature, i) => `<article class="feature" style="--i:${i % 3}"><span class="feature-icon ${iconColors[i % 3]}">${icon(feature.icon, '', 22)}</span><h3>${e(feature.title)}</h3><p>${e(feature.text)}</p>${feature.tags.length ? `<div class="feature-tags mono">${feature.tags.map((tag) => `<span class="chip">${e(tag)}</span>`).join('')}</div>` : ''}</article>`).join('')}</div>
-      </div>
-    </section>
-    <section class="screens section" aria-labelledby="screens-title">
-      <div class="wrap">
-        <div class="section-head"><p class="eyebrow">${e(t.screensLabel)}</p><h2 id="screens-title">${e(t.screensTitle)}</h2><p>${e(t.screensIntro)}</p></div>
-        <figure class="product-preview reveal">${productImage}<figcaption><span class="preview-dot" aria-hidden="true"></span>${e(t.preview)}<span class="preview-wordmark" aria-hidden="true">REMINDON</span></figcaption></figure>
       </div>
     </section>
     <section class="download-section section" id="download" aria-labelledby="download-title">
