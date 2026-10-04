@@ -2,7 +2,9 @@
 
 这份文档写给熟悉 Windows 开发、但刚开始接触 Mac 的你。核心差异集中在**路径、命令、产物格式**三点，工具链本身（Node / pnpm / Rust / VS Code）两边完全一致。
 
-## 一、已经装好的环境
+## 一、开发环境参考
+
+下表是既有 Mac 验证环境记录，不代表新设备已安装这些工具。新设备按 README 准备 Node.js 24 LTS、pnpm 11、Rust stable 和 Xcode Command Line Tools，并用版本命令核对。
 
 | 工具 | 版本 | 说明 |
 | --- | --- | --- |
@@ -15,10 +17,6 @@
 
 > **Node 版本说明**：README 和 CI 都要求 24 LTS，本机已装 24.19.0 完全对齐。Node 22 也能跑（实测 46 个测试全过），但既然两台机器都是 24 就没必要降级。
 >
-> Node 24 相比 22 的实用改进：`crypto.randomUUIDv7()`（时间有序 ID）、`req.signal`（客户端断开时中止请求）、测试运行器支持随机顺序（能发现隐藏的测试依赖）。这个项目目前用不到，但升级没有代价。
->
-> 想要 26 也行（`Temporal` 日期 API 默认开启、V8 14.6），但 26 目前是 Current 阶段，要到 2026 年 10 月底才进 LTS。个人工具项目没必要追 Current，等它进 LTS 再升更稳。
->
 > 项目没有 `.nvmrc` 或 `volta` 配置，所以 Node 版本不会被自动约束——换设备时记得手动对齐。
 
 > Rust 装在 `~/.cargo/bin`，这是**用户级**目录，不在 Homebrew 也不在系统 PATH 里。你自己新开终端时如果提示 `cargo: command not found`，执行下面这行补上：
@@ -27,13 +25,13 @@
 > echo 'source "$HOME/.cargo/env"' >> ~/.zshrc
 > ```
 >
-> 这行和 Homebrew 的 PATH 已经帮你写进 `~/.zshrc` 了，正常新开终端就能直接用 `cargo`、`gh`、`node`、`pnpm`。
+> 先检查 `~/.zshrc` 是否已有对应配置，避免重复追加。安装工具后完全退出并重开 VS Code，使新终端获得正确 PATH。
 
 ## 二、打开项目和运行
 
 ### 用 VS Code（推荐，和你 Windows 上的习惯一致）
 
-1. 打开 VS Code → `文件` → `打开文件夹` → 选 `/Users/smileher/Desktop/Remindon`
+1. 打开 VS Code → `文件` → `打开文件夹` → 选择本机的 RemindOn 仓库目录。
    - 注意要选**项目根目录**，即同时包含 `package.json` 和 `src-tauri/` 的那一层，不要选到子目录。
 2. 安装推荐扩展：打开项目后 VS Code 右下角会提示，点安装全部即可。
    - Vue (Official)、rust-analyzer、CodeLLDB、Tauri
@@ -61,7 +59,7 @@
 ### 用命令行
 
 ```zsh
-cd /Users/smileher/Desktop/Remindon
+# 先进入本机 RemindOn 仓库根目录
 pnpm tauri:dev
 ```
 
@@ -217,10 +215,12 @@ alias glog='git log --oneline --graph --decorate --all -20'
 
 **`scripts/*.ps1` 在 Mac 上不可运行**，这是预期行为，不是 bug。这两个脚本（`build-store.ps1`、`package-msix.ps1`）是 Windows 专用的 CI/本地打包入口。同目录下的 `create-updater-manifest.mjs` 和 `sync-gitee-release.mjs` 是跨平台的 Node 脚本，两边都能跑。
 
-**关于 `Cargo.lock`**：实测两台设备各自 build 不会改写它，锁文件保持稳定，不需要特殊处理。只有在 Windows 侧新增了 Rust 依赖并提交后，Mac 侧 `cargo build` 才会自动更新本地副本；此时若出现冲突，以远程版本为准：
+**关于 `Cargo.lock`**：应用项目应提交锁文件，两台设备一起同步 Cargo.toml 与 Cargo.lock。日常检查加 `--locked`，避免构建隐式改写依赖解析结果：
 ```zsh
-git checkout -- src-tauri/Cargo.lock && git pull
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
+
+新增依赖时由修改依赖的一端更新并提交锁文件。拉取前先检查本地未提交改动；若锁文件冲突，先合并 Cargo.toml，再确认依赖解析结果，不要直接丢弃本地锁文件改动。
 
 
 ### 5. 沙箱权限弹窗
@@ -245,10 +245,6 @@ source "$HOME/.cargo/env"
 ```
 
 装进 `~/.zshrc` 可以永久生效。
-
-**Vite 报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`**
-
-这是 AI 编程工具环境里的批量删除保护拦截了 Vite 清空 `dist` 目录的动作，不是项目问题。手动执行 `rm -rf dist` 后重跑构建即可。你自己用普通终端不会遇到。
 
 **`pnpm install` 报 symlink 错误**
 
@@ -316,8 +312,10 @@ node site/preview.mjs
 ```zsh
 # 先同步、更新版本号、跑一遍检查
 git pull
-# 修改 package.json 与 src-tauri/tauri.conf.json 的 version，两处必须一致
-pnpm test && cargo test --manifest-path src-tauri/Cargo.toml
+# 同步 package.json、src-tauri/Cargo.toml、src-tauri/tauri.conf.json 的版本
+# 更新 src/App.vue 的版本回退值，并让 Cargo 更新锁文件中的应用版本
+cargo check --manifest-path src-tauri/Cargo.toml
+pnpm build && pnpm test && cargo test --locked --manifest-path src-tauri/Cargo.toml
 git commit -am "chore: 提升版本至 1.2.0" && git push
 git tag v1.2.0 && git push origin v1.2.0
 ```
