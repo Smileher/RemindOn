@@ -331,8 +331,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-identity { display: flex; align-items: center; gap: 9px; }
 .popup-identity img { width: 38px; height: 38px; border-radius: 8px; }
 .popup-identity strong, .popup-identity span { display: block; }
-.popup-identity strong { color: var(--text); font-size: var(--font-sm); }
-.popup-identity span { margin-top: 2px; color: var(--muted); font-size: var(--font-xs); }
+.popup-identity strong { color: var(--popup-text, var(--text)); font-size: var(--font-sm); }
+.popup-identity span { margin-top: 2px; color: var(--popup-text, var(--muted)); font-size: var(--font-xs); }
 .popup-escape-hint { min-width: 36px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 4px 7px 3px; color: var(--muted); background: var(--page-bg); font: 700 10px/1.2 Inter, "Segoe UI", sans-serif; text-align: center; box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
 .popup-header-actions { display: flex; align-items: center; gap: 8px; }
 .popup-mode-button { display: grid; place-items: center; width: 24px; height: 22px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 0; color: var(--muted); background: var(--page-bg); box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
@@ -340,11 +340,11 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 /* 弹窗显示时 webview 会把焦点丢给第一个可聚焦元素，快捷键只有 ESC，这里不需要焦点环。 */
 .popup-mode-button:focus { outline: none; }
 .popup-content { align-self: center; padding: 21px 27px; }
-.popup-content h1 { max-width: 440px; font-size: var(--popup-title-size, var(--font-title)); line-height: 1.35; overflow-wrap: anywhere; }
-.rest-elapsed { margin: 0 0 15px; color: var(--muted); font-size: var(--font-title); line-height: 1; }
+.popup-content h1 { max-width: 440px; color: var(--popup-text, var(--text)); font-size: var(--popup-title-size, var(--font-title)); line-height: 1.35; overflow-wrap: anywhere; }
+.rest-elapsed { margin: 0 0 15px; color: var(--popup-text, var(--muted)); font-size: var(--font-title); line-height: 1; }
 .power-countdown { display: flex; align-items: baseline; gap: 7px; margin-top: 11px; color: var(--muted); }
 .power-countdown strong { color: var(--accent-strong); font-size: var(--font-display); line-height: 1; }
-.power-countdown span { font-size: var(--font-sm); }
+.power-countdown span { color: var(--popup-text, var(--muted)); font-size: var(--font-sm); }
 .popup-error { margin: 9px 0 0; color: var(--danger); font-size: var(--font-xs); }
 .popup-settings-button { margin-top: 9px; }
 .popup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 11px 15px; background: var(--surface); }
