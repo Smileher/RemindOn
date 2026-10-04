@@ -392,6 +392,7 @@ onMounted(async () => {
   }
   try {
     unlistenSettings = await currentWindow.listen<AppSettings>('settings-updated', async (event) => {
+      const previous = settings.value
       settings.value = event.payload
       await refreshPopupBackground()
       try {
@@ -399,10 +400,14 @@ onMounted(async () => {
       } catch {
         // Theme synchronization must not prevent the popup from updating.
       }
-      try {
-        await currentWindow.setAlwaysOnTop(settings.value.popupAlwaysOnTop)
-      } catch {
-        // Window synchronization is best effort while the popup is closing.
+      // macOS 上 setLevel 会打断进行中的外观过渡，冻结原生标题栏材质；
+      // 置顶状态没变时必须跳过，否则切换深浅色后弹窗标题栏不再跟随。
+      if (previous.popupAlwaysOnTop !== settings.value.popupAlwaysOnTop) {
+        try {
+          await currentWindow.setAlwaysOnTop(settings.value.popupAlwaysOnTop)
+        } catch {
+          // Window synchronization is best effort while the popup is closing.
+        }
       }
     })
   } catch {
