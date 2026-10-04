@@ -17,7 +17,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, AppSettings, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
+import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -264,12 +264,17 @@ function formatNext(reminder: Reminder) {
   return countdown ? `${formatRule(reminder)} · ${countdown}` : formatRule(reminder)
 }
 
-// 保存响应里是整个数据对象，拖动滑块这类连续修改会产生并发保存；
-// 只接受最后一次保存的响应，早到的过期响应不能把新值回滚成旧值。
+// 串行写入并在实际发送时读取最新数据，防止旧快照最后落盘。
 let persistToken = 0
-async function persist() {
+let persistQueue: Promise<unknown> = Promise.resolve()
+async function persist(popupFullscreen?: boolean) {
   const token = ++persistToken
-  const saved = await invoke<AppData>('save_data', { data: data.value })
+  const operation = persistQueue.then(() => invoke<AppData>('save_data', {
+    data: data.value,
+    popupFullscreen: popupFullscreen ?? null,
+  }))
+  persistQueue = operation.catch(() => {})
+  const saved = await operation
   if (token === persistToken) data.value = saved
 }
 
@@ -367,7 +372,7 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   data.value.settings = { ...previous, [key]: value }
   if (key === 'theme') await applyNativeTheme(value as Theme)
   try {
-    await persist()
+    await persist(key === 'popupFullscreen' ? value as boolean : undefined)
     await refreshTimers()
     if (key === 'systemNotificationEnabled') notificationError.value = ''
     return true
@@ -736,9 +741,10 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
-    // 弹窗上的切换按钮改设置后由后端广播，这里同步本地状态，避免下次保存用旧值覆盖。
-    unlistenSettingsSync = await getCurrentWindow().listen<AppSettings>('settings-updated', (event) => {
-      data.value.settings = event.payload
+    // 外部切换只更新相关字段，不能覆盖正在编辑的其他参数。
+    unlistenSettingsSync = await getCurrentWindow().listen<boolean>('popup-fullscreen-updated', (event) => {
+      persistToken += 1
+      data.value.settings.popupFullscreen = event.payload
     })
     await refreshTimers()
     clockTimer = window.setInterval(() => {

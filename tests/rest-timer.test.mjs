@@ -45,6 +45,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   let focused
   let hideCount = 0
   let readStatus = async () => status
+  let saveData = async (value) => structuredClone(value)
   function emitTo(target, name, payload) {
     const listener = listeners.get(name)
     if (listener && (listener.target === null || listener.target === target)) {
@@ -55,9 +56,11 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     vue: { ...vue, onMounted: (callback) => { mounted = callback }, onUnmounted: noop },
     '@tauri-apps/api/app': { getVersion: async () => '0.9.0', setTheme: async () => {} },
     '@tauri-apps/api/core': {
-      invoke: async (command) => {
+      invoke: async (command, args) => {
         calls.push(command)
         if (command === 'load_data') return structuredClone(settingsData)
+        if (command === 'save_data') return saveData(JSON.parse(JSON.stringify(args.data)), args)
+        if (command === 'read_popup_image') return null
         if (command === 'hide_idle_window') { hideCount += 1; return }
         if (command === 'get_rest_timer_status') {
           assert.ok(listeners.has('rest-timer-updated'), 'subscribe before reading initial status')
@@ -114,6 +117,8 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         location: { hash: '' },
         setInterval: () => 1,
         clearInterval: noop,
+        setTimeout: () => 1,
+        clearTimeout: noop,
         addEventListener: (name, callback) => { windowListeners.set(name, callback) },
         removeEventListener: (name) => { windowListeners.delete(name) },
       },
@@ -130,6 +135,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
   return {
     state, calls,
     setReadStatus: (callback) => { readStatus = callback },
+    setSaveData: (callback) => { saveData = callback },
     emit: (name, payload) => emitTo('main', name, payload),
     emitTo,
     focus: (isFocused) => focused({ payload: isFocused }),
@@ -149,6 +155,36 @@ test('Escape hides the main window to the tray', async () => {
   app.keydown({ key: 'Escape', repeat: false })
   await new Promise(setImmediate)
   assert.equal(app.getHideCount(), 1)
+})
+
+test('serial saves keep newer edits and external popup mode changes', async () => {
+  const app = await mountApp()
+  const writes = []
+  app.setSaveData((data, args) => new Promise((resolve) => writes.push({ data, args, resolve })))
+  const first = app.state.updateSetting('popupOverlayOpacity', 10)
+  await new Promise(setImmediate)
+  const second = app.state.updateSetting('popupOverlayOpacity', 90)
+  assert.equal(writes.length, 1)
+  await app.emit('popup-fullscreen-updated', false)
+  assert.equal(app.state.data.value.settings.popupOverlayOpacity, 90)
+  writes[0].resolve(writes[0].data)
+  await new Promise(setImmediate)
+  assert.equal(writes.length, 2)
+  assert.equal(writes[1].data.settings.popupOverlayOpacity, 90)
+  assert.equal(writes[1].data.settings.popupFullscreen, false)
+  assert.equal(writes[1].args.popupFullscreen, null)
+  writes[1].resolve(writes[1].data)
+  await Promise.all([first, second])
+  assert.equal(app.state.data.value.settings.popupOverlayOpacity, 90)
+  assert.equal(app.state.data.value.settings.popupFullscreen, false)
+})
+
+test('explicit main-window mode changes are included in the save', async () => {
+  const app = await mountApp()
+  let savedArgs
+  app.setSaveData(async (data, args) => { savedArgs = args; return data })
+  await app.state.updateSetting('popupFullscreen', false)
+  assert.equal(savedArgs.popupFullscreen, false)
 })
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {

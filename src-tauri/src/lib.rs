@@ -1010,6 +1010,7 @@ async fn toggle_popup_fullscreen(
         write_json(&state.0.data_path, &data)?;
         drop(data);
         sync_reminder_settings(&app, &settings);
+        let _ = app.emit_to("main", "popup-fullscreen-updated", settings.popup_fullscreen);
         let active = state
             .0
             .active_reminder
@@ -1114,8 +1115,6 @@ fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
         apply_window_appearance(&window, &settings.theme);
         let _ = app.emit_to(window.label(), "settings-updated", settings);
     }
-    // 弹窗上的切换按钮也会改设置；主窗口不同步的话，下次在主窗口保存会用旧值覆盖回去。
-    let _ = app.emit_to("main", "settings-updated", settings);
     if let Some(window) = app.get_webview_window("main") {
         apply_window_appearance(&window, &settings.theme);
     }
@@ -1380,6 +1379,7 @@ fn load_data(state: State<'_, AppState>) -> Result<AppData, String> {
 #[tauri::command]
 async fn save_data(
     mut data: AppData,
+    popup_fullscreen: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
@@ -1388,8 +1388,10 @@ async fn save_data(
         .window_operations
         .lock()
         .expect("window operations lock poisoned");
-    validate_and_normalize(&mut data)?;
     let mut current = state.0.data.lock().expect("settings lock poisoned");
+    // 普通保存保留后端当前模式，只有主窗口明确切换时才覆盖它。
+    data.settings.popup_fullscreen = popup_fullscreen.unwrap_or(current.settings.popup_fullscreen);
+    validate_and_normalize(&mut data)?;
     let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
     let rest_interval_changed =
         current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
