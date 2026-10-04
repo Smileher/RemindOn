@@ -2294,13 +2294,9 @@ fn apply_application_menu(app: &tauri::AppHandle, language: Language) {
     let result = (|| -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         let about = PredefinedMenuItem::about(app, Some("RemindOn"), None)?;
         let services = PredefinedMenuItem::services(app, Some(&label("服务", "Services")))?;
-        let hide = MenuItemBuilder::with_id("hide", label("隐藏 RemindOn", "Hide RemindOn"))
-            .accelerator("Cmd+H")
-            .build(app)?;
-        let hide_others = MenuItemBuilder::with_id("hide-others", label("隐藏其他", "Hide Others"))
-            .accelerator("Cmd+Alt+H")
-            .build(app)?;
-        let show_all = MenuItemBuilder::with_id("show-all", label("全部显示", "Show All")).build(app)?;
+        let hide = PredefinedMenuItem::hide(app, Some(&label("隐藏 RemindOn", "Hide RemindOn")))?;
+        let hide_others = PredefinedMenuItem::hide_others(app, Some(&label("隐藏其他", "Hide Others")))?;
+        let show_all = PredefinedMenuItem::show_all(app, Some(&label("全部显示", "Show All")))?;
         let quit = MenuItemBuilder::with_id("quit", label("退出 RemindOn", "Quit RemindOn"))
             .accelerator("Cmd+Q")
             .build(app)?;
@@ -2325,31 +2321,6 @@ fn apply_application_menu(app: &tauri::AppHandle, language: Language) {
     })();
     if let Ok(menu) = result {
         let _ = app.set_menu(menu);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn hide_all_windows(app: &tauri::AppHandle) {
-    for (_, window) in app.webview_windows() {
-        let _ = window.hide();
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn hide_other_windows(app: &tauri::AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if label != "main" {
-            let _ = window.hide();
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn show_all_windows(app: &tauri::AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if label == "main" {
-            let _ = window.show();
-        }
     }
 }
 
@@ -2465,12 +2436,6 @@ pub fn run() {
             }
             "about" => show_about(app),
             "quit" => app.exit(0),
-            #[cfg(target_os = "macos")]
-            "hide" => hide_all_windows(app),
-            #[cfg(target_os = "macos")]
-            "hide-others" => hide_other_windows(app),
-            #[cfg(target_os = "macos")]
-            "show-all" => show_all_windows(app),
             _ => {}
         })
         .build(tauri::generate_context!())
