@@ -38,6 +38,25 @@ test('a new version updates GitHub downloads and the Store entry on both pages',
   }
 })
 
+test('the landing renders the glass structure and bilingual mockup copy', () => {
+  const release = parseRelease(releaseFixture())
+  for (const language of Object.keys(locales)) {
+    const html = renderPage(language, release, screenshotNames)
+    assert.ok(html.includes('class="nav-inner"'))
+    assert.ok(html.includes('class="mockup-frame"'))
+    assert.ok(html.includes('class="gradient-text"'))
+    assert.equal((html.match(/class="feature"/g) || []).length, 7)
+    assert.equal((html.match(/<details class="faq-item"/g) || []).length, locales[language].faqs.length)
+    const mockup = locales[language].mockup
+    assert.ok(html.includes(mockup.reminders[0].name))
+    assert.ok(html.includes(mockup.toastTitle))
+    assert.ok(html.includes(mockup.countdownTime))
+    assert.ok(html.includes(`RemindOn · v${release.version}`))
+    for (const trust of locales[language].trust) assert.ok(html.includes(trust))
+    assert.doesNotMatch(html, /undefined/)
+  }
+})
+
 test('missing platform package fails instead of linking a signature or update archive', () => {
   for (const index of [0, 1, 2, 3, 4]) {
     const release = releaseFixture()

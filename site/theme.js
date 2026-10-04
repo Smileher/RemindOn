@@ -1,4 +1,7 @@
 (() => {
+  // Mark JS availability so entrance animations only run when they can be driven.
+  document.documentElement.classList.add('js')
+
   const storageKey = 'remindon-site-theme'
   const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
   let preference = 'system'
@@ -18,7 +21,7 @@
       button.setAttribute('aria-pressed', String(button.dataset.themeValue === preference))
     })
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
-      meta.content = dark ? '#141b18' : '#f7f9f5'
+      meta.content = dark ? '#0A0B1A' : '#F4F2FB'
     })
   }
 
@@ -28,17 +31,35 @@
   document.addEventListener('DOMContentLoaded', () => {
     applyTheme()
     const controls = document.querySelector('.theme-controls')
-    controls.hidden = false
-    controls.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-theme-value]')
-      if (!button) return
-      preference = button.dataset.themeValue
-      try {
-        localStorage.setItem(storageKey, preference)
-      } catch {
-        // Keep the current selection for this page if it cannot be persisted.
-      }
-      applyTheme()
-    })
+    if (controls) {
+      controls.hidden = false
+      controls.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-theme-value]')
+        if (!button) return
+        preference = button.dataset.themeValue
+        try {
+          localStorage.setItem(storageKey, preference)
+        } catch {
+          // Keep the current selection for this page if it cannot be persisted.
+        }
+        applyTheme()
+      })
+    }
+
+    // Reveal sections as they scroll into view; skipped entirely without JS or with reduced motion.
+    const revealables = document.querySelectorAll('.reveal, .feature')
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if ('IntersectionObserver' in window && !reduceMotion) {
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          entry.target.classList.add('in')
+          observer.unobserve(entry.target)
+        }
+      }, { threshold: 0.12, rootMargin: '0px 0px -36px' })
+      revealables.forEach((element) => observer.observe(element))
+    } else {
+      revealables.forEach((element) => element.classList.add('in'))
+    }
   })
 })()
