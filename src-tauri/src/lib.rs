@@ -334,6 +334,7 @@ struct InnerState {
     pending_navigation: Mutex<Option<String>>,
     // All native window work is serialized off the UI thread, including destruction.
     window_operations: Mutex<()>,
+    popup_image_operations: Mutex<()>,
     window_cache: Mutex<WindowCache>,
     reminder_targets: Mutex<HashSet<String>>,
     main_ready: AtomicBool,
@@ -1867,12 +1868,17 @@ fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
 /// Copy a user-picked image into the configuration folder and return it as a data URL.
 /// The file lives next to `remindon.json`, so development and installed builds share one copy.
 #[tauri::command]
-fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> {
+async fn import_popup_image(
+    source: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
     let origin = PathBuf::from(&source);
     if !origin.is_file() {
         return Err("The selected image does not exist".to_string());
     }
-    let mime = extension_mime(&image_extension(&origin)?);
+    image_extension(&origin)?;
     let directory = app
         .path()
         .app_config_dir()
@@ -1881,8 +1887,9 @@ fn import_popup_image(source: String, app: AppHandle) -> Result<String, String> 
         .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
     // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
     let target = directory.join("popup-background.img");
-    fs::copy(&origin, &target).map_err(|error| format!("Failed to copy the image: {error}"))?;
-    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    let bytes = fs::read(&origin).map_err(|error| format!("Failed to read the image: {error}"))?;
+    let mime = image_mime(&bytes)?;
+    fs::write(&target, &bytes).map_err(|error| format!("Failed to save the image: {error}"))?;
     emit_to_reminder_windows(&app, "popup-image-updated", ());
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
@@ -1900,20 +1907,42 @@ fn image_extension(path: &Path) -> Result<String, String> {
         .ok_or_else(|| "Unsupported image format".to_string())
 }
 
-fn extension_mime(extension: &str) -> &'static str {
-    match extension {
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        "bmp" => "image/bmp",
-        "avif" => "image/avif",
-        _ => "image/png",
+// 固定 .img 文件没有格式信息，按文件签名识别也兼容已经保存的图片。
+fn image_mime(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok("image/png");
     }
+    if bytes.starts_with(b"\xff\xd8\xff") {
+        return Ok("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Ok("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Ok("image/webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Ok("image/bmp");
+    }
+    if bytes.len() >= 16 && &bytes[4..8] == b"ftyp" {
+        let size = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+        if size >= 16 && size <= bytes.len()
+            && std::iter::once(&bytes[8..12]).chain(bytes[16..size].chunks_exact(4))
+                .any(|brand| brand == b"avif" || brand == b"avis")
+        {
+            return Ok("image/avif");
+        }
+    }
+    Err("Unsupported or invalid image format".to_string())
 }
 
 /// Read the stored background image back as a data URL. An absent file simply means no background.
 #[tauri::command]
-fn read_popup_image(app: AppHandle) -> Result<Option<String>, String> {
+async fn read_popup_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
     let directory = match app.path().app_config_dir() {
         Ok(directory) => directory,
         Err(_) => return Ok(None),
@@ -1923,11 +1952,11 @@ fn read_popup_image(app: AppHandle) -> Result<Option<String>, String> {
     if !target.is_file() {
         return Ok(None);
     }
-    let extension = image_extension(&target).unwrap_or_else(|_| "png".to_string());
     let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    let mime = image_mime(&bytes)?;
     Ok(Some(format!(
         "data:{};base64,{}",
-        extension_mime(&extension),
+        mime,
         base64_encode(&bytes)
     )))
 }
@@ -1958,7 +1987,8 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 #[tauri::command]
-fn clear_popup_image(app: AppHandle) -> Result<(), String> {
+async fn clear_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
     let directory = match app.path().app_config_dir() {
         Ok(directory) => directory,
         Err(_) => return Ok(()),
@@ -2372,6 +2402,7 @@ pub fn run() {
                 shutdown_next: Mutex::new(None),
                 pending_navigation: Mutex::new(None),
                 window_operations: Mutex::new(()),
+                popup_image_operations: Mutex::new(()),
                 window_cache: Mutex::new(WindowCache::default()),
                 reminder_targets: Mutex::new(HashSet::new()),
                 main_ready: AtomicBool::new(false),
@@ -2540,6 +2571,18 @@ mod tests {
     }
 
     #[test]
+    fn fixed_filename_images_keep_their_real_format() {
+        assert_eq!(image_mime(b"\x89PNG\r\n\x1a\n").unwrap(), "image/png");
+        assert_eq!(image_mime(b"\xff\xd8\xff").unwrap(), "image/jpeg");
+        assert_eq!(image_mime(b"GIF89a").unwrap(), "image/gif");
+        assert_eq!(image_mime(b"RIFF0000WEBP").unwrap(), "image/webp");
+        assert_eq!(image_mime(b"BM").unwrap(), "image/bmp");
+        assert_eq!(image_mime(b"\0\0\0\x18ftypmif1\0\0\0\0avifmif1").unwrap(), "image/avif");
+        assert!(image_mime(b"not an image").is_err());
+        assert!(image_mime(b"\0\0\0\xffftypavif\0\0\0\0").is_err());
+    }
+
+    #[test]
     fn reopening_cancels_reclamation_and_reclosing_starts_a_new_delay() {
         let mut cache = WindowCache::default();
         let now = Instant::now();
@@ -2589,6 +2632,7 @@ mod tests {
             shutdown_next: Mutex::new(None),
             pending_navigation: Mutex::new(None),
             window_operations: Mutex::new(()),
+            popup_image_operations: Mutex::new(()),
             window_cache: Mutex::new(WindowCache::default()),
             reminder_targets: Mutex::new(HashSet::new()),
             main_ready: AtomicBool::new(false),
