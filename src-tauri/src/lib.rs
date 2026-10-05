@@ -16,6 +16,7 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 
+mod browser;
 mod i18n;
 #[cfg(target_os = "windows")]
 mod notification;
@@ -1037,6 +1038,9 @@ fn create_reminder_window(
 ) -> Result<WebviewWindow, String> {
     let transparent = is_transparent_popup(&label);
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html#/reminder".into()))
+        .devtools(false)
+        .zoom_hotkeys_enabled(false)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .title(i18n::notification_window_title(settings.language))
         .visible(false)
         .decorations(false)
@@ -2166,6 +2170,9 @@ fn create_main_window(
     _app_theme: &Theme,
 ) -> Result<WebviewWindow, String> {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .devtools(false)
+        .zoom_hotkeys_enabled(false)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .title("RemindOn")
         .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
         .min_inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
@@ -2349,6 +2356,7 @@ fn apply_application_menu(app: &tauri::AppHandle, language: Language) {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(browser::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main_window(app);
         }))
