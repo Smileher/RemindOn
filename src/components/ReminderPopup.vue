@@ -60,6 +60,7 @@ const popupClass = computed(() => [
     'popup-enter': popupAnimating.value,
     'popup-see-through': seeThrough.value,
     'popup-no-fade': !settings.value.popupFadeEnabled,
+    'popup-has-image': Boolean(popupBackgroundUrl.value),
   },
 ])
 
@@ -82,9 +83,6 @@ async function refreshPopupBackground() {
 const popupStyleVars = computed(() => {
   const current = settings.value
   const style: Record<string, string> = {}
-  if (popupBackgroundUrl.value) {
-    style['--popup-image'] = `url("${popupBackgroundUrl.value}")`
-  }
   if (current.popupTextColor) style['--popup-text'] = current.popupTextColor
   if (current.popupTitleSize) style['--popup-title-size'] = `${current.popupTitleSize}px`
   return style
@@ -443,7 +441,6 @@ onUnmounted(() => {
         <button
           class="popup-mode-button"
           type="button"
-          tabindex="-1"
           :title="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
           :aria-label="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
           @click="toggleFullscreenMode"

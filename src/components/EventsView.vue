@@ -40,7 +40,6 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
   <section class="page-section reminder-page">
     <header class="page-header reminder-header">
       <div>
-        <p class="eyebrow">REMINDERS</p>
         <h1>{{ t('events.title') }}</h1>
         <p class="page-subtitle">{{ subtitle }}</p>
       </div>
@@ -55,7 +54,6 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
     <div v-if="showForm" class="form-panel">
       <div class="form-heading">
         <div>
-          <p class="eyebrow">REMINDER</p>
           <h2>{{ editingId ? t('events.editTitle') : t('events.addTitle') }}</h2>
         </div>
         <button class="icon-button" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="emit('closeForm')"><X :size="18" /></button>

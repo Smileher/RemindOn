@@ -31,7 +31,6 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
   <section class="page-section reminder-page">
     <header class="page-header reminder-header">
       <div>
-        <p class="eyebrow">SYSTEM</p>
         <h1>{{ t('power.title') }}</h1>
         <p class="page-subtitle">{{ subtitle }}</p>
       </div>

@@ -32,7 +32,6 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
   <section class="page-section reminder-page">
     <header class="page-header reminder-header">
       <div>
-        <p class="eyebrow">BREAK</p>
         <h1>{{ t('rest.title') }}</h1>
         <p class="page-subtitle">{{ subtitle }}</p>
       </div>
@@ -49,7 +48,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
           <strong>{{ status }}</strong>
         </div>
         <label class="setting-toggle compact-toggle">
-          <input :checked="enabled" type="checkbox" @change="emit('update:enabled', ($event.target as HTMLInputElement).checked)" />
+          <input :checked="enabled" :aria-label="t('rest.title')" type="checkbox" @change="emit('update:enabled', ($event.target as HTMLInputElement).checked)" />
         </label>
       </div>
       <div class="progress-track"><span :style="{ width: `${progress}%` }"></span></div>

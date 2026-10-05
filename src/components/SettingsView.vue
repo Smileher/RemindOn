@@ -32,6 +32,28 @@ const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() =
 ])
 
 const previewMode = ref<'fullscreen' | 'windowed'>('fullscreen')
+const activeTab = ref('general')
+const tabs = [
+  { id: 'general', label: 'settings.groupGeneral' },
+  { id: 'appearance', label: 'settings.groupAppearance' },
+  { id: 'popup', label: 'settings.groupPopup' },
+  { id: 'notification', label: 'settings.groupNotification' },
+  { id: 'data', label: 'settings.groupData' },
+] as const
+
+function navigateTabs(event: KeyboardEvent) {
+  const index = tabs.findIndex(tab => tab.id === activeTab.value)
+  let next = index
+  if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
+  else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = tabs.length - 1
+  else return
+  event.preventDefault()
+  activeTab.value = tabs[next]!.id
+  const buttons = (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="tab"]')
+  buttons[next]?.focus()
+}
 const imageControls = [
   { key: 'popupBackgroundScale', label: 'settings.imageScale', min: 1, max: 400 },
   { key: 'popupBackgroundOffsetX', label: 'settings.imageOffsetX', min: -50, max: 50 },
@@ -49,17 +71,19 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
 </script>
 
 <template>
-  <section class="page-section narrow-section">
+  <section class="page-section preferences-page">
     <header class="page-header compact-header">
       <div>
-        <p class="eyebrow">PREFERENCES</p>
         <h1>{{ t('settings.title') }}</h1>
         <p class="page-subtitle">{{ t('settings.subtitle') }}</p>
       </div>
     </header>
 
-    <div class="settings-group">
-      <p class="settings-group-title">{{ t('settings.groupGeneral') }}</p>
+    <div class="settings-tabs" role="tablist" :aria-label="t('settings.title')" @keydown="navigateTabs">
+      <button v-for="tab in tabs" :id="`settings-tab-${tab.id}`" :key="tab.id" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`settings-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" @click="activeTab = tab.id">{{ t(tab.label) }}</button>
+    </div>
+
+    <div v-show="activeTab === 'general'" id="settings-panel-general" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-general">
       <div class="setting-card setting-choice">
         <div><strong>{{ t('settings.language') }}</strong><span>{{ t('settings.languageHint') }}</span></div>
         <div class="segmented">
@@ -77,8 +101,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       </label>
     </div>
 
-    <div class="settings-group">
-      <p class="settings-group-title">{{ t('settings.groupAppearance') }}</p>
+    <div v-show="activeTab === 'appearance'" id="settings-panel-appearance" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-appearance">
       <div class="setting-card setting-choice">
         <div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div>
         <div class="segmented">
@@ -95,15 +118,23 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
             :key="color"
             :class="['color-swatch', `swatch-${color}`, { selected: settings.accentColor === color }]"
             type="button"
-            :aria-label="color"
+            :aria-label="t(`settings.color${color}`)"
+            :title="t(`settings.color${color}`)"
             @click="emit('update:setting', 'accentColor', color)"
           ></button>
         </div>
       </div>
     </div>
 
-    <div class="settings-group">
-      <p class="settings-group-title">{{ t('settings.groupPopup') }}</p>
+    <div v-show="activeTab === 'popup'" id="settings-panel-popup" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-popup">
+      <label class="setting-card setting-toggle">
+        <div><strong>{{ t('settings.fullscreenPopup') }}</strong><span>{{ t('settings.fullscreenPopupHint') }}</span></div>
+        <input :checked="settings.popupFullscreen" :aria-label="t('settings.fullscreenPopup')" type="checkbox" @change="emit('update:setting', 'popupFullscreen', ($event.target as HTMLInputElement).checked)" />
+      </label>
+      <label class="setting-card setting-toggle">
+        <div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div>
+        <input :checked="settings.popupAlwaysOnTop" :aria-label="t('settings.alwaysOnTop')" type="checkbox" @change="emit('update:setting', 'popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" />
+      </label>
       <div class="setting-card stacked-setting">
         <div><strong>{{ t('settings.popupBackground') }}</strong><span>{{ t('settings.popupBackgroundHint') }}</span></div>
         <div class="background-picker">
@@ -123,7 +154,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <template v-if="settings.popupBackgroundFit === 'contain'">
           <label v-for="control in imageControls" :key="control.key" class="slider-row image-slider">
             <span>{{ t(control.label) }}</span>
-            <input :value="settings[control.key]" type="range" :min="control.min" :max="control.max" step="1" @input="updateImageValue(control.key, $event, control.min, control.max)" />
+            <input :aria-label="t(control.label)" :value="settings[control.key]" :style="{ '--fill': `${(settings[control.key] - control.min) / (control.max - control.min) * 100}%` }" type="range" :min="control.min" :max="control.max" step="1" @input="updateImageValue(control.key, $event, control.min, control.max)" />
             <span class="number-field"><input :aria-label="t(control.label)" :value="settings[control.key]" type="number" :min="control.min" :max="control.max" step="1" @change="updateImageValue(control.key, $event, control.min, control.max)" /><span>%</span></span>
           </label>
         </template>
@@ -153,43 +184,36 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div><strong>{{ t('settings.popupText') }}</strong><span>{{ t('settings.popupTextHint') }}</span></div>
         <div class="text-controls">
           <span class="color-control">
-            <input type="color" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
+            <input type="color" :aria-label="t('settings.popupText')" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
             <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
           </span>
-          <label class="number-field"><input :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
+          <label class="number-field"><input :aria-label="t('settings.popupText')" :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
         </div>
       </div>
     </div>
 
-    <div class="settings-group">
-      <p class="settings-group-title">{{ t('settings.groupNotification') }}</p>
-      <label class="setting-card setting-toggle">
-        <div><strong>{{ t('settings.alwaysOnTop') }}</strong><span>{{ t('settings.alwaysOnTopHint') }}</span></div>
-        <input :checked="settings.popupAlwaysOnTop" type="checkbox" @change="emit('update:setting', 'popupAlwaysOnTop', ($event.target as HTMLInputElement).checked)" />
-      </label>
-      <label class="setting-card setting-toggle">
-        <div><strong>{{ t('settings.fullscreenPopup') }}</strong><span>{{ t('settings.fullscreenPopupHint') }}</span></div>
-        <input :checked="settings.popupFullscreen" type="checkbox" @change="emit('update:setting', 'popupFullscreen', ($event.target as HTMLInputElement).checked)" />
-      </label>
+    <div v-show="activeTab === 'notification'" id="settings-panel-notification" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-notification">
       <label class="setting-card setting-toggle">
         <div><strong>{{ t('settings.systemNotification') }}</strong><span>{{ t('settings.systemNotificationHint') }}</span><small v-if="notificationError" class="setting-error">{{ notificationError }}</small></div>
         <input :checked="settings.systemNotificationEnabled" type="checkbox" @change="emit('update:setting', 'systemNotificationEnabled', ($event.target as HTMLInputElement).checked)" />
       </label>
     </div>
 
-    <div class="settings-group">
-      <p class="settings-group-title">{{ t('settings.groupData') }}</p>
+    <div v-show="activeTab === 'data'" id="settings-panel-data" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-data">
       <div class="data-actions">
         <div class="data-actions-row">
           <div><strong>{{ t('settings.data') }}</strong><span>{{ t('settings.dataHint') }}</span></div>
           <div class="action-row">
             <button class="button" type="button" @click="emit('importData')"><Upload :size="14" />{{ t('settings.import') }}</button>
             <button class="button" type="button" @click="emit('exportData')"><Download :size="14" />{{ t('settings.export') }}</button>
-            <button class="button danger" type="button" :disabled="!canReset" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
           </div>
         </div>
-        <small v-if="actionMessage" class="status-message">{{ actionMessage }}</small>
+      </div>
+      <div class="setting-card">
+        <div><strong>{{ t('settings.reset') }}</strong><span>{{ t('settings.resetHint') }}</span></div>
+        <button class="button danger" type="button" :disabled="!canReset" @click="emit('resetSettings')"><RotateCcw :size="14" />{{ t('settings.reset') }}</button>
       </div>
     </div>
+    <small v-if="actionMessage" class="status-message page-message" role="status">{{ actionMessage }}</small>
   </section>
 </template>
