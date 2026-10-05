@@ -9,8 +9,9 @@ import brandIcon from '../assets/remindon.svg'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
 import { logError } from '../error'
-import type { AppData, AppSettings, PopupBackgroundPosition, ReminderTriggeredEvent } from '../types'
+import type { AppData, AppSettings, ReminderTriggeredEvent } from '../types'
 import { defaultData } from '../types'
+import PopupBackground from './PopupBackground.vue'
 
 const current = ref<ReminderTriggeredEvent | null>(null)
 const settings = ref<AppData['settings']>(defaultData().settings)
@@ -36,7 +37,7 @@ const powerCountdown = ref(60)
 const powerError = ref('')
 const popupAnimating = ref(false)
 const popupAnimationKey = ref(0)
-// 窗口透明时背景层交给 ::before 渐入，文字先浮现；不透明窗口维持纯色底。
+// 窗口透明时独立背景层渐入，文字先浮现；不透明窗口维持纯色底。
 const seeThrough = ref(false)
 let unlisten: (() => void) | undefined
 let unlistenSettings: (() => void) | undefined
@@ -78,30 +79,11 @@ async function refreshPopupBackground() {
   }
 }
 
-const backgroundPositionMap: Record<PopupBackgroundPosition, string> = {
-  topLeft: 'left top',
-  top: 'center top',
-  topRight: 'right top',
-  left: 'left center',
-  center: 'center center',
-  right: 'right center',
-  bottomLeft: 'left bottom',
-  bottom: 'center bottom',
-  bottomRight: 'right bottom',
-}
-
 const popupStyleVars = computed(() => {
   const current = settings.value
   const style: Record<string, string> = {}
   if (popupBackgroundUrl.value) {
-    const fit = current.popupBackgroundFit
-    const size = fit === 'stretch' ? '100% 100%' : fit === 'repeat' || fit === 'original' ? 'auto' : fit === 'contain' ? 'contain' : 'cover'
-    const repeat = fit === 'repeat' ? 'repeat' : 'no-repeat'
     style['--popup-image'] = `url("${popupBackgroundUrl.value}")`
-    style['--popup-image-size'] = size
-    style['--popup-image-repeat'] = repeat
-    style['--popup-image-position'] = backgroundPositionMap[current.popupBackgroundPosition] ?? 'center center'
-    style['--popup-overlay'] = String(current.popupOverlayOpacity / 100)
   }
   if (current.popupTextColor) style['--popup-text'] = current.popupTextColor
   if (current.popupTitleSize) style['--popup-title-size'] = `${current.popupTitleSize}px`
@@ -455,6 +437,7 @@ onUnmounted(() => {
 
 <template>
   <main :key="popupAnimationKey" :class="['popup-shell', ...popupClass]" :style="popupStyleVars">
+    <PopupBackground :settings="settings" :url="popupBackgroundUrl" />
     <header class="popup-header">
       <div class="popup-identity"><img :src="brandIcon" alt="" /><div><strong>RemindOn</strong><span>{{ t('popup.time', { category, time: triggeredAtLabel || t('common.now') }) }}</span></div></div>
       <div class="popup-header-actions">

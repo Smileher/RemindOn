@@ -173,6 +173,7 @@ async function mountPopup({ label = 'reminder', active = null, readActive } = {}
     '../assets/remindon.svg': { default: 'remindon.svg' },
     '../i18n': { translate },
     '../types': { defaultData },
+    './PopupBackground.vue': { default: { render: noop } },
     '../error': { logError: (_context, error) => { throw error } },
   }
   const exports = {}

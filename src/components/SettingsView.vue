@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import {
-  ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight,
-  ArrowUp, ArrowUpLeft, ArrowUpRight, Circle, Download, Image, RotateCcw, Upload,
-} from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { Download, Image, RotateCcw, Upload } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { AccentColor, AppSettings, Language, PopupBackgroundFit, PopupBackgroundPosition, Theme } from '../types'
+import type { AccentColor, AppSettings, Language, PopupBackgroundFit, Theme } from '../types'
+import PopupBackground from './PopupBackground.vue'
 
 const props = defineProps<{
   language: Language
@@ -29,23 +27,21 @@ const emit = defineEmits<{
 }>()
 
 const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() => [
-  { value: 'cover', label: t('settings.fitCover') },
-  { value: 'original', label: t('settings.fitOriginal') },
+  { value: 'stretch', label: t('settings.fitStretch') },
+  { value: 'contain', label: t('settings.fitContain') },
 ])
 
-const positionOptions = computed<{ value: PopupBackgroundPosition; label: string; icon: typeof ArrowUp }[]>(() => [
-  { value: 'topLeft', label: t('settings.posTopLeft'), icon: ArrowUpLeft },
-  { value: 'top', label: t('settings.posTop'), icon: ArrowUp },
-  { value: 'topRight', label: t('settings.posTopRight'), icon: ArrowUpRight },
-  { value: 'left', label: t('settings.posLeft'), icon: ArrowLeft },
-  { value: 'center', label: t('settings.posCenter'), icon: Circle },
-  { value: 'right', label: t('settings.posRight'), icon: ArrowRight },
-  { value: 'bottomLeft', label: t('settings.posBottomLeft'), icon: ArrowDownLeft },
-  { value: 'bottom', label: t('settings.posBottom'), icon: ArrowDown },
-  { value: 'bottomRight', label: t('settings.posBottomRight'), icon: ArrowDownRight },
-])
+const previewMode = ref<'fullscreen' | 'windowed'>('fullscreen')
+const imageControls = [
+  { key: 'popupBackgroundScale', label: 'settings.imageScale', min: 1, max: 400 },
+  { key: 'popupBackgroundOffsetX', label: 'settings.imageOffsetX', min: -50, max: 50 },
+  { key: 'popupBackgroundOffsetY', label: 'settings.imageOffsetY', min: -50, max: 50 },
+] as const
 
-// 拖动过程实时提交，保存的过期响应由 App 侧的序号守卫挡掉，不会把滑块拽回旧值。
+function updateImageValue(key: typeof imageControls[number]['key'], event: Event, min: number, max: number) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (Number.isFinite(value)) emit('update:setting', key, Math.round(Math.min(max, Math.max(min, value))))
+}
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -124,23 +120,30 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div class="segmented fit-segments">
           <button v-for="option in fitOptions" :key="option.value" :class="{ selected: settings.popupBackgroundFit === option.value }" type="button" @click="emit('update:setting', 'popupBackgroundFit', option.value)">{{ option.label }}</button>
         </div>
-        <div><strong>{{ t('settings.popupBackgroundPosition') }}</strong><span>{{ t('settings.popupBackgroundPositionHint') }}</span></div>
-        <div class="position-grid" role="group" :aria-label="t('settings.popupBackgroundPosition')">
-          <button
-            v-for="option in positionOptions"
-            :key="option.value"
-            :class="{ selected: settings.popupBackgroundPosition === option.value }"
-            type="button"
-            :aria-label="option.label"
-            :title="option.label"
-            @click="emit('update:setting', 'popupBackgroundPosition', option.value)"
-          ><component :is="option.icon" :size="14" /></button>
-        </div>
+        <template v-if="settings.popupBackgroundFit === 'contain'">
+          <label v-for="control in imageControls" :key="control.key" class="slider-row image-slider">
+            <span>{{ t(control.label) }}</span>
+            <input :value="settings[control.key]" type="range" :min="control.min" :max="control.max" step="1" @input="updateImageValue(control.key, $event, control.min, control.max)" />
+            <span class="number-field"><input :aria-label="t(control.label)" :value="settings[control.key]" type="number" :min="control.min" :max="control.max" step="1" @change="updateImageValue(control.key, $event, control.min, control.max)" /><span>%</span></span>
+          </label>
+        </template>
         <label class="slider-row">
           <span>{{ t('settings.popupOverlay') }}</span>
           <input :value="settings.popupOverlayOpacity" :style="{ '--fill': `${settings.popupOverlayOpacity}%` }" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
           <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
+        <div class="preview-toolbar">
+          <strong>{{ t('settings.imagePreview') }}</strong>
+          <div class="segmented">
+            <button type="button" :class="{ selected: previewMode === 'fullscreen' }" @click="previewMode = 'fullscreen'">{{ t('settings.previewFullscreen') }}</button>
+            <button type="button" :class="{ selected: previewMode === 'windowed' }" @click="previewMode = 'windowed'">{{ t('settings.previewWindowed') }}</button>
+          </div>
+        </div>
+        <div :class="['popup-preview', previewMode]" :style="{ color: settings.popupTextColor || undefined }">
+          <PopupBackground :settings="settings" :url="backgroundPreview" />
+          <span class="preview-title">RemindOn</span>
+          <strong class="preview-message">{{ t('popup.defaultTitle') }}</strong>
+        </div>
       </div>
       <label class="setting-card setting-toggle">
         <div><strong>{{ t('settings.popupFade') }}</strong><span>{{ t('settings.popupFadeHint') }}</span></div>

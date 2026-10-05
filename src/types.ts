@@ -6,8 +6,7 @@ export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest' | 'power'
-export type PopupBackgroundFit = 'cover' | 'contain' | 'repeat' | 'stretch' | 'original'
-export type PopupBackgroundPosition = 'topLeft' | 'top' | 'topRight' | 'left' | 'center' | 'right' | 'bottomLeft' | 'bottom' | 'bottomRight'
+export type PopupBackgroundFit = 'stretch' | 'contain'
 
 export interface Reminder {
   id: string
@@ -34,7 +33,9 @@ export interface AppSettings {
   theme: Theme
   accentColor: AccentColor
   popupBackgroundFit: PopupBackgroundFit
-  popupBackgroundPosition: PopupBackgroundPosition
+  popupBackgroundScale: number
+  popupBackgroundOffsetX: number
+  popupBackgroundOffsetY: number
   popupFadeEnabled: boolean
   popupTextColor: string
   popupTitleSize: number
@@ -70,7 +71,7 @@ export interface RestTimerStatus {
 }
 
 export const defaultData = (): AppData => ({
-  version: 4,
+  version: 5,
   settings: {
     language: 'zh-CN',
     autostart: false,
@@ -83,8 +84,10 @@ export const defaultData = (): AppData => ({
     systemNotificationEnabled: true,
     theme: 'dark',
     accentColor: 'mint',
-    popupBackgroundFit: 'cover',
-    popupBackgroundPosition: 'center',
+    popupBackgroundFit: 'stretch',
+    popupBackgroundScale: 100,
+    popupBackgroundOffsetX: 0,
+    popupBackgroundOffsetY: 0,
     popupFadeEnabled: true,
     popupTextColor: '',
     popupTitleSize: 32,

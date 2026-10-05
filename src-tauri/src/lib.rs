@@ -21,7 +21,7 @@ mod i18n;
 mod notification;
 mod updater;
 
-const DATA_VERSION: u32 = 4;
+const DATA_VERSION: u32 = 5;
 const REST_ID: &str = "__rest__";
 const TEST_REST_ID: &str = "__test_rest__";
 const SHUTDOWN_ID: &str = "__shutdown__";
@@ -86,8 +86,12 @@ pub struct AppSettings {
     pub accent_color: AccentColor,
     #[serde(default)]
     pub popup_background_fit: PopupBackgroundFit,
+    #[serde(default = "default_popup_background_scale")]
+    pub popup_background_scale: u32,
     #[serde(default)]
-    pub popup_background_position: PopupBackgroundPosition,
+    pub popup_background_offset_x: i32,
+    #[serde(default)]
+    pub popup_background_offset_y: i32,
     #[serde(default = "default_popup_fade_enabled")]
     pub popup_fade_enabled: bool,
     #[serde(default)]
@@ -117,38 +121,20 @@ pub enum PowerAction {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PopupBackgroundFit {
-    Cover,
+    #[serde(alias = "original")]
     Contain,
-    Repeat,
+    #[serde(alias = "cover", alias = "repeat")]
     Stretch,
-    /// 原始尺寸：不缩放不平铺，按停靠方位摆放，适合头像、贴纸类小图。
-    Original,
 }
 
 impl Default for PopupBackgroundFit {
     fn default() -> Self {
-        Self::Cover
+        Self::Stretch
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub enum PopupBackgroundPosition {
-    TopLeft,
-    Top,
-    TopRight,
-    Left,
-    Center,
-    Right,
-    BottomLeft,
-    Bottom,
-    BottomRight,
-}
-
-impl Default for PopupBackgroundPosition {
-    fn default() -> Self {
-        Self::Center
-    }
+fn default_popup_background_scale() -> u32 {
+    100
 }
 
 fn default_popup_title_size() -> u32 {
@@ -226,8 +212,10 @@ impl Default for AppSettings {
             system_notification_enabled: true,
             theme: Theme::Dark,
             accent_color: AccentColor::Mint,
-            popup_background_fit: PopupBackgroundFit::Cover,
-            popup_background_position: PopupBackgroundPosition::Center,
+            popup_background_fit: PopupBackgroundFit::Stretch,
+            popup_background_scale: default_popup_background_scale(),
+            popup_background_offset_x: 0,
+            popup_background_offset_y: 0,
             popup_fade_enabled: default_popup_fade_enabled(),
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
@@ -511,13 +499,9 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     } else {
         data.settings.popup_text_color.clear();
     }
-    // 填充方式已精简为整张填充与原始尺寸两种，旧配置里的其它取值统一迁移成整张填充。
-    if !matches!(
-        data.settings.popup_background_fit,
-        PopupBackgroundFit::Cover | PopupBackgroundFit::Original
-    ) {
-        data.settings.popup_background_fit = PopupBackgroundFit::Cover;
-    }
+    data.settings.popup_background_scale = data.settings.popup_background_scale.clamp(1, 400);
+    data.settings.popup_background_offset_x = data.settings.popup_background_offset_x.clamp(-50, 50);
+    data.settings.popup_background_offset_y = data.settings.popup_background_offset_y.clamp(-50, 50);
     data.settings.rest_interval_minutes = data.settings.rest_interval_minutes.clamp(1, 1440);
     if data.settings.rest_message.trim().is_empty() {
         data.settings.rest_message = i18n::default_rest_message(data.settings.language).to_string();
@@ -2549,6 +2533,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_image_settings_migrate_without_changing_reminders() {
+        for (legacy, expected) in [
+            ("original", PopupBackgroundFit::Contain),
+            ("contain", PopupBackgroundFit::Contain),
+            ("cover", PopupBackgroundFit::Stretch),
+            ("repeat", PopupBackgroundFit::Stretch),
+            ("stretch", PopupBackgroundFit::Stretch),
+        ] {
+            let mut value = serde_json::to_value(AppData {
+                reminders: vec![sample_once(Local::now().to_rfc3339())],
+                ..AppData::default()
+            }).unwrap();
+            value["version"] = serde_json::json!(4);
+            let settings = value["settings"].as_object_mut().unwrap();
+            settings.insert("popupBackgroundFit".into(), serde_json::json!(legacy));
+            settings.insert("popupBackgroundPosition".into(), serde_json::json!("bottomRight"));
+            for key in ["popupBackgroundScale", "popupBackgroundOffsetX", "popupBackgroundOffsetY"] {
+                settings.remove(key);
+            }
+            let mut data: AppData = serde_json::from_value(value).unwrap();
+            let reminder_id = data.reminders[0].id.clone();
+            validate_and_normalize(&mut data).unwrap();
+            assert_eq!(data.version, 5);
+            assert_eq!(data.settings.popup_background_fit, expected);
+            assert_eq!(data.settings.popup_background_scale, 100);
+            assert_eq!(data.settings.popup_background_offset_x, 0);
+            assert_eq!(data.settings.popup_background_offset_y, 0);
+            assert_eq!(data.reminders[0].id, reminder_id);
+            assert!(!serde_json::to_value(data.settings).unwrap().as_object().unwrap().contains_key("popupBackgroundPosition"));
+        }
+    }
+
+    #[test]
+    fn image_scale_and_offsets_are_bounded() {
+        let mut data = AppData::default();
+        data.settings.popup_background_scale = 0;
+        data.settings.popup_background_offset_x = -90;
+        data.settings.popup_background_offset_y = 90;
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.settings.popup_background_scale, 1);
+        assert_eq!(data.settings.popup_background_offset_x, -50);
+        assert_eq!(data.settings.popup_background_offset_y, 50);
+        data.settings.popup_background_scale = 999;
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.settings.popup_background_scale, 400);
+    }
+
+    #[test]
     fn popup_appearance_values_are_normalized_before_saving_or_importing() {
         let mut data = AppData::default();
         data.settings.popup_title_size = 999;
@@ -2758,7 +2790,7 @@ mod tests {
 
         assert!(data.settings.popup_fullscreen);
         validate_and_normalize(&mut data).unwrap();
-        assert_eq!(data.version, 4);
+        assert_eq!(data.version, DATA_VERSION);
     }
 
     #[test]
