@@ -98,6 +98,11 @@ button { cursor: pointer; }
 .narrow-section { max-width: 720px; }
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
 .compact-header { align-items: flex-start; }
+.reminder-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; min-height: 80px; }
+.test-notification { width: 108px; height: 34px; }
+.reminder-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.reminder-toolbar > span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--font-sm); }
+.reminder-toolbar em { min-width: 22px; border-radius: 4px; padding: 2px 6px; background: var(--surface-hover); font-style: normal; text-align: center; }
 .eyebrow, .card-label { margin: 0 0 4px; color: var(--accent-strong); font-size: var(--font-xs); font-weight: 800; }
 h1 { margin: 0; color: var(--text); font-size: var(--font-title); line-height: 1.25; }
 h2 { margin: 0; color: var(--text); font-size: var(--font-section); }

@@ -28,14 +28,14 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
 </script>
 
 <template>
-  <section class="page-section narrow-section">
-    <header class="page-header compact-header">
+  <section class="page-section reminder-page">
+    <header class="page-header reminder-header">
       <div>
         <p class="eyebrow">SYSTEM</p>
         <h1>{{ t('power.title') }}</h1>
         <p class="page-subtitle">{{ subtitle }}</p>
       </div>
-      <button class="button" type="button" @click="emit('testNotification')">
+      <button class="button test-notification" type="button" @click="emit('testNotification')">
         <Play :size="14" />{{ t('settings.testNotification') }}
       </button>
     </header>

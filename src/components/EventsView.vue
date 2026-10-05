@@ -37,18 +37,20 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
 </script>
 
 <template>
-  <section class="page-section">
-    <header class="page-header">
+  <section class="page-section reminder-page">
+    <header class="page-header reminder-header">
       <div>
         <p class="eyebrow">REMINDERS</p>
         <h1>{{ t('events.title') }}</h1>
         <p class="page-subtitle">{{ subtitle }}</p>
       </div>
-      <div class="page-header-actions">
-        <button class="button" type="button" @click="emit('testNotification')"><Play :size="14" />{{ t('settings.testNotification') }}</button>
-        <button class="button button-primary" type="button" @click="emit('add')"><Plus :size="15" />{{ t('events.add') }}</button>
-      </div>
+      <button class="button test-notification" type="button" @click="emit('testNotification')"><Play :size="14" />{{ t('settings.testNotification') }}</button>
     </header>
+
+    <div class="reminder-toolbar">
+      <span>{{ t('events.title') }} <em>{{ reminders.length }}</em></span>
+      <button class="button button-primary" type="button" @click="emit('add')"><Plus :size="15" />{{ t('events.add') }}</button>
+    </div>
 
     <div v-if="showForm" class="form-panel">
       <div class="form-heading">
