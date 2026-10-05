@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Coffee, Play } from '@lucide/vue'
+import { Coffee, Play, Settings2 } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
 import type { Language } from '../types'
@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   testNotification: []
+  previewSettings: []
   'update:enabled': [value: boolean]
   'update:interval': [value: string]
   'update:message': [value: string]
@@ -67,6 +68,10 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div>
         <input :value="message" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value); emit('messageCommitted', ($event.target as HTMLInputElement).value)" />
       </label>
+      <div class="setting-card">
+        <div><strong>{{ t('settings.groupPopup') }}</strong></div>
+        <button class="button" type="button" @click="emit('previewSettings')"><Settings2 :size="14" />{{ t('rest.previewSettings') }}</button>
+      </div>
     </div>
     <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>
   </section>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Download, Image, RotateCcw, Upload } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
@@ -15,6 +15,7 @@ const props = defineProps<{
   actionMessage: string
   canReset: boolean
   backgroundPreview: string
+  initialTab?: 'general' | 'appearance' | 'popup' | 'notification' | 'data'
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +33,30 @@ const fitOptions = computed<{ value: PopupBackgroundFit; label: string }[]>(() =
 ])
 
 const previewMode = ref<'fullscreen' | 'windowed'>('fullscreen')
-const activeTab = ref('general')
+const previewMessage = ref<HTMLElement | null>(null)
+let previewObserver: ResizeObserver | undefined
+
+// 预览尺寸小于真实弹窗，按文字可用空间收缩字号，避免长文案被裁切。
+async function fitPreviewText() {
+  await nextTick()
+  const message = previewMessage.value
+  if (!message || !message.clientHeight) return
+  let size = props.settings.popupTitleSize
+  message.style.fontSize = `${size}px`
+  while (size > 8 && (message.scrollHeight > message.clientHeight || message.scrollWidth > message.clientWidth)) {
+    size -= 1
+    message.style.fontSize = `${size}px`
+  }
+}
+
+watch(() => [props.settings.popupTitleSize, props.settings.restMessage, previewMode.value], fitPreviewText)
+onMounted(() => {
+  previewObserver = new ResizeObserver(() => void fitPreviewText())
+  if (previewMessage.value) previewObserver.observe(previewMessage.value)
+  void fitPreviewText()
+})
+onUnmounted(() => previewObserver?.disconnect())
+const activeTab = ref(props.initialTab || 'general')
 const tabs = [
   { id: 'general', label: 'settings.groupGeneral' },
   { id: 'appearance', label: 'settings.groupAppearance' },
@@ -163,18 +187,6 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
           <input :value="settings.popupOverlayOpacity" :style="{ '--fill': `${settings.popupOverlayOpacity}%` }" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
           <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
-        <div class="preview-toolbar">
-          <strong>{{ t('settings.imagePreview') }}</strong>
-          <div class="segmented">
-            <button type="button" :class="{ selected: previewMode === 'fullscreen' }" @click="previewMode = 'fullscreen'">{{ t('settings.previewFullscreen') }}</button>
-            <button type="button" :class="{ selected: previewMode === 'windowed' }" @click="previewMode = 'windowed'">{{ t('settings.previewWindowed') }}</button>
-          </div>
-        </div>
-        <div :class="['popup-preview', previewMode]" :style="{ color: settings.popupTextColor || undefined }">
-          <PopupBackground :settings="settings" :url="backgroundPreview" />
-          <span class="preview-title">RemindOn</span>
-          <strong class="preview-message">{{ t('popup.defaultTitle') }}</strong>
-        </div>
       </div>
       <label class="setting-card setting-toggle">
         <div><strong>{{ t('settings.popupFade') }}</strong><span>{{ t('settings.popupFadeHint') }}</span></div>
@@ -188,6 +200,20 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
             <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
           </span>
           <label class="number-field"><input :aria-label="t('settings.popupText')" :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
+        </div>
+      </div>
+      <div class="popup-preview-section">
+        <div class="preview-toolbar">
+          <strong>{{ t('settings.imagePreview') }}</strong>
+          <div class="segmented">
+            <button type="button" :class="{ selected: previewMode === 'fullscreen' }" @click="previewMode = 'fullscreen'">{{ t('settings.previewFullscreen') }}</button>
+            <button type="button" :class="{ selected: previewMode === 'windowed' }" @click="previewMode = 'windowed'">{{ t('settings.previewWindowed') }}</button>
+          </div>
+        </div>
+        <div :class="['popup-preview', previewMode, { 'popup-has-image': Boolean(backgroundPreview) }]" :style="{ '--popup-text': settings.popupTextColor || undefined }">
+          <PopupBackground :settings="settings" :url="backgroundPreview" />
+          <span class="preview-title">RemindOn</span>
+          <strong ref="previewMessage" class="preview-message">{{ settings.restMessage }}</strong>
         </div>
       </div>
     </div>

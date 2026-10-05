@@ -28,6 +28,7 @@ const isPopup = window.location.hash === '#/reminder'
 const isStoreBuild = typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__
 const data = ref<AppData>(defaultData())
 const currentView = ref<View>('rest')
+const settingsTab = ref<'general' | 'popup'>('general')
 const showForm = ref(false)
 const editingId = ref<string | null>(null)
 const actionMessage = ref('')
@@ -735,7 +736,7 @@ onUnmounted(() => {
       :language="data.settings.language"
       :app-version="appVersion"
       :has-update="Boolean(newVersion)"
-      @navigate="currentView = $event"
+      @navigate="currentView = $event; settingsTab = 'general'"
     />
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
@@ -782,6 +783,7 @@ onUnmounted(() => {
         :status="restStatusText"
         :action-message="actionMessage"
         @test-notification="testNotification('rest')"
+        @preview-settings="settingsTab = 'popup'; currentView = 'settings'"
         @update:enabled="updateSetting('restEnabled', $event)"
         @update:interval="updateRestInterval"
         @update:message="restMessageDraft = $event"
@@ -792,6 +794,7 @@ onUnmounted(() => {
         v-else-if="currentView === 'settings'"
         :language="data.settings.language"
         :settings="data.settings"
+        :initial-tab="settingsTab"
         :accent-colors="accentColors"
         :autostart-error="autostartError"
         :notification-error="notificationError"

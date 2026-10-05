@@ -311,15 +311,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .image-slider { display: grid; grid-template-columns: 110px minmax(60px, 1fr) 84px; }
 .image-slider input[type="range"] { width: 100%; min-width: 0; }
 .image-slider .number-field { width: 84px; }
-.preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.popup-preview { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+.preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text); }
+.popup-preview { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; color: var(--popup-text, var(--text)); }
 .popup-preview.windowed { aspect-ratio: 520 / 320; }
 .popup-preview .preview-title { position: absolute; top: 10px; left: 12px; color: inherit; font-size: 11px; }
-.popup-preview .preview-message { position: absolute; top: 50%; left: 50%; width: 80%; transform: translate(-50%, -50%); color: inherit; text-align: center; font-size: 14px; }
+.popup-preview-section { padding: 16px 0; }
+.popup-preview .preview-message { position: absolute; inset: 38px 10% 16px; display: flex; align-items: center; justify-content: center; color: inherit; text-align: center; font-size: 14px; overflow-wrap: anywhere; line-height: 1.4; }
 @keyframes popup-bg-fade { from { opacity: 0; } to { opacity: 1; } }
 /* 有背景图时给文字加描边与阴影，避免浅色图片让文字读不清。 */
 .popup-shell.popup-has-image .popup-content h1,
 .popup-shell.popup-has-image .popup-identity strong,
+.popup-preview.popup-has-image .preview-message,
+.popup-preview.popup-has-image .preview-title,
 .popup-shell.popup-has-image .popup-identity span { color: var(--popup-text, #fff); text-shadow: 0 1px 3px rgba(0, 0, 0, .65); }
 .popup-shell.popup-has-image .popup-content .rest-elapsed,
 .popup-shell.popup-has-image .popup-content p,
