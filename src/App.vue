@@ -16,7 +16,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
+import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
 import { defaultData, defaultReminders } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -568,7 +568,8 @@ async function resetSettings() {
   }
   restMessageDraft.value = data.value.settings.restMessage
   try {
-    if (previous.autostart) await disable()
+    if (defaults.autostart) await enable()
+    else await disable()
     await setTheme(data.value.settings.theme === 'system' ? null : data.value.settings.theme)
     await persist(defaults.popupFullscreen)
     await refreshTimers()
@@ -670,6 +671,13 @@ onMounted(async () => {
       data.value.settings.autostart = await isEnabled()
     } catch {
       // Keep the saved value when the platform autostart API is unavailable.
+    }
+    try {
+      const errors = await invoke<NativeErrors>('get_native_errors')
+      if (errors.autostartError) autostartError.value = t('status.autostartFailed', { error: errors.autostartError })
+      if (errors.notificationError) notificationError.value = t('status.notificationFailed', { error: errors.notificationError })
+    } catch {
+      // The browser preview has no native startup integrations.
     }
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
       void refreshTimers()

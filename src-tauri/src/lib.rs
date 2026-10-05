@@ -15,6 +15,7 @@ use tauri::{
     State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
 
 mod browser;
 mod i18n;
@@ -186,8 +187,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: Language::ZhCn,
-            autostart: false,
-            minimize_to_tray: false,
+            autostart: true,
+            minimize_to_tray: true,
             popup_always_on_top: true,
             popup_fullscreen: true,
             rest_enabled: true,
@@ -310,6 +311,13 @@ struct QueuedReminder {
     event: ReminderTriggeredEvent,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeErrors {
+    autostart_error: Option<String>,
+    notification_error: Option<String>,
+}
+
 struct InnerState {
     data: Mutex<AppData>,
     data_path: PathBuf,
@@ -331,6 +339,8 @@ struct InnerState {
     window_cache: Mutex<WindowCache>,
     reminder_targets: Mutex<HashSet<String>>,
     main_ready: AtomicBool,
+    main_visible: AtomicBool,
+    native_errors: Mutex<NativeErrors>,
     update_state: Mutex<updater::UpdateRuntimeState>,
     update_progress: Mutex<Option<updater::UpdateProgress>>,
 }
@@ -677,7 +687,29 @@ fn hide_cached_window(window: &WebviewWindow, state: &AppState) -> Result<(), St
         .lock()
         .expect("window cache lock poisoned")
         .hide(window.label(), Instant::now());
+    if window.label() == "main" && state.0.main_visible.swap(false, Ordering::SeqCst) {
+        notify_tray_background(window.app_handle(), state);
+    }
     Ok(())
+}
+
+// 托盘提示独立于提醒通知开关；失败保留到下次打开主窗口时展示。
+fn notify_tray_background(app: &AppHandle, state: &AppState) {
+    let language = app_data(state).settings.language;
+    let body = i18n::tray_background_message(language);
+    #[cfg(target_os = "windows")]
+    let result = if option_env!("REMINDON_STORE_BUILD").is_some() {
+        notification::show_packaged("RemindOn", body)
+    } else {
+        app.notification().builder().title("RemindOn").body(body).show().map_err(|error| error.to_string())
+    };
+    #[cfg(not(target_os = "windows"))]
+    let result = app.notification().builder().title("RemindOn").body(body).show().map_err(|error| error.to_string());
+    let error = result.err();
+    state.0.native_errors.lock().expect("native errors lock poisoned").notification_error = error.clone();
+    if let Some(error) = error {
+        let _ = app.emit_to("main", "notification-failed", error);
+    }
 }
 
 fn hide_reminder_windows(app: &AppHandle, state: &AppState) {
@@ -1407,6 +1439,7 @@ async fn save_data(
     let rest_interval_changed =
         current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
     let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
+    let autostart_changed = current.settings.autostart != data.settings.autostart;
     write_json(&state.0.data_path, &data)?;
     *current = data.clone();
     if rest_enabled_changed && !data.settings.rest_enabled {
@@ -1427,6 +1460,9 @@ async fn save_data(
             .expect("break reminder lock poisoned") = None;
     }
     drop(current);
+    if autostart_changed {
+        state.0.native_errors.lock().expect("native errors lock poisoned").autostart_error = None;
+    }
     state.0.reminder_queue.lock().expect("reminder queue lock poisoned")
         .retain(|item| !changed_ids.contains(&item.event.id)
             && (!item.event.is_rest || data.settings.rest_enabled));
@@ -1643,6 +1679,11 @@ async fn hide_idle_window(window: WebviewWindow, state: State<'_, AppState>) -> 
 #[tauri::command]
 fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
     rest_timer_status(state.inner())
+}
+
+#[tauri::command]
+fn get_native_errors(state: State<'_, AppState>) -> NativeErrors {
+    state.0.native_errors.lock().expect("native errors lock poisoned").clone()
 }
 
 #[cfg(target_os = "windows")]
@@ -2226,6 +2267,7 @@ fn ensure_main_window(
     }
     window.unminimize().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    state.0.main_visible.store(true, Ordering::SeqCst);
     window.set_focus().map_err(|error| error.to_string())?;
     Ok(window)
 }
@@ -2365,9 +2407,23 @@ pub fn run() {
         .setup(|app| {
             let path = data_path(app.handle()).map_err(std::io::Error::other)?;
             let mut data = load_json(&path).map_err(std::io::Error::other)?;
+            let first_start = !path.exists();
             validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
+            let autostart = app.autolaunch();
+            let result = if data.settings.autostart { autostart.enable() } else { autostart.disable() };
+            let mut native_errors = NativeErrors::default();
+            if let Err(error) = result {
+                native_errors.autostart_error = Some(error.to_string());
+            }
+            match autostart.is_enabled() {
+                Ok(enabled) => data.settings.autostart = enabled,
+                Err(error) => {
+                    data.settings.autostart = false;
+                    native_errors.autostart_error = Some(error.to_string());
+                }
+            }
             write_json(&path, &data).map_err(std::io::Error::other)?;
-            let hide_on_start = data.settings.minimize_to_tray;
+            let hide_on_start = data.settings.minimize_to_tray && !first_start;
             let language = data.settings.language;
             let state = AppState(Arc::new(InnerState {
                 data: Mutex::new(data),
@@ -2388,6 +2444,8 @@ pub fn run() {
                 window_cache: Mutex::new(WindowCache::default()),
                 reminder_targets: Mutex::new(HashSet::new()),
                 main_ready: AtomicBool::new(false),
+                main_visible: AtomicBool::new(false),
+                native_errors: Mutex::new(native_errors),
                 update_state: Mutex::new(updater::UpdateRuntimeState::default()),
                 update_progress: Mutex::new(None),
             }));
@@ -2398,6 +2456,8 @@ pub fn run() {
             apply_application_menu(app.handle(), language);
             if !hide_on_start {
                 show_main_window(app.handle());
+            } else {
+                notify_tray_background(app.handle(), &state);
             }
             spawn_scheduler(app.handle().clone(), state.clone());
             // 启动即对齐一次原生外观（含窗口背景色），避免标题栏先显示默认灰再跳变。
@@ -2423,6 +2483,7 @@ pub fn run() {
             show_reminder,
             hide_idle_window,
             get_rest_timer_status,
+            get_native_errors,
             execute_power_action,
             test_reminder,
             import_data,
@@ -2665,6 +2726,8 @@ mod tests {
             window_cache: Mutex::new(WindowCache::default()),
             reminder_targets: Mutex::new(HashSet::new()),
             main_ready: AtomicBool::new(false),
+            main_visible: AtomicBool::new(false),
+            native_errors: Mutex::new(NativeErrors::default()),
             update_state: Mutex::new(updater::UpdateRuntimeState::default()),
             update_progress: Mutex::new(None),
         }))
@@ -2774,7 +2837,7 @@ mod tests {
         assert_eq!(data.version, DATA_VERSION);
         assert_eq!(data.settings.rest_interval_minutes, 1);
         assert_eq!(data.settings.language, Language::ZhCn);
-        assert!(!data.settings.minimize_to_tray);
+        assert!(data.settings.minimize_to_tray);
         assert!(data.settings.popup_fullscreen);
     }
 

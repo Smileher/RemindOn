@@ -44,6 +44,13 @@ pub fn tray_labels(language: Language) -> (&'static str, &'static str, &'static 
     }
 }
 
+pub fn tray_background_message(language: Language) -> &'static str {
+    match language {
+        Language::ZhCn => "RemindOn 已在后台运行，提醒仍会继续。",
+        Language::En => "RemindOn is running in the background. Reminders will continue.",
+    }
+}
+
 pub fn notification_send_failed(language: Language, error: &str) -> String {
     match language {
         Language::ZhCn => format!("系统通知发送失败：{error}"),

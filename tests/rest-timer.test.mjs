@@ -34,7 +34,7 @@ const templateCode = compile(template.code)
 const noop = () => {}
 const resting = { isResting: true, nextTriggerAt: null }
 
-async function mountApp({ enabled = true, status = resting } = {}) {
+async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null } } = {}) {
   const settingsData = defaultData()
   settingsData.settings.restEnabled = enabled
   settingsData.settings.restIntervalMinutes = 1
@@ -64,6 +64,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
         calls.push(command)
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return structuredClone(settingsData)
+        if (command === 'get_native_errors') return nativeErrors
         if (command === 'save_data') return saveData(JSON.parse(JSON.stringify(args.data)), args)
         if (command === 'read_popup_image') return null
         if (command === 'clear_popup_image') return
@@ -253,6 +254,25 @@ test('language changes translate untouched presets and preserve custom content',
   assert.equal(app.state.data.value.reminders[0].title, translate('en', 'preset.lunch'))
   assert.equal(app.state.data.value.reminders[1].title, '自定义下班提醒')
   assert.equal(app.state.data.value.reminders[2].title, translate('en', 'preset.weekend'))
+})
+
+test('native startup failures display actual autostart status and retain background notification errors', async () => {
+  const app = await mountApp({ nativeErrors: { autostartError: 'registration denied', notificationError: 'notifications disabled' } })
+  assert.equal(app.state.data.value.settings.autostart, false)
+  assert.equal(app.state.autostartError.value, translate('zh-CN', 'status.autostartFailed', { error: 'registration denied' }))
+  assert.equal(app.state.notificationError.value, translate('zh-CN', 'status.notificationFailed', { error: 'notifications disabled' }))
+})
+
+test('reset synchronizes enabled-by-default autostart and system theme', async () => {
+  const app = await mountApp()
+  const nativeCalls = []
+  app.setNative('enable', async () => nativeCalls.push('enable'))
+  app.setNative('disable', async () => nativeCalls.push('disable'))
+  app.setNative('setTheme', async (theme) => nativeCalls.push(theme))
+  app.setConfirm(async () => true)
+  await app.state.resetSettings()
+  assert.deepEqual(nativeCalls, ['enable', null])
+  assert.equal(app.state.data.value.settings.autostart, true)
 })
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {

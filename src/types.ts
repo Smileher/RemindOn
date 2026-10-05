@@ -66,6 +66,11 @@ export interface RestTimerStatus {
   isResting: boolean
 }
 
+export interface NativeErrors {
+  autostartError: string | null
+  notificationError: string | null
+}
+
 export const defaultReminders = (language: Language): Reminder[] => [
   { id: 'preset-lunch', title: translate(language, 'preset.lunch'), type: 'daily', time: '11:50', powerAction: 'lock', enabled: false },
   { id: 'preset-workday', title: translate(language, 'preset.workday'), type: 'weekly', time: '17:30', weekdays: [1, 2, 3, 4], powerAction: 'lock', enabled: false },
@@ -76,8 +81,8 @@ export const defaultData = (language: Language = 'zh-CN'): AppData => ({
   version: 6,
   settings: {
     language,
-    autostart: false,
-    minimizeToTray: false,
+    autostart: true,
+    minimizeToTray: true,
     popupAlwaysOnTop: true,
     popupFullscreen: true,
     restEnabled: true,
