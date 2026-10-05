@@ -127,8 +127,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .form-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .field { display: grid; gap: 5px; margin-bottom: 9px; color: var(--muted); font-size: var(--font-sm); }
-.field input, .number-field input, .stacked-setting input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--text); background: var(--surface-hover); outline: none; }
-.field input:focus, .number-field input:focus, .stacked-setting input:focus, .time-control:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field input, .field select, .number-field input, .stacked-setting input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--text); background: var(--surface-hover); outline: none; }
+.field input:focus, .field select:focus, .number-field input:focus, .stacked-setting input:focus, .time-control:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .field small { color: var(--subtle); font-size: var(--font-xs); }
 .form-actions, .action-row { display: flex; justify-content: flex-end; gap: 7px; }
 .page-header-actions { display: flex; align-items: center; gap: 7px; }
@@ -157,6 +157,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .reminder-title strong { overflow: hidden; color: var(--text); font-size: var(--font-sm); text-overflow: ellipsis; white-space: nowrap; }
 .reminder-main > span { overflow: hidden; color: var(--muted); font-size: var(--font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .type-chip { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--accent-strong); font-size: var(--font-xs); }
+.reminder-main > .type-chip { justify-self: start; color: var(--accent-strong); }
 .switch { position: relative; width: 34px; height: 19px; flex: 0 0 34px; border: 0; border-radius: 99px; padding: 0; background: var(--border); transition: background .15s ease; }
 .switch span { position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .24); transition: left .15s ease; }
 .switch.on { background: var(--accent-strong); }

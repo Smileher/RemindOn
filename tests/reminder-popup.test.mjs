@@ -18,8 +18,8 @@ const scriptCode = ts.transpileModule(script.content, {
 }).outputText
 const noop = () => {}
 const settle = () => new Promise(setImmediate)
-const restEvent = { sessionId: 1, id: '__rest__', title: '休息时间到了', type: 'interval', isRest: true, isShutdown: false, isTest: false }
-const powerEvent = { sessionId: 2, id: '__shutdown__', title: '锁定电脑', type: 'daily', isRest: false, isShutdown: true, powerAction: 'lock', isTest: false }
+const restEvent = { sessionId: 1, id: '__rest__', title: '休息时间到了', type: 'interval', isRest: true, isTest: false }
+const powerEvent = { sessionId: 2, id: 'lock-plan', title: '锁定电脑', type: 'daily', isRest: false, powerAction: 'lock', isTest: false }
 
 test('new settings enable fullscreen reminders by default', () => {
   assert.equal(defaultData().settings.popupFullscreen, true)

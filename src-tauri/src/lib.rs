@@ -1,6 +1,6 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,10 +22,9 @@ mod i18n;
 mod notification;
 mod updater;
 
-const DATA_VERSION: u32 = 5;
+const DATA_VERSION: u32 = 6;
 const REST_ID: &str = "__rest__";
 const TEST_REST_ID: &str = "__test_rest__";
-const SHUTDOWN_ID: &str = "__shutdown__";
 const TRAY_ID: &str = "main-tray";
 const REMINDER_LABEL: &str = "reminder";
 const WINDOWED_REMINDER_LABEL: &str = "reminder-windowed";
@@ -47,14 +46,6 @@ const WINDOW_BG_LIGHT: tauri::window::Color = tauri::window::Color(238, 241, 245
 
 fn default_rest_message() -> String {
     i18n::default_rest_message(Language::ZhCn).to_string()
-}
-
-fn default_shutdown_time() -> String {
-    "23:30".to_string()
-}
-
-fn default_shutdown_message() -> String {
-    i18n::default_power_message(Language::ZhCn, &PowerAction::Shutdown).to_string()
 }
 
 fn default_system_notification_enabled() -> bool {
@@ -101,14 +92,6 @@ pub struct AppSettings {
     pub popup_title_size: u32,
     #[serde(default = "default_popup_overlay_opacity")]
     pub popup_overlay_opacity: u32,
-    #[serde(default)]
-    pub shutdown_reminder_enabled: bool,
-    #[serde(default)]
-    pub power_action: PowerAction,
-    #[serde(default = "default_shutdown_time")]
-    pub shutdown_reminder_time: String,
-    #[serde(default = "default_shutdown_message")]
-    pub shutdown_reminder_message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -221,10 +204,6 @@ impl Default for AppSettings {
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
             popup_overlay_opacity: default_popup_overlay_opacity(),
-            shutdown_reminder_enabled: false,
-            power_action: PowerAction::Shutdown,
-            shutdown_reminder_time: default_shutdown_time(),
-            shutdown_reminder_message: default_shutdown_message(),
         }
     }
 }
@@ -244,7 +223,6 @@ pub enum ReminderType {
 enum TestReminderKind {
     Event,
     Rest,
-    Power,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +239,7 @@ pub struct Reminder {
     #[serde(default)]
     pub month_days: Vec<u32>,
     pub enabled: bool,
+    pub power_action: Option<PowerAction>,
     #[serde(default)]
     pub next_trigger_at: Option<String>,
 }
@@ -292,7 +271,6 @@ struct ReminderTriggeredEvent {
     #[serde(rename = "type")]
     reminder_type: ReminderType,
     is_rest: bool,
-    is_shutdown: bool,
     power_action: Option<PowerAction>,
     is_test: bool,
     rest_started_at_ms: Option<i64>,
@@ -304,6 +282,12 @@ struct ReminderTriggeredEvent {
 struct RestTimerStatus {
     next_trigger_at: Option<String>,
     is_resting: bool,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedReminder {
+    due_at: DateTime<Local>,
+    event: ReminderTriggeredEvent,
 }
 
 struct InnerState {
@@ -319,7 +303,7 @@ struct InnerState {
     rest_active: AtomicBool,
     rest_round_pending: AtomicBool,
     rest_next: Mutex<Option<DateTime<Local>>>,
-    shutdown_next: Mutex<Option<DateTime<Local>>>,
+    reminder_queue: Mutex<VecDeque<QueuedReminder>>,
     pending_navigation: Mutex<Option<String>>,
     // All native window work is serialized off the UI thread, including destruction.
     window_operations: Mutex<()>,
@@ -367,7 +351,12 @@ fn load_json(path: &Path) -> Result<AppData, String> {
     let content =
         fs::read_to_string(path).map_err(|error| format!("Failed to read settings: {error}"))?;
     match serde_json::from_str::<AppData>(&content) {
-        Ok(data) => Ok(data),
+        Ok(data) if data.version == DATA_VERSION => Ok(data),
+        Ok(_) => {
+            fs::rename(path, corrupt_backup_path(path))
+                .map_err(|error| format!("Failed to preserve unsupported settings: {error}"))?;
+            Ok(AppData::default())
+        }
         Err(error) => {
             let backup = corrupt_backup_path(path);
             fs::rename(path, &backup).map_err(|rename_error| {
@@ -399,6 +388,7 @@ fn local_datetime(date: NaiveDate, time: NaiveTime) -> Result<DateTime<Local>, S
         .ok_or_else(|| "Failed to resolve the local reminder time".to_string())
 }
 
+#[cfg(test)]
 fn next_daily(time: &str, after: DateTime<Local>) -> Result<String, String> {
     let parsed_time = parse_time(time)?;
     let today = local_datetime(after.date_naive(), parsed_time)?;
@@ -487,7 +477,9 @@ fn snooze_rest_round(state: &AppState, seconds: u32) -> bool {
 }
 
 fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
-    data.version = DATA_VERSION;
+    if data.version != DATA_VERSION {
+        return Err(format!("Unsupported data version: {} (expected {DATA_VERSION})", data.version));
+    }
     data.settings.popup_title_size = data.settings.popup_title_size.clamp(20, 72);
     data.settings.popup_overlay_opacity = data.settings.popup_overlay_opacity.min(100);
     let color = data.settings.popup_text_color.trim();
@@ -507,16 +499,11 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
     if data.settings.rest_message.trim().is_empty() {
         data.settings.rest_message = i18n::default_rest_message(data.settings.language).to_string();
     }
-    if data.settings.shutdown_reminder_message.trim().is_empty() {
-        data.settings.shutdown_reminder_message =
-            i18n::default_power_message(data.settings.language, &data.settings.power_action)
-                .to_string();
-    }
-    parse_time(&data.settings.shutdown_reminder_time)?;
     let now = Local::now();
+    let mut ids = HashSet::new();
     for reminder in &mut data.reminders {
-        if reminder.id.trim().is_empty() {
-            return Err("Reminder is missing id".to_string());
+        if reminder.id.trim().is_empty() || reminder.id.starts_with("__") || !ids.insert(reminder.id.clone()) {
+            return Err("Reminder id is missing, reserved or duplicated".to_string());
         }
         if reminder.title.trim().is_empty() {
             return Err("Reminder text cannot be empty".to_string());
@@ -528,7 +515,11 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                     .as_deref()
                     .ok_or_else(|| "One-time reminder is missing triggerAt".to_string())?;
                 parse_datetime(trigger)?;
-                reminder.next_trigger_at = Some(trigger.to_string());
+                if let Some(next) = reminder.next_trigger_at.as_deref() {
+                    parse_datetime(next)?;
+                } else {
+                    reminder.next_trigger_at = Some(trigger.to_string());
+                }
             }
             ReminderType::Daily | ReminderType::Weekly | ReminderType::Monthly => {
                 let time = reminder
@@ -562,7 +553,7 @@ fn validate_and_normalize(data: &mut AppData) -> Result<(), String> {
                 }
             }
             ReminderType::Interval => {
-                reminder.next_trigger_at = None;
+                return Err("Interval reminders belong to break settings".to_string());
             }
         }
     }
@@ -592,7 +583,8 @@ fn rest_timer_status(state: &AppState) -> RestTimerStatus {
         .rest_next
         .lock()
         .expect("break reminder lock poisoned");
-    if next.is_none() {
+    if next.is_none() && !state.0.reminder_queue.lock().expect("reminder queue lock poisoned")
+        .iter().any(|item| item.event.is_rest) {
         *next = Some(Local::now() + Duration::minutes(data.settings.rest_interval_minutes as i64));
     }
     RestTimerStatus {
@@ -820,6 +812,7 @@ fn close_reminder_session(app: &AppHandle, state: &AppState, session_id: u64) ->
 }
 
 fn reset_reminder_session(app: &AppHandle, state: &AppState, event: &str) {
+    state.0.reminder_queue.lock().expect("reminder queue lock poisoned").clear();
     *state
         .0
         .active_reminder
@@ -1138,16 +1131,6 @@ fn prepare_notification(state: &AppState, event: &ReminderTriggeredEvent) -> Opt
             .lock()
             .expect("break reminder lock poisoned") = None;
         state.0.rest_round_pending.store(true, Ordering::SeqCst);
-    } else if state.0.rest_active.swap(false, Ordering::SeqCst) {
-        // 共用窗口替换了休息通知，相当于关闭该休息；已稍后提醒的轮次不受影响。
-        state.0.rest_round_pending.store(false, Ordering::SeqCst);
-        *state
-            .0
-            .rest_next
-            .lock()
-            .expect("break reminder lock poisoned") = settings
-            .rest_enabled
-            .then(|| Local::now() + Duration::minutes(settings.rest_interval_minutes as i64));
     }
     Some(settings.clone())
 }
@@ -1166,7 +1149,7 @@ fn dispatch_trigger(
     if event.is_rest && event.rest_started_at_ms.is_none() {
         event.rest_started_at_ms = Some(now_ms);
     }
-    if event.is_shutdown && event.power_action.is_some() && event.power_deadline_ms.is_none() {
+    if event.power_action.is_some() && event.power_deadline_ms.is_none() {
         event.power_deadline_ms = Some(now_ms + 60_000);
     }
     activate_reminder_session(app, state, event.clone());
@@ -1217,7 +1200,11 @@ fn dispatch_trigger(
 }
 
 fn process_due(app: &AppHandle, state: &AppState) {
-    let now = Local::now();
+    enqueue_reminders(state, collect_due_reminders(state, Local::now()));
+    drain_reminder_queue(app, state);
+}
+
+fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Vec<QueuedReminder> {
     let mut triggered = Vec::new();
     let mut changed = false;
     {
@@ -1235,18 +1222,22 @@ fn process_due(app: &AppHandle, state: &AppState) {
             if next > now {
                 continue;
             }
-            triggered.push(ReminderTriggeredEvent {
-                session_id: 0,
-                id: reminder.id.clone(),
-                title: reminder.title.clone(),
-                reminder_type: reminder.reminder_type.clone(),
-                is_rest: false,
-                is_shutdown: false,
-                power_action: None,
-                is_test: false,
-                rest_started_at_ms: None,
-                power_deadline_ms: None,
-            });
+            if reminder.power_action.is_none() || should_trigger_power_action(next, now) {
+                triggered.push(QueuedReminder {
+                    due_at: next,
+                    event: ReminderTriggeredEvent {
+                        session_id: 0,
+                        id: reminder.id.clone(),
+                        title: reminder.title.clone(),
+                        reminder_type: reminder.reminder_type.clone(),
+                        is_rest: false,
+                        power_action: reminder.power_action.clone(),
+                        is_test: false,
+                        rest_started_at_ms: None,
+                        power_deadline_ms: None,
+                    },
+                });
+            }
             changed = true;
             match reminder.reminder_type {
                 ReminderType::Once => {
@@ -1260,7 +1251,8 @@ fn process_due(app: &AppHandle, state: &AppState) {
             }
         }
         if data.settings.rest_enabled {
-            if !state.0.rest_active.load(Ordering::SeqCst) {
+            if !state.0.rest_active.load(Ordering::SeqCst)
+                && !state.0.reminder_queue.lock().expect("reminder queue lock poisoned").iter().any(|item| item.event.is_rest) {
                 let due = {
                     let mut next_rest = state
                         .0
@@ -1278,18 +1270,20 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         None
                     }
                 };
-                if due.is_some() {
-                    triggered.push(ReminderTriggeredEvent {
-                        session_id: 0,
-                        id: REST_ID.to_string(),
-                        title: data.settings.rest_message.clone(),
-                        reminder_type: ReminderType::Interval,
-                        is_rest: true,
-                        is_shutdown: false,
-                        power_action: None,
-                        is_test: false,
-                        rest_started_at_ms: None,
-                        power_deadline_ms: None,
+                if let Some(due_at) = due {
+                    triggered.push(QueuedReminder {
+                        due_at,
+                        event: ReminderTriggeredEvent {
+                            session_id: 0,
+                            id: REST_ID.to_string(),
+                            title: data.settings.rest_message.clone(),
+                            reminder_type: ReminderType::Interval,
+                            is_rest: true,
+                            power_action: None,
+                            is_test: false,
+                            rest_started_at_ms: None,
+                            power_deadline_ms: None,
+                        },
                     });
                     *state
                         .0
@@ -1297,51 +1291,41 @@ fn process_due(app: &AppHandle, state: &AppState) {
                         .lock()
                         .expect("break reminder lock poisoned") = None;
                     state.0.rest_round_pending.store(true, Ordering::SeqCst);
-                    state.0.rest_active.store(true, Ordering::SeqCst);
                 }
             }
-        }
-        if data.settings.shutdown_reminder_enabled {
-            let mut next_shutdown = state
-                .0
-                .shutdown_next
-                .lock()
-                .expect("scheduled action lock poisoned");
-            if next_shutdown.is_none() {
-                *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
-                    .ok()
-                    .and_then(|value| parse_datetime(&value).ok());
-            } else if let Some(due) = next_shutdown.as_ref().filter(|value| **value <= now) {
-                if should_trigger_power_action(due.clone(), now) {
-                    triggered.push(ReminderTriggeredEvent {
-                        session_id: 0,
-                        id: SHUTDOWN_ID.to_string(),
-                        title: data.settings.shutdown_reminder_message.clone(),
-                        reminder_type: ReminderType::Daily,
-                        is_rest: false,
-                        is_shutdown: true,
-                        power_action: Some(data.settings.power_action.clone()),
-                        is_test: false,
-                        rest_started_at_ms: None,
-                        power_deadline_ms: None,
-                    });
-                }
-                *next_shutdown = next_daily(&data.settings.shutdown_reminder_time, now)
-                    .ok()
-                    .and_then(|value| parse_datetime(&value).ok());
-            }
-        } else {
-            *state
-                .0
-                .shutdown_next
-                .lock()
-                .expect("scheduled action lock poisoned") = None;
         }
         if changed {
             let _ = write_json(&state.0.data_path, &data);
         }
     }
-    for event in triggered {
+    triggered
+}
+
+fn enqueue_reminders(state: &AppState, events: Vec<QueuedReminder>) {
+    let mut queue = state.0.reminder_queue.lock().expect("reminder queue lock poisoned");
+    queue.extend(events);
+    queue.make_contiguous().sort_by(|a, b| a.due_at.cmp(&b.due_at)
+        .then_with(|| a.event.is_rest.cmp(&b.event.is_rest))
+        .then_with(|| a.event.id.cmp(&b.event.id)));
+}
+
+fn next_queued_reminder(state: &AppState, now: DateTime<Local>) -> Option<ReminderTriggeredEvent> {
+    if state.0.active_reminder.lock().expect("reminder session lock poisoned").is_some() {
+        return None;
+    }
+    let mut queue = state.0.reminder_queue.lock().expect("reminder queue lock poisoned");
+    while let Some(queued) = queue.pop_front() {
+        if queued.event.is_test || queued.event.power_action.is_none()
+            || should_trigger_power_action(queued.due_at, now) {
+            return Some(queued.event);
+        }
+    }
+    None
+}
+
+// 调用方持有窗口操作锁；活动会话结束后调度器在下一轮继续队列。
+fn drain_reminder_queue(app: &AppHandle, state: &AppState) {
+    while let Some(event) = next_queued_reminder(state, Local::now()) {
         if let Err(error) = dispatch_trigger(app, state, event) {
             let _ = app.emit_to("main", "notification-failed", error);
         }
@@ -1392,13 +1376,17 @@ async fn save_data(
     let mut current = state.0.data.lock().expect("settings lock poisoned");
     // 普通保存保留后端当前模式，只有主窗口明确切换时才覆盖它。
     data.settings.popup_fullscreen = popup_fullscreen.unwrap_or(current.settings.popup_fullscreen);
+    let current_by_id: HashMap<_, _> = current.reminders.iter().map(|item| (&item.id, item)).collect();
+    for reminder in &mut data.reminders {
+        if current_by_id.get(&reminder.id).is_none_or(|old| !same_reminder_plan(old, reminder)) {
+            reminder.next_trigger_at = None;
+        }
+    }
     validate_and_normalize(&mut data)?;
     let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
     let rest_interval_changed =
         current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
-    let shutdown_schedule_changed = current.settings.shutdown_reminder_enabled
-        != data.settings.shutdown_reminder_enabled
-        || current.settings.shutdown_reminder_time != data.settings.shutdown_reminder_time;
+    let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
     write_json(&state.0.data_path, &data)?;
     *current = data.clone();
     if rest_enabled_changed && !data.settings.rest_enabled {
@@ -1418,14 +1406,14 @@ async fn save_data(
             .lock()
             .expect("break reminder lock poisoned") = None;
     }
-    if shutdown_schedule_changed {
-        *state
-            .0
-            .shutdown_next
-            .lock()
-            .expect("scheduled action lock poisoned") = None;
-    }
     drop(current);
+    state.0.reminder_queue.lock().expect("reminder queue lock poisoned")
+        .retain(|item| !changed_ids.contains(&item.event.id)
+            && (!item.event.is_rest || data.settings.rest_enabled));
+    let active = state.0.active_reminder.lock().expect("reminder session lock poisoned").clone();
+    if let Some(active) = active.filter(|event| changed_ids.contains(&event.id)) {
+        close_reminder_session(&app, state.inner(), active.session_id);
+    }
     let _ = update_tray_menu(
         &app,
         data.settings.language,
@@ -1441,6 +1429,18 @@ async fn save_data(
         emit_rest_timer_updated(&app, &state);
     }
     Ok(data)
+}
+
+fn same_reminder_plan(a: &Reminder, b: &Reminder) -> bool {
+    a.title == b.title && a.reminder_type == b.reminder_type && a.trigger_at == b.trigger_at
+        && a.time == b.time && a.weekdays == b.weekdays && a.month_days == b.month_days
+        && a.enabled == b.enabled && a.power_action == b.power_action
+}
+
+fn changed_reminder_ids(previous: &[Reminder], next: &[Reminder]) -> HashSet<String> {
+    let next_by_id: HashMap<_, _> = next.iter().map(|item| (&item.id, item)).collect();
+    previous.iter().filter(|old| next_by_id.get(&old.id)
+        .is_none_or(|new| !same_reminder_plan(old, new))).map(|item| item.id.clone()).collect()
 }
 
 #[tauri::command(rename = "start_scheduler")]
@@ -1477,6 +1477,10 @@ async fn snooze_reminder(
     if !active_reminder_matches(state.inner(), &id, session_id) {
         return Ok(());
     }
+    if state.0.active_reminder.lock().expect("reminder session lock poisoned")
+        .as_ref().is_some_and(|event| event.power_action.is_some()) {
+        return Err("Scheduled actions cannot be snoozed".to_string());
+    }
     if id == REST_ID || id == TEST_REST_ID {
         if snooze_rest_round(state.inner(), seconds) {
             emit_rest_timer_updated(&app, &state);
@@ -1486,13 +1490,7 @@ async fn snooze_reminder(
     }
     let mut data = state.0.data.lock().expect("settings lock poisoned");
     let delay = Duration::seconds(seconds.max(1) as i64);
-    if id == SHUTDOWN_ID {
-        *state
-            .0
-            .shutdown_next
-            .lock()
-            .expect("scheduled action lock poisoned") = Some(Local::now() + delay);
-    } else if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
+    if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
         reminder.enabled = true;
         reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
         write_json(&state.0.data_path, &data)?;
@@ -1627,25 +1625,6 @@ fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
     rest_timer_status(state.inner())
 }
 
-#[tauri::command]
-fn get_next_shutdown_trigger(state: State<'_, AppState>) -> Option<String> {
-    let data = state.0.data.lock().expect("settings lock poisoned");
-    if !data.settings.shutdown_reminder_enabled {
-        return None;
-    }
-    let mut next = state
-        .0
-        .shutdown_next
-        .lock()
-        .expect("scheduled action lock poisoned");
-    if next.is_none() {
-        *next = next_daily(&data.settings.shutdown_reminder_time, Local::now())
-            .ok()
-            .and_then(|value| parse_datetime(&value).ok());
-    }
-    next.as_ref().map(DateTime::to_rfc3339)
-}
-
 #[cfg(target_os = "windows")]
 fn windows_power_command(action: &PowerAction, system_root: &Path) -> (PathBuf, Vec<&'static str>) {
     let system32 = system_root.join("System32");
@@ -1752,7 +1731,6 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             title: i18n::test_notification(settings.language).to_string(),
             reminder_type: ReminderType::Once,
             is_rest: false,
-            is_shutdown: false,
             power_action: None,
             is_test: true,
             rest_started_at_ms: None,
@@ -1764,20 +1742,7 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
             title: settings.rest_message.clone(),
             reminder_type: ReminderType::Interval,
             is_rest: true,
-            is_shutdown: false,
             power_action: None,
-            is_test: true,
-            rest_started_at_ms: None,
-            power_deadline_ms: None,
-        },
-        TestReminderKind::Power => ReminderTriggeredEvent {
-            session_id: 0,
-            id: "__test_power__".to_string(),
-            title: settings.shutdown_reminder_message.clone(),
-            reminder_type: ReminderType::Daily,
-            is_rest: false,
-            is_shutdown: true,
-            power_action: Some(settings.power_action.clone()),
             is_test: true,
             rest_started_at_ms: None,
             power_deadline_ms: None,
@@ -1788,6 +1753,7 @@ fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> Remind
 #[tauri::command]
 async fn test_reminder(
     kind: TestReminderKind,
+    reminder: Option<Reminder>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -1796,11 +1762,23 @@ async fn test_reminder(
         .window_operations
         .lock()
         .expect("window operations lock poisoned");
-    let event = test_reminder_event(&app_data(&state).settings, kind);
-    // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
     let settings = app_data(&state).settings;
+    let mut event = test_reminder_event(&settings, kind);
+    if let Some(reminder) = reminder {
+        if event.is_rest {
+            return Err("Break preview cannot include a scheduled reminder".to_string());
+        }
+        let mut preview = AppData { version: DATA_VERSION, settings: settings.clone(), reminders: vec![reminder] };
+        validate_and_normalize(&mut preview)?;
+        event.title = preview.reminders[0].title.clone();
+        event.power_action = preview.reminders[0].power_action.clone();
+        event.reminder_type = preview.reminders[0].reminder_type.clone();
+    }
+    // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
     sync_reminder_settings(&app, &settings);
-    dispatch_trigger(&app, &state, event)
+    enqueue_reminders(&state, vec![QueuedReminder { due_at: Local::now(), event }]);
+    drain_reminder_queue(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1829,11 +1807,6 @@ async fn import_data(
         .rest_next
         .lock()
         .expect("break reminder lock poisoned") = None;
-    *state
-        .0
-        .shutdown_next
-        .lock()
-        .expect("scheduled action lock poisoned") = None;
     state.0.paused.store(false, Ordering::SeqCst);
     drop(current);
     reset_reminder_session(&app, state.inner(), "reminders-reset");
@@ -2261,13 +2234,13 @@ fn show_about(app: &AppHandle) {
 }
 
 #[tauri::command]
-async fn open_power_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn open_reminder_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let _operation = state
         .0
         .window_operations
         .lock()
         .expect("window operations lock poisoned");
-    ensure_main_window(&app, state.inner(), Some("power")).map(|_| ())
+    ensure_main_window(&app, state.inner(), Some("events")).map(|_| ())
 }
 
 #[tauri::command]
@@ -2388,7 +2361,7 @@ pub fn run() {
                 rest_active: AtomicBool::new(false),
                 rest_round_pending: AtomicBool::new(false),
                 rest_next: Mutex::new(None),
-                shutdown_next: Mutex::new(None),
+                reminder_queue: Mutex::new(VecDeque::new()),
                 pending_navigation: Mutex::new(None),
                 window_operations: Mutex::new(()),
                 popup_image_operations: Mutex::new(()),
@@ -2430,7 +2403,6 @@ pub fn run() {
             show_reminder,
             hide_idle_window,
             get_rest_timer_status,
-            get_next_shutdown_trigger,
             execute_power_action,
             test_reminder,
             import_data,
@@ -2441,7 +2413,7 @@ pub fn run() {
             take_pending_navigation,
             popup_window_is_transparent,
             toggle_popup_fullscreen,
-            open_power_settings,
+            open_reminder_settings,
             updater::get_update_mode,
             updater::get_update_status,
             updater::get_update_progress,
@@ -2541,7 +2513,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_image_settings_migrate_without_changing_reminders() {
+    fn current_image_settings_preserve_reminders() {
         for (legacy, expected) in [
             ("original", PopupBackgroundFit::Contain),
             ("contain", PopupBackgroundFit::Contain),
@@ -2553,7 +2525,6 @@ mod tests {
                 reminders: vec![sample_once(Local::now().to_rfc3339())],
                 ..AppData::default()
             }).unwrap();
-            value["version"] = serde_json::json!(4);
             let settings = value["settings"].as_object_mut().unwrap();
             settings.insert("popupBackgroundFit".into(), serde_json::json!(legacy));
             settings.insert("popupBackgroundPosition".into(), serde_json::json!("bottomRight"));
@@ -2563,7 +2534,7 @@ mod tests {
             let mut data: AppData = serde_json::from_value(value).unwrap();
             let reminder_id = data.reminders[0].id.clone();
             validate_and_normalize(&mut data).unwrap();
-            assert_eq!(data.version, 5);
+            assert_eq!(data.version, DATA_VERSION);
             assert_eq!(data.settings.popup_background_fit, expected);
             assert_eq!(data.settings.popup_background_scale, 100);
             assert_eq!(data.settings.popup_background_offset_x, 0);
@@ -2667,7 +2638,7 @@ mod tests {
             rest_active: AtomicBool::new(false),
             rest_round_pending: AtomicBool::new(false),
             rest_next: Mutex::new(None),
-            shutdown_next: Mutex::new(None),
+            reminder_queue: Mutex::new(VecDeque::new()),
             pending_navigation: Mutex::new(None),
             window_operations: Mutex::new(()),
             popup_image_operations: Mutex::new(()),
@@ -2698,6 +2669,7 @@ mod tests {
             weekdays: Vec::new(),
             month_days: Vec::new(),
             enabled: true,
+            power_action: None,
             next_trigger_at: None,
         }
     }
@@ -2712,6 +2684,7 @@ mod tests {
             weekdays: Vec::new(),
             month_days: Vec::new(),
             enabled: true,
+            power_action: None,
             next_trigger_at: None,
         }
     }
@@ -2782,12 +2755,11 @@ mod tests {
         assert_eq!(data.settings.rest_interval_minutes, 1);
         assert_eq!(data.settings.language, Language::ZhCn);
         assert!(!data.settings.minimize_to_tray);
-        assert_eq!(data.settings.power_action, PowerAction::Shutdown);
         assert!(data.settings.popup_fullscreen);
     }
 
     #[test]
-    fn legacy_settings_without_fullscreen_option_use_fullscreen_default() {
+    fn unsupported_settings_version_is_rejected() {
         let mut value = serde_json::to_value(AppData::default()).unwrap();
         value["version"] = serde_json::json!(3);
         value["settings"]
@@ -2797,8 +2769,7 @@ mod tests {
         let mut data: AppData = serde_json::from_value(value).unwrap();
 
         assert!(data.settings.popup_fullscreen);
-        validate_and_normalize(&mut data).unwrap();
-        assert_eq!(data.version, DATA_VERSION);
+        assert!(validate_and_normalize(&mut data).is_err());
     }
 
     #[test]
@@ -2909,20 +2880,15 @@ mod tests {
     }
 
     #[test]
-    fn replacing_an_active_rest_finishes_it_with_a_full_interval() {
+    fn waiting_notifications_do_not_finish_an_active_rest() {
         let state = rest_state(true);
         prepare_notification(&state, &rest_event(&state, false)).unwrap();
         let event = test_reminder_event(&app_data(&state).settings, TestReminderKind::Event);
-        let before = Local::now();
         prepare_notification(&state, &event).unwrap();
-        let after = Local::now();
         let status = rest_timer_status(&state);
-        let next = parse_datetime(status.next_trigger_at.as_deref().unwrap()).unwrap();
-
-        assert!(!status.is_resting);
-        assert!(next >= before + Duration::minutes(1));
-        assert!(next <= after + Duration::minutes(1));
-        assert!(!complete_rest_round(&state));
+        assert!(status.is_resting);
+        assert!(status.next_trigger_at.is_none());
+        assert!(complete_rest_round(&state));
     }
 
     #[test]
@@ -3020,7 +2986,6 @@ mod tests {
 
         assert!(event.is_test);
         assert!(!event.is_rest);
-        assert!(!event.is_shutdown);
         assert_eq!(event.reminder_type, ReminderType::Once);
         assert_eq!(event.title, "这是一条测试通知");
         assert!(event.power_action.is_none());
@@ -3040,16 +3005,101 @@ mod tests {
     }
 
     #[test]
-    fn power_test_reminder_uses_configured_action_without_real_power_id() {
-        let mut settings = AppSettings::default();
-        settings.power_action = PowerAction::Restart;
-        settings.shutdown_reminder_message = "准备重新启动".to_string();
-        let event = test_reminder_event(&settings, TestReminderKind::Power);
+    fn queued_reminders_order_and_skip_expired_actions() {
+        let state = rest_state(true);
+        let now = Local::now();
+        let mut event = test_reminder_event(&AppSettings::default(), TestReminderKind::Event);
+        event.is_test = false;
+        event.id = "b".into();
+        let mut first = event.clone();
+        first.id = "a".into();
+        let mut expired = event.clone();
+        expired.power_action = Some(PowerAction::Lock);
+        let mut rest = rest_event(&state, false);
+        rest.id = "__rest__".into();
+        enqueue_reminders(&state, vec![
+            QueuedReminder { due_at: now, event },
+            QueuedReminder { due_at: now, event: rest },
+            QueuedReminder { due_at: now - Duration::minutes(2), event: expired },
+            QueuedReminder { due_at: now, event: first },
+        ]);
+        assert_eq!(next_queued_reminder(&state, now).unwrap().id, "a");
+        let active = next_queued_reminder(&state, now).unwrap();
+        assert_eq!(active.id, "b");
+        *state.0.active_reminder.lock().unwrap() = Some(active);
+        assert!(next_queued_reminder(&state, now).is_none());
+        *state.0.active_reminder.lock().unwrap() = None;
+        assert!(next_queued_reminder(&state, now).unwrap().is_rest);
+        assert!(next_queued_reminder(&state, now).is_none());
+    }
 
-        assert!(event.is_test);
-        assert!(event.is_shutdown);
-        assert_eq!(event.title, settings.shutdown_reminder_message);
-        assert_eq!(event.power_action, Some(PowerAction::Restart));
-        assert_ne!(event.id, SHUTDOWN_ID);
+    #[test]
+    fn due_once_reminders_complete_and_recurring_actions_advance() {
+        let state = rest_state(false);
+        let now = Local::now();
+        let mut once = sample_once((now - Duration::seconds(10)).to_rfc3339());
+        once.next_trigger_at = once.trigger_at.clone();
+        let mut daily = sample_recurring(ReminderType::Daily, "09:00");
+        daily.next_trigger_at = Some((now - Duration::minutes(2)).to_rfc3339());
+        daily.power_action = Some(PowerAction::Lock);
+        state.0.data.lock().unwrap().reminders = vec![once, daily];
+        let due = collect_due_reminders(&state, now);
+        assert_eq!(due.len(), 1);
+        let data = app_data(&state);
+        assert!(!data.reminders[0].enabled);
+        assert!(data.reminders[0].next_trigger_at.is_none());
+        assert!(parse_datetime(data.reminders[1].next_trigger_at.as_deref().unwrap()).unwrap() > now);
+        assert!(collect_due_reminders(&state, now).is_empty());
+    }
+
+    #[test]
+    fn monthly_31st_skips_february() {
+        let after = Local.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
+        let mut reminder = sample_recurring(ReminderType::Monthly, "09:00");
+        reminder.month_days = vec![31];
+        let next = parse_datetime(&next_recurring(&reminder, after).unwrap()).unwrap();
+        assert_eq!(next.date_naive(), NaiveDate::from_ymd_opt(2026, 3, 31).unwrap());
+    }
+
+    #[test]
+    fn plan_changes_include_action_disable_delete_but_not_runtime_deadline() {
+        let original = sample_once(Local::now().to_rfc3339());
+        let mut next = original.clone();
+        next.next_trigger_at = Some((Local::now() + Duration::minutes(5)).to_rfc3339());
+        assert!(changed_reminder_ids(&[original.clone()], &[next.clone()]).is_empty());
+        for updated in [Some(PowerAction::Lock), Some(PowerAction::Restart)] {
+            next.power_action = updated;
+            assert!(changed_reminder_ids(&[original.clone()], &[next.clone()]).contains("sample"));
+        }
+        next = original.clone();
+        next.enabled = false;
+        assert!(changed_reminder_ids(&[original.clone()], &[next]).contains("sample"));
+        assert!(changed_reminder_ids(&[original], &[]).contains("sample"));
+    }
+
+    #[test]
+    fn one_time_snooze_deadline_survives_settings_validation() {
+        let mut reminder = sample_once(Local::now().to_rfc3339());
+        let delayed = (Local::now() + Duration::minutes(5)).to_rfc3339();
+        reminder.next_trigger_at = Some(delayed.clone());
+        let mut data = AppData { reminders: vec![reminder], ..AppData::default() };
+        validate_and_normalize(&mut data).unwrap();
+        assert_eq!(data.reminders[0].next_trigger_at.as_deref(), Some(delayed.as_str()));
+    }
+
+    #[test]
+    fn old_configuration_is_preserved_before_reinitializing() {
+        let directory = std::env::temp_dir().join(format!("remindon-test-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("remindon.json");
+        let mut old = AppData::default();
+        old.version = DATA_VERSION - 1;
+        write_json(&path, &old).unwrap();
+        assert_eq!(load_json(&path).unwrap().version, DATA_VERSION);
+        let backup = fs::read_dir(&directory).unwrap().next().unwrap().unwrap().path();
+        let preserved: AppData = serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(preserved.version, DATA_VERSION - 1);
+        fs::remove_file(backup).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 }

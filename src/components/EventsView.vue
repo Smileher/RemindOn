@@ -2,14 +2,15 @@
 import { CalendarClock, Check, Pencil, Play, Plus, Trash2, X } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { Language, Reminder, ReminderType } from '../types'
+import type { Language, PowerAction, Reminder, ReminderType } from '../types'
 
 const props = defineProps<{
   language: Language
   subtitle: string
   showForm: boolean
   editingId: string | null
-  form: { title: string; type: ReminderType; triggerAt: string; time: string; weekdays: number[]; monthDays: number[] }
+  form: { title: string; type: ReminderType; triggerAt: string; time: string; weekdays: number[]; monthDays: number[]; powerAction: PowerAction | null }
+  powerActionOptions: { value: PowerAction; label: string; icon: unknown }[]
   frequencyOptions: { value: ReminderType; label: string }[]
   weekdayOptions: { value: number; label: string }[]
   typeLabels: Record<string, string>
@@ -20,6 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   testNotification: []
+  testReminder: [reminder: Reminder]
   add: []
   closeForm: []
   save: []
@@ -92,6 +94,14 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <small>{{ t('events.missingDateHint') }}</small>
       </div>
       <small v-if="actionMessage" class="status-message form-message">{{ actionMessage }}</small>
+      <label class="field">
+        <span>{{ t('events.action') }}</span>
+        <select :value="form.powerAction || ''" @change="emit('update:form', { powerAction: ($event.target as HTMLSelectElement).value || null })">
+          <option value="">{{ t('events.noAction') }}</option>
+          <option v-for="option in powerActionOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+        <small v-if="form.powerAction">{{ t('events.actionHint') }}</small>
+      </label>
       <div class="form-actions">
         <button class="button" type="button" @click="emit('closeForm')">{{ t('common.cancel') }}</button>
         <button class="button button-primary" type="button" @click="emit('save')"><Check :size="15" />{{ t('events.save') }}</button>
@@ -103,10 +113,12 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div :class="['reminder-status', { enabled: reminder.enabled }]"></div>
         <div class="reminder-main">
           <div class="reminder-title"><strong>{{ reminder.title }}</strong><span class="type-chip">{{ typeLabels[reminder.type] }}</span></div>
+          <span v-if="reminder.powerAction" class="type-chip">{{ powerActionOptions.find(option => option.value === reminder.powerAction)?.label }}</span>
           <span>{{ formatNext(reminder) }}</span>
 
         </div>
         <button class="switch" :class="{ on: reminder.enabled }" type="button" :aria-label="reminder.enabled ? t('common.disabled') : t('common.enabled')" @click="emit('toggleReminder', reminder)"><span></span></button>
+        <button class="icon-button row-action" type="button" :aria-label="t('settings.testNotification')" :title="t('settings.testNotification')" @click="emit('testReminder', reminder)"><Play :size="15" /></button>
         <button class="icon-button row-action" type="button" :aria-label="t('events.edit')" :title="t('events.edit')" @click="emit('editReminder', reminder)"><Pencil :size="15" /></button>
         <button class="icon-button row-action danger" type="button" :aria-label="t('events.delete')" :title="t('events.delete')" @click="emit('removeReminder', reminder.id)"><Trash2 :size="15" /></button>
       </article>

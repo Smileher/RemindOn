@@ -98,7 +98,6 @@ const triggeredAtLabel = computed(() => triggeredAt.value
 
 const category = computed(() => {
   if (current.value?.isRest) return t('popup.rest')
-  if (current.value?.isShutdown) return t('popup.power')
   return t('popup.event')
 })
 
@@ -262,7 +261,7 @@ async function executePowerAction() {
 
 async function openPowerSettings() {
   try {
-    await invoke('open_power_settings')
+    await invoke('open_reminder_settings')
     await dismiss()
   } catch (error) {
     logError('open power settings', error)
@@ -456,7 +455,7 @@ onUnmounted(() => {
       <button v-if="powerError" class="button popup-settings-button" type="button" @click="openPowerSettings"><Settings2 :size="14" />{{ t('popup.openPowerSettings') }}</button>
     </section>
     <footer :class="['popup-actions', { 'split-actions': !isAutomaticPower }]">
-      <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button><button class="button button-danger" type="button" @click="executePowerAction">{{ t('popup.executeNow', { action: powerVerb }) }}</button></template>
+      <template v-if="isAutomaticPower"><button class="button" type="button" @click="dismiss">{{ t('popup.cancelAction', { action: powerVerb }) }}</button></template>
       <template v-else>
         <div class="popup-action-group">
           <details ref="snoozeMenu" class="snooze-picker">

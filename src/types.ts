@@ -5,7 +5,7 @@ export type Theme = 'dark' | 'light' | 'system'
 export type Language = 'zh-CN' | 'en'
 export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
-export type TestReminderKind = 'event' | 'rest' | 'power'
+export type TestReminderKind = 'event' | 'rest'
 export type PopupBackgroundFit = 'stretch' | 'contain'
 
 export interface Reminder {
@@ -17,6 +17,7 @@ export interface Reminder {
   weekdays?: number[]
   monthDays?: number[]
   enabled: boolean
+  powerAction?: PowerAction | null
   nextTriggerAt?: string | null
 }
 
@@ -40,10 +41,6 @@ export interface AppSettings {
   popupTextColor: string
   popupTitleSize: number
   popupOverlayOpacity: number
-  shutdownReminderEnabled: boolean
-  powerAction: PowerAction
-  shutdownReminderTime: string
-  shutdownReminderMessage: string
 }
 
 export interface AppData {
@@ -58,7 +55,6 @@ export interface ReminderTriggeredEvent {
   title: string
   type: ReminderType
   isRest: boolean
-  isShutdown: boolean
   powerAction?: PowerAction | null
   isTest: boolean
   restStartedAtMs?: number | null
@@ -71,7 +67,7 @@ export interface RestTimerStatus {
 }
 
 export const defaultData = (): AppData => ({
-  version: 5,
+  version: 6,
   settings: {
     language: 'zh-CN',
     autostart: false,
@@ -92,10 +88,6 @@ export const defaultData = (): AppData => ({
     popupTextColor: '',
     popupTitleSize: 32,
     popupOverlayOpacity: 55,
-    shutdownReminderEnabled: false,
-    powerAction: 'shutdown',
-    shutdownReminderTime: '23:30',
-    shutdownReminderMessage: translate('zh-CN', 'power.defaultShutdownMessage'),
   },
   reminders: [],
 })

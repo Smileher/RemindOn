@@ -1,4 +1,4 @@
-use crate::{Language, PowerAction, ReminderTriggeredEvent};
+use crate::{Language, ReminderTriggeredEvent};
 
 pub fn default_rest_message(language: Language) -> &'static str {
     match language {
@@ -7,25 +7,12 @@ pub fn default_rest_message(language: Language) -> &'static str {
     }
 }
 
-pub fn default_power_message(language: Language, action: &PowerAction) -> &'static str {
-    match (language, action) {
-        (Language::ZhCn, PowerAction::Shutdown) => "即将自动关闭电脑。",
-        (Language::ZhCn, PowerAction::Lock) => "即将自动锁定电脑。",
-        (Language::ZhCn, PowerAction::Restart) => "即将自动重启电脑。",
-        (Language::En, PowerAction::Shutdown) => "The computer will shut down shortly.",
-        (Language::En, PowerAction::Lock) => "The computer will lock shortly.",
-        (Language::En, PowerAction::Restart) => "The computer will restart shortly.",
-    }
-}
-
 pub fn notification_title(language: Language, event: &ReminderTriggeredEvent) -> &'static str {
-    match (language, event.is_rest, event.is_shutdown) {
-        (Language::ZhCn, true, _) => "RemindOn · 休息提醒",
-        (Language::ZhCn, _, true) => "RemindOn · 定时操作",
-        (Language::ZhCn, _, _) => "RemindOn · 事件提醒",
-        (Language::En, true, _) => "RemindOn · Break reminder",
-        (Language::En, _, true) => "RemindOn · Scheduled action",
-        (Language::En, _, _) => "RemindOn · Reminder",
+    match (language, event.is_rest) {
+        (Language::ZhCn, true) => "RemindOn · 休息提醒",
+        (Language::ZhCn, false) => "RemindOn · 定时提醒",
+        (Language::En, true) => "RemindOn · Break reminder",
+        (Language::En, false) => "RemindOn · Scheduled reminder",
     }
 }
 

@@ -11,7 +11,6 @@ import ReminderPopup from './components/ReminderPopup.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import EventsView from './components/EventsView.vue'
 import RestView from './components/RestView.vue'
-import PowerView from './components/PowerView.vue'
 import SettingsView from './components/SettingsView.vue'
 import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
@@ -21,7 +20,7 @@ import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTri
 import { defaultData } from './types'
 import { useUpdater } from './composables/useUpdater'
 
-type View = 'events' | 'rest' | 'power' | 'settings' | 'about'
+type View = 'events' | 'rest' | 'settings' | 'about'
 type EditableReminderType = Exclude<ReminderType, 'interval'>
 type AutomaticPowerAction = Extract<PowerAction, 'shutdown' | 'lock' | 'restart'>
 
@@ -35,9 +34,7 @@ const actionMessage = ref('')
 const now = ref(Date.now())
 const nextRestTrigger = ref<string | null>(null)
 const restIsActive = ref(false)
-const nextShutdownTrigger = ref<string | null>(null)
 const restMessageDraft = ref(defaultData().settings.restMessage)
-const shutdownMessageDraft = ref(defaultData().settings.shutdownReminderMessage)
 const notificationError = ref('')
 const autostartError = ref('')
 const appVersion = ref('1.1')
@@ -114,6 +111,7 @@ const form = reactive({
   time: '09:00',
   weekdays: [1] as number[],
   monthDays: [1] as number[],
+  powerAction: null as PowerAction | null,
 })
 
 const sortedReminders = computed(() =>
@@ -132,12 +130,6 @@ const restStatusText = computed(() =>
       : t('common.paused'),
 )
 
-const powerStatusText = computed(() =>
-  data.value.settings.shutdownReminderEnabled
-    ? (nextShutdownTrigger.value ? formatCountdown(nextShutdownTrigger.value) : t('common.calculating'))
-    : t('common.paused'),
-)
-
 // 重置只恢复参数默认值，提醒列表必须保留。
 // 默认文案随语言变化，所以比较时要按当前语言重新生成一份默认值，否则切到英文后永远判定为「已修改」。
 const canResetSettings = computed(() => {
@@ -148,7 +140,6 @@ const canResetSettings = computed(() => {
     ...defaults,
     language,
     restMessage: translate(language, 'rest.defaultMessage'),
-    shutdownReminderMessage: translate(language, 'power.defaultShutdownMessage'),
   }
   return Boolean(popupBackgroundPreview.value) || (Object.keys(localized) as Array<keyof typeof localized>).some(
     (key) => JSON.stringify(current[key]) !== JSON.stringify(localized[key]),
@@ -186,6 +177,7 @@ function patchForm(patch: Record<string, unknown>) {
 
 function resetForm() {
   form.title = ''
+  form.powerAction = null
   form.type = 'once'
   form.triggerAt = toDateTimeLocal(new Date(Date.now() + 10 * 60 * 1000))
   form.time = '09:00'
@@ -208,6 +200,7 @@ function openAddForm() {
 function editReminder(reminder: Reminder) {
   editingId.value = reminder.id
   form.title = reminder.title
+  form.powerAction = reminder.powerAction ?? null
   form.type = reminder.type === 'interval' ? 'once' : reminder.type
   form.triggerAt = reminder.triggerAt ? toDateTimeLocal(new Date(reminder.triggerAt)) : ''
   form.time = reminder.time || '09:00'
@@ -305,6 +298,7 @@ async function saveReminder() {
     weekdays: form.type === 'weekly' ? [...form.weekdays] : [],
     monthDays: form.type === 'monthly' ? [...form.monthDays] : [],
     enabled: existing?.enabled ?? true,
+    powerAction: form.powerAction,
     nextTriggerAt: null,
   }
 
@@ -398,16 +392,6 @@ async function applySetting(key: keyof AppData['settings'], value: AppData['sett
     await updateLanguage(value as Language)
     return
   }
-  if (key === 'powerAction') {
-    await updatePowerAction(value as AutomaticPowerAction)
-    return
-  }
-  if (key === 'shutdownReminderTime') {
-    if (/^\d{2}:\d{2}$/.test(String(value))) {
-      await updateSetting('shutdownReminderTime', String(value))
-    }
-    return
-  }
   await updateSetting(key, value as never)
 }
 
@@ -441,9 +425,6 @@ async function updateAutostart(value: boolean) {
 function localizedDefaultMessages(language: Language) {
   return {
     rest: translate(language, 'rest.defaultMessage'),
-    shutdown: translate(language, 'power.defaultShutdownMessage'),
-    lock: translate(language, 'power.defaultLockMessage'),
-    restart: translate(language, 'power.defaultRestartMessage'),
   }
 }
 
@@ -451,51 +432,19 @@ async function updateLanguage(language: Language) {
   const previous = data.value.settings
   const currentDefaults = localizedDefaultMessages(previous.language)
   const nextDefaults = localizedDefaultMessages(language)
-  const currentPowerDefault = currentDefaults[previous.powerAction]
-  const nextPowerDefault = nextDefaults[previous.powerAction]
   data.value.settings = {
     ...previous,
     language,
     restMessage: previous.restMessage === currentDefaults.rest ? nextDefaults.rest : previous.restMessage,
-    shutdownReminderMessage: previous.shutdownReminderMessage === currentPowerDefault
-      ? nextPowerDefault
-      : previous.shutdownReminderMessage,
   }
   restMessageDraft.value = data.value.settings.restMessage
-  shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
   try {
     await persist()
     await refreshTimers()
   } catch (error) {
     data.value.settings = previous
     restMessageDraft.value = previous.restMessage
-    shutdownMessageDraft.value = previous.shutdownReminderMessage
     logError('save language', error)
-    actionMessage.value = t('status.saveFailed')
-  }
-}
-
-async function updatePowerAction(value: AutomaticPowerAction) {
-  const previous = data.value.settings
-  const localizedDefaults = localizedDefaultMessages(previous.language)
-  const defaults = (['zh-CN', 'en'] as const).flatMap((language) => {
-    const messages = localizedDefaultMessages(language)
-    return [messages.shutdown, messages.lock, messages.restart]
-  })
-  data.value.settings = {
-    ...previous,
-    powerAction: value,
-    shutdownReminderMessage: defaults.includes(previous.shutdownReminderMessage)
-      ? localizedDefaults[value]
-      : previous.shutdownReminderMessage,
-  }
-  shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
-  try {
-    await persist()
-    await refreshTimers()
-  } catch (error) {
-    data.value.settings = previous
-    logError('update power action', error)
     actionMessage.value = t('status.saveFailed')
   }
 }
@@ -504,12 +453,6 @@ async function updateRestInterval(raw: string) {
   const value = Number(raw)
   if (Number.isInteger(value) && value >= 1 && value <= 1440) {
     await updateSetting('restIntervalMinutes', value)
-  }
-}
-
-async function updateShutdownTimeValue(raw: string) {
-  if (/^\d{2}:\d{2}$/.test(raw)) {
-    await updateSetting('shutdownReminderTime', raw)
   }
 }
 
@@ -523,20 +466,6 @@ async function saveRestMessage(value: string) {
     data.value.settings = previous
     restMessageDraft.value = previous.restMessage
     logError('save rest message', error)
-    actionMessage.value = t('status.saveFailed')
-  }
-}
-
-async function saveShutdownMessage(value: string) {
-  const previous = data.value.settings
-  shutdownMessageDraft.value = value
-  data.value.settings = { ...previous, shutdownReminderMessage: value }
-  try {
-    await persist()
-  } catch (error) {
-    data.value.settings = previous
-    shutdownMessageDraft.value = previous.shutdownReminderMessage
-    logError('save power message', error)
     actionMessage.value = t('status.saveFailed')
   }
 }
@@ -588,7 +517,6 @@ async function importData() {
     if (typeof path === 'string') {
       data.value = await invoke<AppData>('import_data', { path })
       restMessageDraft.value = data.value.settings.restMessage
-      shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
       await applyNativeTheme(data.value.settings.theme)
       actionMessage.value = t('status.imported')
       await refreshTimers()
@@ -629,10 +557,8 @@ async function resetSettings() {
     ...defaults,
     language: previous.language,
     restMessage: translate(previous.language, 'rest.defaultMessage'),
-    shutdownReminderMessage: translate(previous.language, 'power.defaultShutdownMessage'),
   }
   restMessageDraft.value = data.value.settings.restMessage
-  shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
   try {
     if (previous.autostart) await disable()
     await setTheme(data.value.settings.theme === 'system' ? null : data.value.settings.theme)
@@ -641,7 +567,6 @@ async function resetSettings() {
   } catch (error) {
     data.value.settings = previous
     restMessageDraft.value = previous.restMessage
-    shutdownMessageDraft.value = previous.shutdownReminderMessage
     const rollback = await Promise.allSettled([
       previous.autostart ? enable() : disable(),
       setTheme(previous.theme === 'system' ? null : previous.theme),
@@ -670,12 +595,12 @@ async function resetSettings() {
   }
 }
 
-async function testNotification(kind: TestReminderKind) {
+async function testNotification(kind: TestReminderKind, reminder?: Reminder) {
   actionMessage.value = ''
   notificationError.value = ''
   try {
     await persist()
-    await invoke('test_reminder', { kind })
+    await invoke('test_reminder', { kind, reminder: reminder ?? null })
   } catch (error) {
     logError('test notification', error)
     const message = t('status.notificationFailed', { error: formatError(error) })
@@ -687,16 +612,14 @@ async function testNotification(kind: TestReminderKind) {
 async function refreshTimers() {
   if (isPopup) return
   const refreshToken = ++timerRefreshToken
-  const [rest, shutdown] = await Promise.allSettled([
+  const [rest] = await Promise.allSettled([
     invoke<RestTimerStatus>('get_rest_timer_status'),
-    invoke<string | null>('get_next_shutdown_trigger'),
   ])
   if (refreshToken !== timerRefreshToken) return
   if (rest.status === 'fulfilled') {
     nextRestTrigger.value = rest.value.nextTriggerAt
     restIsActive.value = rest.value.isResting
   }
-  nextShutdownTrigger.value = shutdown.status === 'fulfilled' ? shutdown.value : null
   now.value = Date.now()
 }
 
@@ -723,7 +646,6 @@ onMounted(async () => {
     })
     data.value = await invoke<AppData>('load_data')
     restMessageDraft.value = data.value.settings.restMessage
-    shutdownMessageDraft.value = data.value.settings.shutdownReminderMessage
     try {
       const pendingNavigation = await invoke<View | null>('take_pending_navigation')
       if (pendingNavigation) currentView.value = pendingNavigation
@@ -813,6 +735,7 @@ onUnmounted(() => {
         :show-form="showForm"
         :editing-id="editingId"
         :form="form"
+        :power-action-options="powerActionOptions"
         :frequency-options="frequencyOptions"
         :weekday-options="weekdayOptions"
         :type-labels="typeLabels"
@@ -820,6 +743,7 @@ onUnmounted(() => {
         :action-message="actionMessage"
         :format-next="formatNext"
         @test-notification="testNotification('event')"
+        @test-reminder="testNotification('event', $event)"
         @add="openAddForm"
         @close-form="showForm = false"
         @save="saveReminder"
@@ -846,22 +770,6 @@ onUnmounted(() => {
         @update:interval="updateRestInterval"
         @update:message="restMessageDraft = $event"
         @message-committed="saveRestMessage($event)"
-      />
-
-      <PowerView
-        v-else-if="currentView === 'power'"
-        :language="data.settings.language"
-        :subtitle="t('power.subtitle')"
-        :settings="data.settings"
-        :status="powerStatusText"
-        :action-message="actionMessage"
-        :power-action-options="powerActionOptions"
-        @test-notification="testNotification('power')"
-        @update:enabled="updateSetting('shutdownReminderEnabled', $event)"
-        @update:power-action="updatePowerAction"
-        @update:time="updateShutdownTimeValue"
-        @update:message="shutdownMessageDraft = $event"
-        @message-committed="saveShutdownMessage($event)"
       />
 
       <SettingsView

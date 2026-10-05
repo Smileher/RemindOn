@@ -72,7 +72,6 @@ async function mountApp({ enabled = true, status = resting } = {}) {
           assert.ok(listeners.has('rest-timer-updated'), 'subscribe before reading initial status')
           return readStatus()
         }
-        if (command === 'get_next_shutdown_trigger') return null
         throw new Error(`Unexpected command: ${command}`)
       },
     },
@@ -94,7 +93,6 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     './components/AppSidebar.vue': { default: { render: noop } },
     './components/EventsView.vue': { default: { render: noop } },
     './components/RestView.vue': { default: { render: noop } },
-    './components/PowerView.vue': { default: { render: noop } },
     './components/SettingsView.vue': { default: { render: noop } },
     './components/AboutView.vue': { default: { render: noop } },
     './assets/remindon.svg': { default: 'remindon.svg' },
@@ -201,7 +199,6 @@ test('reset keeps English defaults, reminder entries and clears image-only chang
   app.state.data.value.settings = defaultData().settings
   app.state.data.value.settings.language = 'en'
   app.state.data.value.settings.restMessage = translate('en', 'rest.defaultMessage')
-  app.state.data.value.settings.shutdownReminderMessage = translate('en', 'power.defaultShutdownMessage')
   app.state.data.value.reminders = [{ id: 'keep', title: 'keep reminder' }]
   app.state.popupBackgroundPreview.value = 'data:image/png;base64,image'
   assert.equal(app.state.canResetSettings.value, true)
@@ -209,7 +206,6 @@ test('reset keeps English defaults, reminder entries and clears image-only chang
   await app.state.resetSettings()
   assert.equal(app.state.data.value.settings.language, 'en')
   assert.equal(app.state.data.value.settings.restMessage, translate('en', 'rest.defaultMessage'))
-  assert.equal(app.state.data.value.settings.shutdownReminderMessage, translate('en', 'power.defaultShutdownMessage'))
   assert.equal(app.state.data.value.reminders[0].id, 'keep')
   assert.equal(app.state.popupBackgroundPreview.value, '')
   assert.equal(app.state.canResetSettings.value, false)
@@ -319,7 +315,7 @@ test('window focus changes preserve the active backend break', async () => {
     const before = app.calls.length
     app.focus(focused)
     await new Promise(setImmediate)
-    assert.equal(app.calls.length, before + 2)
+    assert.equal(app.calls.length, before + 1)
     assert.equal(app.state.restIsActive.value, true)
     assert.equal(app.state.nextRestTrigger.value, null)
   }
