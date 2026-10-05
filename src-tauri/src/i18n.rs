@@ -2,8 +2,15 @@ use crate::{Language, ReminderTriggeredEvent};
 
 pub fn default_rest_message(language: Language) -> &'static str {
     match language {
-        Language::ZhCn => "休息时间到了，该休息一下了，不要卷。",
-        Language::En => "It is time to take a break. Do not overwork yourself.",
+        Language::ZhCn => "休息一下，喝口水，别太卷了。",
+        Language::En => "Take a break, have some water, and do not overwork yourself.",
+    }
+}
+
+pub fn preset_messages(language: Language) -> [&'static str; 3] {
+    match language {
+        Language::ZhCn => ["到饭点了，先去好好吃饭。", "今天辛苦了，该下班啦。", "本周工作结束，好好享受周末。"],
+        Language::En => ["It is lunchtime. Enjoy a proper meal.", "You have worked hard today. Time to head home.", "The workweek is over. Enjoy your weekend."],
     }
 }
 

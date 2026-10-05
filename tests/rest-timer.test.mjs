@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
 import { renderToString } from 'vue/server-renderer'
-import { defaultData } from '../src/types.ts'
+import { defaultData, defaultReminders } from '../src/types.ts'
 import { translate } from '../src/i18n.ts'
 
 const require = createRequire(import.meta.url)
@@ -98,7 +98,7 @@ async function mountApp({ enabled = true, status = resting } = {}) {
     './assets/remindon.svg': { default: 'remindon.svg' },
     './assets/donate.png': { default: 'donate.png' },
     './i18n': { translate },
-    './types': { defaultData },
+    './types': { defaultData, defaultReminders },
     './error': { logError: (context, error) => { errors.push({ context, error }) } },
     './composables/useUpdater': {
       useUpdater: () => ({
@@ -240,9 +240,19 @@ test('image removal failure keeps the saved defaults and reports the actual imag
   app.setInvoke('read_popup_image', async () => 'data:image/png;base64,image')
   app.setConfirm(async () => true)
   await app.state.resetSettings()
-  assert.equal(app.state.data.value.settings.theme, 'dark')
+  assert.equal(app.state.data.value.settings.theme, 'system')
   assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
   assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.imageFailed'))
+})
+
+test('language changes translate untouched presets and preserve custom content', async () => {
+  const app = await mountApp()
+  app.state.data.value.reminders = defaultData().reminders
+  app.state.data.value.reminders[1].title = '自定义下班提醒'
+  await app.state.updateLanguage('en')
+  assert.equal(app.state.data.value.reminders[0].title, translate('en', 'preset.lunch'))
+  assert.equal(app.state.data.value.reminders[1].title, '自定义下班提醒')
+  assert.equal(app.state.data.value.reminders[2].title, translate('en', 'preset.weekend'))
 })
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {

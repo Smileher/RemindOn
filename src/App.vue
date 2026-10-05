@@ -17,7 +17,7 @@ import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
 import type { AccentColor, AppData, Language, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
-import { defaultData } from './types'
+import { defaultData, defaultReminders } from './types'
 import { useUpdater } from './composables/useUpdater'
 
 type View = 'events' | 'rest' | 'settings' | 'about'
@@ -430,6 +430,13 @@ function localizedDefaultMessages(language: Language) {
 
 async function updateLanguage(language: Language) {
   const previous = data.value.settings
+  const previousReminders = data.value.reminders
+  const currentPresets = defaultReminders(previous.language)
+  const nextPresets = defaultReminders(language)
+  data.value.reminders = previousReminders.map((reminder) => {
+    const index = currentPresets.findIndex((preset) => preset.id === reminder.id && preset.title === reminder.title)
+    return index >= 0 ? { ...reminder, title: nextPresets[index].title } : reminder
+  })
   const currentDefaults = localizedDefaultMessages(previous.language)
   const nextDefaults = localizedDefaultMessages(language)
   data.value.settings = {
@@ -443,6 +450,7 @@ async function updateLanguage(language: Language) {
     await refreshTimers()
   } catch (error) {
     data.value.settings = previous
+    data.value.reminders = previousReminders
     restMessageDraft.value = previous.restMessage
     logError('save language', error)
     actionMessage.value = t('status.saveFailed')

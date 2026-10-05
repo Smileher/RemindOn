@@ -66,20 +66,26 @@ export interface RestTimerStatus {
   isResting: boolean
 }
 
-export const defaultData = (): AppData => ({
+export const defaultReminders = (language: Language): Reminder[] => [
+  { id: 'preset-lunch', title: translate(language, 'preset.lunch'), type: 'daily', time: '11:50', powerAction: 'lock', enabled: false },
+  { id: 'preset-workday', title: translate(language, 'preset.workday'), type: 'weekly', time: '17:30', weekdays: [1, 2, 3, 4], powerAction: 'lock', enabled: false },
+  { id: 'preset-weekend', title: translate(language, 'preset.weekend'), type: 'weekly', time: '17:30', weekdays: [5], powerAction: 'shutdown', enabled: false },
+]
+
+export const defaultData = (language: Language = 'zh-CN'): AppData => ({
   version: 6,
   settings: {
-    language: 'zh-CN',
+    language,
     autostart: false,
     minimizeToTray: false,
     popupAlwaysOnTop: true,
     popupFullscreen: true,
-    restEnabled: false,
-    restIntervalMinutes: 45,
-    restMessage: translate('zh-CN', 'rest.defaultMessage'),
+    restEnabled: true,
+    restIntervalMinutes: 40,
+    restMessage: translate(language, 'rest.defaultMessage'),
     systemNotificationEnabled: true,
-    theme: 'dark',
-    accentColor: 'mint',
+    theme: 'system',
+    accentColor: 'blue',
     popupBackgroundFit: 'stretch',
     popupBackgroundScale: 100,
     popupBackgroundOffsetX: 0,
@@ -89,5 +95,5 @@ export const defaultData = (): AppData => ({
     popupTitleSize: 32,
     popupOverlayOpacity: 55,
   },
-  reminders: [],
+  reminders: defaultReminders(language),
 })

@@ -163,7 +163,7 @@ pub enum Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::Dark
+        Self::System
     }
 }
 
@@ -178,7 +178,7 @@ pub enum AccentColor {
 
 impl Default for AccentColor {
     fn default() -> Self {
-        Self::Mint
+        Self::Blue
     }
 }
 
@@ -190,12 +190,12 @@ impl Default for AppSettings {
             minimize_to_tray: false,
             popup_always_on_top: true,
             popup_fullscreen: true,
-            rest_enabled: false,
-            rest_interval_minutes: 45,
+            rest_enabled: true,
+            rest_interval_minutes: 40,
             rest_message: default_rest_message(),
             system_notification_enabled: true,
-            theme: Theme::Dark,
-            accent_color: AccentColor::Mint,
+            theme: Theme::System,
+            accent_color: AccentColor::Blue,
             popup_background_fit: PopupBackgroundFit::Stretch,
             popup_background_scale: default_popup_background_scale(),
             popup_background_offset_x: 0,
@@ -257,9 +257,29 @@ impl Default for AppData {
         Self {
             version: DATA_VERSION,
             settings: AppSettings::default(),
-            reminders: Vec::new(),
+            reminders: default_reminders(Language::ZhCn),
         }
     }
+}
+
+fn default_reminders(language: Language) -> Vec<Reminder> {
+    let messages = i18n::preset_messages(language);
+    [
+        ("preset-lunch", messages[0], ReminderType::Daily, "11:50", vec![], PowerAction::Lock),
+        ("preset-workday", messages[1], ReminderType::Weekly, "17:30", vec![1, 2, 3, 4], PowerAction::Lock),
+        ("preset-weekend", messages[2], ReminderType::Weekly, "17:30", vec![5], PowerAction::Shutdown),
+    ].into_iter().map(|(id, title, reminder_type, time, weekdays, action)| Reminder {
+        id: id.to_string(),
+        title: title.to_string(),
+        reminder_type,
+        trigger_at: None,
+        time: Some(time.to_string()),
+        weekdays,
+        month_days: Vec::new(),
+        enabled: false,
+        power_action: Some(action),
+        next_trigger_at: None,
+    }).collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2756,6 +2776,25 @@ mod tests {
         assert_eq!(data.settings.language, Language::ZhCn);
         assert!(!data.settings.minimize_to_tray);
         assert!(data.settings.popup_fullscreen);
+    }
+
+    #[test]
+    fn defaults_include_disabled_non_overlapping_presets_and_never_restore_deleted_entries() {
+        let mut data = AppData::default();
+        assert!(data.settings.rest_enabled);
+        assert_eq!(data.settings.rest_interval_minutes, 40);
+        assert_eq!(data.settings.theme, Theme::System);
+        assert_eq!(data.settings.accent_color, AccentColor::Blue);
+        assert_eq!(data.reminders.len(), 3);
+        assert!(data.reminders.iter().all(|item| !item.enabled));
+        assert_eq!(data.reminders[0].time.as_deref(), Some("11:50"));
+        assert_eq!(data.reminders[1].weekdays, vec![1, 2, 3, 4]);
+        assert_eq!(data.reminders[2].weekdays, vec![5]);
+        assert_eq!(data.reminders[2].power_action, Some(PowerAction::Shutdown));
+        assert_eq!(default_reminders(Language::En)[0].title, i18n::preset_messages(Language::En)[0]);
+        data.reminders.clear();
+        validate_and_normalize(&mut data).unwrap();
+        assert!(data.reminders.is_empty());
     }
 
     #[test]
