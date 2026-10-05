@@ -329,6 +329,8 @@ h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
 .popup-identity strong { color: var(--popup-text, var(--text)); font-size: var(--font-sm); }
 .popup-identity span { margin-top: 2px; color: var(--popup-text, var(--muted)); font-size: var(--font-xs); }
 .popup-escape-hint { min-width: 36px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 4px 7px 3px; color: var(--muted); background: var(--page-bg); font: 700 10px/1.2 Inter, "Segoe UI", sans-serif; text-align: center; box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
+.popup-escape-hint:hover { border-color: var(--accent); color: var(--text); }
+.popup-escape-hint:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; }
 .popup-header-actions { display: flex; align-items: center; gap: 8px; }
 .popup-mode-button { display: grid; place-items: center; width: 24px; height: 22px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 0; color: var(--muted); background: var(--page-bg); box-shadow: 0 1px 0 rgba(0, 0, 0, .18); }
 .popup-mode-button:hover { border-color: var(--accent); color: var(--text); }

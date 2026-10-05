@@ -331,8 +331,7 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
 function handleEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.repeat) return
   event.preventDefault()
-  if (current.value) void dismiss()
-  else void closePopup()
+  void dismiss()
 }
 
 function handleClosed(sessionId: number) {
@@ -449,7 +448,7 @@ onUnmounted(() => {
           :aria-label="settings.popupFullscreen ? t('popup.toWindowed') : t('popup.toFullscreen')"
           @click="toggleFullscreenMode"
         ><Minimize2 v-if="settings.popupFullscreen" :size="13" /><Maximize2 v-else :size="13" /></button>
-        <kbd class="popup-escape-hint">ESC</kbd>
+        <button class="popup-escape-hint" type="button" :title="t('common.close')" :aria-label="t('common.close')" @click="dismiss">ESC</button>
       </div>
     </header>
     <section class="popup-content">

@@ -338,8 +338,24 @@ test('Escape still hides a popup whose reminder state was already cleared', asyn
   assert.equal(popup.calls.at(-1), 'hide')
 })
 
-test('popup header shows the Escape shortcut hint', () => {
-  assert.match(descriptor.template.content, /class="popup-escape-hint">ESC<\/kbd>/)
+test('popup Escape button invokes the same dismissal as the keyboard', () => {
+  assert.match(descriptor.template.content, /<button class="popup-escape-hint"[^>]*@click="dismiss">ESC<\/button>/)
+})
+
+test('click dismissal cancels rest, event and power sessions and their timers', async () => {
+  for (const event of [restEvent, { ...restEvent, id: '__test_event__', isRest: false }, powerEvent]) {
+    const popup = await mountPopup()
+    await popup.state.handleTrigger(event)
+    await popup.state.dismiss()
+    await popup.advance(60_000)
+    assert.equal(popup.state.current.value, null)
+    assert.equal(popup.intervals.size, 0)
+    assert.equal(popup.calls.filter(name => name === 'dismiss_reminder').length, 1)
+    assert.ok(!popup.calls.includes('execute_power_action'))
+  }
+  const idle = await mountPopup()
+  await idle.state.dismiss()
+  assert.equal(idle.calls.at(-1), 'hide')
 })
 
 test('a secondary fullscreen popup never executes the automatic power action', async () => {
