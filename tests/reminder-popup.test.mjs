@@ -268,7 +268,7 @@ test('import reset cancels the pending automatic power countdown', async () => {
 })
 
 test('dismiss, snooze, cancellation and reset prevent pending content from restarting old timers', async () => {
-  for (const step of ['load_data', 'setTheme']) {
+  for (const step of ['load_data']) {
     for (const action of ['dismiss', 'snooze', 'cancelRest', 'resetReminders']) {
       for (const event of action === 'cancelRest' ? [restEvent] : [restEvent, powerEvent]) {
         const popup = await mountPopup()
@@ -289,6 +289,17 @@ test('dismiss, snooze, cancellation and reset prevent pending content from resta
       }
     }
   }
+})
+
+test('popup theme updates never override the app-wide native theme', async () => {
+  const popup = await mountPopup()
+  for (const theme of ['dark', 'light', 'dark', 'system']) {
+    await popup.emitTo('reminder', 'settings-updated', { ...defaultData().settings, theme })
+    assert.equal(popup.state.settings.value.theme, theme)
+  }
+  await popup.state.handleTrigger(restEvent)
+  assert.ok(!popup.calls.includes('setTheme'))
+  assert.equal(popup.calls.filter((name) => name === 'show').length, 1)
 })
 
 test('a late dismiss or snooze response cannot hide a newer notification', async () => {

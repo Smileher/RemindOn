@@ -1094,6 +1094,7 @@ fn create_reminder_window(
         .maximizable(false)
         .skip_taskbar(true)
         .always_on_top(settings.popup_always_on_top)
+        .theme(tauri_theme(&settings.theme))
         .build()
         .map_err(|error| format!("Failed to create reminder window: {error}"))
 }
@@ -1143,6 +1144,8 @@ fn prepare_reminder_windows(
         } else {
             configure_windowed_reminder(&window, settings);
         }
+        // 新建与缓存复用都由后端同步，弹窗前端不再改写整个应用的主题。
+        apply_window_appearance(&window, &settings.theme);
     }
     *state
         .0
@@ -1156,8 +1159,7 @@ fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
     for window in reminder_windows(app) {
         let _ = window.set_title(i18n::notification_window_title(settings.language));
         let _ = window.set_always_on_top(settings.popup_always_on_top);
-        // 原生标题栏跟随深浅色靠的是窗口背景色，必须在 Rust 侧同步。
-        // 前端 setTheme 只改 NSApp.appearance，管不到已渲染的标题栏材质。
+        // 原生主题统一由后端同步；macOS 同时更新透明标题栏的背景色。
         apply_window_appearance(&window, &settings.theme);
         let _ = app.emit_to(window.label(), "settings-updated", settings);
     }

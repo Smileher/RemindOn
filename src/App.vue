@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { getVersion, setTheme } from '@tauri-apps/api/app'
+import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, confirm, open, save } from '@tauri-apps/plugin-dialog'
@@ -16,7 +16,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind, Theme } from './types'
+import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind } from './types'
 import { defaultData, defaultReminders } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -353,19 +353,9 @@ async function removeReminder(id: string) {
   }
 }
 
-async function applyNativeTheme(theme: Theme) {
-  try {
-    await setTheme(theme === 'system' ? null : theme)
-  } catch (error) {
-    // The standalone Vite preview has no native title bar to update.
-    logError('apply native theme', error)
-  }
-}
-
 async function updateSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
   const previous = data.value.settings
   data.value.settings = { ...previous, [key]: value }
-  if (key === 'theme') await applyNativeTheme(value as Theme)
   try {
     await persist(key === 'popupFullscreen' ? value as boolean : undefined)
     await refreshTimers()
@@ -373,7 +363,6 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
     return true
   } catch (error) {
     data.value.settings = previous
-    if (key === 'theme') await applyNativeTheme(previous.theme)
     logError(`save setting: ${String(key)}`, error)
     actionMessage.value = t('status.saveFailed')
     return false
@@ -526,7 +515,6 @@ async function importData() {
     if (typeof path === 'string') {
       data.value = await invoke<AppData>('import_data', { path })
       restMessageDraft.value = data.value.settings.restMessage
-      await applyNativeTheme(data.value.settings.theme)
       actionMessage.value = t('status.imported')
       await refreshTimers()
     }
@@ -550,7 +538,7 @@ async function exportData() {
   }
 }
 
-// 只恢复参数默认值，提醒列表原样保留。自启与主题要同步到系统层，所以单独处理。
+// 只恢复参数默认值，提醒列表原样保留。自启单独同步，原生主题由后端保存时统一应用。
 async function resetSettings() {
   actionMessage.value = ''
   const confirmed = await confirm(t('settings.resetConfirmBody'), {
@@ -571,7 +559,6 @@ async function resetSettings() {
   try {
     if (defaults.autostart) await enable()
     else await disable()
-    await setTheme(data.value.settings.theme === 'system' ? null : data.value.settings.theme)
     await persist(defaults.popupFullscreen)
     await refreshTimers()
   } catch (error) {
@@ -579,7 +566,6 @@ async function resetSettings() {
     restMessageDraft.value = previous.restMessage
     const rollback = await Promise.allSettled([
       previous.autostart ? enable() : disable(),
-      setTheme(previous.theme === 'system' ? null : previous.theme),
     ])
     for (const result of rollback) {
       if (result.status === 'rejected') logError('restore system settings after reset', result.reason)
@@ -662,7 +648,6 @@ onMounted(async () => {
     } catch {
       // The standalone preview and older bridge mocks do not expose navigation state.
     }
-    await applyNativeTheme(data.value.settings.theme)
     try {
       appVersion.value = (await getVersion()).replace(/\.0$/, '')
     } catch {

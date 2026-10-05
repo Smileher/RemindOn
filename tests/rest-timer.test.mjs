@@ -212,7 +212,7 @@ test('reset keeps English defaults, reminder entries and clears image-only chang
   assert.equal(app.state.canResetSettings.value, false)
 })
 
-test('failed reset restores settings, autostart and theme without clearing the image', async () => {
+test('failed reset restores settings and autostart without overriding the native theme', async () => {
   const app = await mountApp()
   app.state.data.value.settings.autostart = true
   app.state.data.value.settings.theme = 'light'
@@ -227,7 +227,8 @@ test('failed reset restores settings, autostart and theme without clearing the i
   await app.state.resetSettings()
   assert.equal(JSON.stringify(app.state.data.value.settings), before)
   assert.ok(nativeCalls.includes('enable'))
-  assert.equal(nativeCalls.at(-1), 'light')
+  assert.equal(nativeCalls.at(-1), 'enable')
+  assert.ok(!nativeCalls.includes(null) && !nativeCalls.includes('light'))
   assert.equal(app.calls.includes('clear_popup_image'), false)
   assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
   assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.saveFailed'))
@@ -263,7 +264,7 @@ test('native startup failures display actual autostart status and retain backgro
   assert.equal(app.state.notificationError.value, translate('zh-CN', 'status.notificationFailed', { error: 'notifications disabled' }))
 })
 
-test('reset synchronizes enabled-by-default autostart and system theme', async () => {
+test('reset saves the system theme and synchronizes enabled-by-default autostart', async () => {
   const app = await mountApp()
   const nativeCalls = []
   app.setNative('enable', async () => nativeCalls.push('enable'))
@@ -271,8 +272,37 @@ test('reset synchronizes enabled-by-default autostart and system theme', async (
   app.setNative('setTheme', async (theme) => nativeCalls.push(theme))
   app.setConfirm(async () => true)
   await app.state.resetSettings()
-  assert.deepEqual(nativeCalls, ['enable', null])
+  assert.deepEqual(nativeCalls, ['enable'])
   assert.equal(app.state.data.value.settings.autostart, true)
+  assert.equal(app.state.data.value.settings.theme, 'system')
+})
+
+test('repeated theme changes persist without writing the competing app theme', async () => {
+  const app = await mountApp()
+  const savedThemes = []
+  const nativeThemes = []
+  app.setNative('setTheme', async (theme) => nativeThemes.push(theme))
+  app.setSaveData(async (data) => {
+    savedThemes.push(data.settings.theme)
+    return structuredClone(data)
+  })
+  for (const theme of ['dark', 'light', 'dark', 'system', 'light', 'dark']) {
+    assert.equal(await app.state.updateSetting('theme', theme), true)
+    assert.equal(app.state.data.value.settings.theme, theme)
+  }
+  assert.deepEqual(savedThemes, ['dark', 'light', 'dark', 'system', 'light', 'dark'])
+  assert.deepEqual(nativeThemes, [])
+})
+
+test('failed theme save restores the previous preference without changing the app theme', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings.theme = 'dark'
+  const nativeThemes = []
+  app.setNative('setTheme', async (theme) => nativeThemes.push(theme))
+  app.setSaveData(async () => { throw new Error('disk full') })
+  assert.equal(await app.state.updateSetting('theme', 'light'), false)
+  assert.equal(app.state.data.value.settings.theme, 'dark')
+  assert.deepEqual(nativeThemes, [])
 })
 
 test('test break notifications use backend rest state even with reminders disabled', async () => {

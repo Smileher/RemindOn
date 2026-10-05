@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { setTheme } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { confirm } from '@tauri-apps/plugin-dialog'
@@ -304,12 +303,6 @@ async function handleTrigger(event: ReminderTriggeredEvent) {
   }
   if (sequence !== notificationSequence) return
   triggeredAt.value = new Date()
-  try {
-    await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
-  } catch {
-    // Theme synchronization must not prevent a due notification from opening.
-  }
-  if (sequence !== notificationSequence) return
   if (isAutomaticPower.value) startPowerCountdown(event.powerDeadlineMs)
   else if (event.isRest) startRestTimer(event.restStartedAtMs)
   popupAnimationKey.value += 1
@@ -375,11 +368,6 @@ onMounted(async () => {
     unlistenSettings = await currentWindow.listen<AppSettings>('settings-updated', async (event) => {
       const previous = settings.value
       settings.value = event.payload
-      try {
-        await setTheme(settings.value.theme === 'system' ? null : settings.value.theme)
-      } catch {
-        // Theme synchronization must not prevent the popup from updating.
-      }
       // macOS 上 setLevel 会打断进行中的外观过渡，冻结原生标题栏材质；
       // 置顶状态没变时必须跳过，否则切换深浅色后弹窗标题栏不再跟随。
       if (previous.popupAlwaysOnTop !== settings.value.popupAlwaysOnTop) {
