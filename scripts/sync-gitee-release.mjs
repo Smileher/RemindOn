@@ -113,7 +113,8 @@ function uploadWithHttps(token, releaseId, name, bytes, useCurl) {
   const body = Buffer.concat([prefix, Buffer.from(bytes), suffix])
   const url = new URL(`${api}/releases/${releaseId}/attach_files`)
   // Gitee 部分节点只读取 query 中的令牌；multipart 字段仍保留以兼容其它节点。
-  url.searchParams.set('access_token', token)
+  // curl 不把令牌放进命令参数，避免令牌出现在 runner 的进程参数或错误日志中。
+  if (!useCurl) url.searchParams.set('access_token', token)
   if (useCurl) {
     // 托管 runner 自带 curl；令牌只通过 stdin 发送，不放进命令参数或日志。
     return new Promise((resolve, reject) => {
