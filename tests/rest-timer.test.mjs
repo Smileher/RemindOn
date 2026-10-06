@@ -34,6 +34,17 @@ const templateCode = compile(template.code)
 const noop = () => {}
 const resting = { isResting: true, nextTriggerAt: null }
 
+test('persistence failures remain visible until a successful retry or recovery event', async () => {
+  const app = await mountApp()
+  await app.emit('persistence-failed', 'disk full')
+  assert.equal(app.state.persistenceError.value, 'disk full')
+  app.setInvoke('load_data', async () => { throw new Error('still full') })
+  await app.state.retryPersistence()
+  assert.match(app.state.persistenceError.value, /still full/)
+  await app.emit('persistence-failed', null)
+  assert.equal(app.state.persistenceError.value, '')
+})
+
 async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null } } = {}) {
   const settingsData = defaultData()
   settingsData.settings.restEnabled = enabled

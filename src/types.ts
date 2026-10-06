@@ -69,6 +69,7 @@ export interface RestTimerStatus {
 export interface NativeErrors {
   autostartError: string | null
   notificationError: string | null
+  persistenceError: string | null
 }
 
 export const defaultReminders = (language: Language): Reminder[] => [

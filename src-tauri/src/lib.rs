@@ -317,6 +317,7 @@ struct QueuedReminder {
 struct NativeErrors {
     autostart_error: Option<String>,
     notification_error: Option<String>,
+    persistence_error: Option<String>,
 }
 
 struct InnerState {
@@ -1299,15 +1300,27 @@ fn dispatch_trigger(
 }
 
 fn process_due(app: &AppHandle, state: &AppState) {
-    enqueue_reminders(state, collect_due_reminders(state, Local::now()));
+    if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.is_some() {
+        return;
+    }
+    match collect_due_reminders(state, Local::now()) {
+        Ok(events) => enqueue_reminders(state, events),
+        Err(error) => {
+            eprintln!("Scheduler persistence failed: {error}");
+            state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error = Some(error.clone());
+            let _ = app.emit_to("main", "persistence-failed", Some(error));
+            return;
+        }
+    }
     drain_reminder_queue(app, state);
 }
 
-fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Vec<QueuedReminder> {
+fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<QueuedReminder>, String> {
     let mut triggered = Vec::new();
     let mut changed = false;
     {
-        let mut data = state.0.data.lock().expect("settings lock poisoned");
+        let mut current = state.0.data.lock().expect("settings lock poisoned");
+        let mut data = current.clone();
         for reminder in &mut data.reminders {
             if !reminder.enabled {
                 continue;
@@ -1348,6 +1361,11 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Vec<QueuedRe
                 }
                 ReminderType::Interval => {}
             }
+        }
+        // Commit scheduled deadlines before changing rest state or emitting any reminders.
+        if changed {
+            write_json(&state.0.data_path, &data)?;
+            *current = data.clone();
         }
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst)
@@ -1393,11 +1411,14 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Vec<QueuedRe
                 }
             }
         }
-        if changed {
-            let _ = write_json(&state.0.data_path, &data);
-        }
     }
-    triggered
+    Ok(triggered)
+}
+
+fn clear_persistence_error(app: &AppHandle, state: &AppState) {
+    if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.take().is_some() {
+        let _ = app.emit_to("main", "persistence-failed", Option::<String>::None);
+    }
 }
 
 fn enqueue_reminders(state: &AppState, events: Vec<QueuedReminder>) {
@@ -1456,8 +1477,13 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
 }
 
 #[tauri::command]
-fn load_data(state: State<'_, AppState>) -> Result<AppData, String> {
-    Ok(app_data(&state))
+fn load_data(app: AppHandle, state: State<'_, AppState>) -> Result<AppData, String> {
+    let data = state.0.data.lock().expect("settings lock poisoned");
+    if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.is_some() {
+        write_json(&state.0.data_path, &data)?;
+        clear_persistence_error(&app, state.inner());
+    }
+    Ok(data.clone())
 }
 
 #[tauri::command]
@@ -1489,6 +1515,7 @@ async fn save_data(
     let autostart_changed = current.settings.autostart != data.settings.autostart;
     write_json(&state.0.data_path, &data)?;
     *current = data.clone();
+    clear_persistence_error(&app, state.inner());
     if rest_enabled_changed && !data.settings.rest_enabled {
         state.0.rest_active.store(false, Ordering::SeqCst);
         state.0.rest_round_pending.store(false, Ordering::SeqCst);
@@ -1918,6 +1945,7 @@ async fn import_data(
     state.0.paused.store(false, Ordering::SeqCst);
     drop(current);
     reset_reminder_session(&app, state.inner(), "reminders-reset");
+    clear_persistence_error(&app, state.inner());
     let _ = update_tray_menu(&app, data.settings.language, false);
     #[cfg(target_os = "macos")]
     apply_application_menu(&app, data.settings.language);
@@ -3205,7 +3233,9 @@ mod tests {
 
     #[test]
     fn due_once_reminders_complete_and_recurring_actions_advance() {
-        let state = rest_state(false);
+        let mut state = rest_state(false);
+        let path = std::env::temp_dir().join(format!("remindon-due-{}-{}.json", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        Arc::get_mut(&mut state.0).unwrap().data_path = path.clone();
         let now = Local::now();
         let mut once = sample_once((now - Duration::seconds(10)).to_rfc3339());
         once.next_trigger_at = once.trigger_at.clone();
@@ -3213,13 +3243,31 @@ mod tests {
         daily.next_trigger_at = Some((now - Duration::minutes(2)).to_rfc3339());
         daily.power_action = Some(PowerAction::Lock);
         state.0.data.lock().unwrap().reminders = vec![once, daily];
-        let due = collect_due_reminders(&state, now);
+        let due = collect_due_reminders(&state, now).unwrap();
         assert_eq!(due.len(), 1);
         let data = app_data(&state);
         assert!(!data.reminders[0].enabled);
         assert!(data.reminders[0].next_trigger_at.is_none());
         assert!(parse_datetime(data.reminders[1].next_trigger_at.as_deref().unwrap()).unwrap() > now);
-        assert!(collect_due_reminders(&state, now).is_empty());
+        assert!(collect_due_reminders(&state, now).unwrap().is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn failed_scheduler_write_preserves_reminder_and_rest_state() {
+        let state = rest_state(true);
+        let now = Local::now();
+        let mut once = sample_once((now - Duration::seconds(10)).to_rfc3339());
+        once.next_trigger_at = once.trigger_at.clone();
+        state.0.data.lock().unwrap().reminders = vec![once];
+        *state.0.rest_next.lock().unwrap() = Some(now - Duration::seconds(5));
+        assert!(collect_due_reminders(&state, now).is_err());
+        let data = app_data(&state);
+        assert!(data.reminders[0].enabled);
+        assert!(data.reminders[0].next_trigger_at.is_some());
+        assert_eq!(*state.0.rest_next.lock().unwrap(), Some(now - Duration::seconds(5)));
+        assert!(!state.0.rest_round_pending.load(Ordering::SeqCst));
+        assert!(state.0.reminder_queue.lock().unwrap().is_empty());
     }
 
     #[test]

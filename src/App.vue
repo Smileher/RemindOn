@@ -37,6 +37,7 @@ const nextRestTrigger = ref<string | null>(null)
 const restIsActive = ref(false)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const notificationError = ref('')
+const persistenceError = ref('')
 const autostartError = ref('')
 const appVersion = ref('1.1')
 const popupBackgroundPreview = ref('')
@@ -49,6 +50,7 @@ let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let unlistenNotificationFailure: (() => void) | undefined
+let unlistenPersistenceFailure: (() => void) | undefined
 let unlistenSettingsSync: (() => void) | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
@@ -619,6 +621,18 @@ async function refreshTimers() {
   now.value = Date.now()
 }
 
+async function retryPersistence() {
+  await persistQueue
+  try {
+    data.value = await invoke<AppData>('load_data')
+    persistenceError.value = ''
+    await refreshTimers()
+  } catch (error) {
+    logError('retry persistence', error)
+    persistenceError.value = formatError(error)
+  }
+}
+
 function applyRestTimerStatus(status: RestTimerStatus) {
   timerRefreshToken += 1
   restIsActive.value = status.isResting
@@ -662,6 +676,7 @@ onMounted(async () => {
       const errors = await invoke<NativeErrors>('get_native_errors')
       if (errors.autostartError) autostartError.value = t('status.autostartFailed', { error: errors.autostartError })
       if (errors.notificationError) notificationError.value = t('status.notificationFailed', { error: errors.notificationError })
+      persistenceError.value = errors.persistenceError || ''
     } catch {
       // The browser preview has no native startup integrations.
     }
@@ -683,6 +698,9 @@ onMounted(async () => {
       const message = t('status.notificationFailed', { error: event.payload })
       notificationError.value = message
       actionMessage.value = message
+    })
+    unlistenPersistenceFailure = await getCurrentWindow().listen<string | null>('persistence-failed', (event) => {
+      persistenceError.value = event.payload || ''
     })
     // 外部切换只更新相关字段，不能覆盖正在编辑的其他参数。
     unlistenSettingsSync = await getCurrentWindow().listen<boolean>('popup-fullscreen-updated', (event) => {
@@ -706,6 +724,7 @@ onUnmounted(() => {
   unlistenNavigation?.()
   unlistenRestTimer?.()
   unlistenNotificationFailure?.()
+  unlistenPersistenceFailure?.()
   unlistenSettingsSync?.()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
@@ -725,6 +744,10 @@ onUnmounted(() => {
     />
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
+      <div v-if="persistenceError" class="update-banner" role="alert">
+        <span>{{ t('status.persistenceFailed', { error: persistenceError }) }}</span>
+        <button class="button" type="button" @click="retryPersistence">{{ t('common.retry') }}</button>
+      </div>
       <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
         <span>{{ t('update.available', { version: newVersion }) }}</span>
         <button class="button" type="button" @click="currentView = 'about'">{{ t('update.view') }}</button>
