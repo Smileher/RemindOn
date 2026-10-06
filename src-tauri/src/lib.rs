@@ -860,12 +860,12 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
     Ok(())
 }
 
-fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
+fn reclaim_idle_windows(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let labels = state
         .0
         .window_cache
         .lock()
-        .expect("window cache lock poisoned")
+        .map_err(lock_error)?
         .expired(Instant::now());
     for label in labels {
         let Some(window) = app.get_webview_window(&label) else {
@@ -873,7 +873,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
                 .0
                 .window_cache
                 .lock()
-                .expect("window cache lock poisoned");
+                .map_err(lock_error)?;
             cache.destroyed(&label);
             continue;
         };
@@ -884,7 +884,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
             .0
             .reminder_targets
             .lock()
-            .expect("reminder targets lock poisoned")
+            .map_err(lock_error)?
             .contains(&label)
         {
             continue;
@@ -893,7 +893,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
             .0
             .window_cache
             .lock()
-            .expect("window cache lock poisoned")
+            .map_err(lock_error)?
             .destroying
             .insert(label.clone());
         match window.destroy() {
@@ -902,7 +902,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
                     .0
                     .window_cache
                     .lock()
-                    .expect("window cache lock poisoned")
+                    .map_err(lock_error)?
                     .idle
                     .remove(&label);
                 if label == "main" {
@@ -915,13 +915,14 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
                     .0
                     .window_cache
                     .lock()
-                    .expect("window cache lock poisoned")
+                    .map_err(lock_error)?
                     .destroying
                     .remove(&label);
                 eprintln!("Failed to destroy {label}: {error}");
             }
         }
     }
+    Ok(())
 }
 
 fn queue_window_action<F>(app: &AppHandle, action: F)
@@ -1371,7 +1372,7 @@ fn process_due(app: &AppHandle, state: &AppState) -> Result<(), String> {
         return Ok(());
     }
     match collect_due_reminders(state, Local::now()) {
-        Ok(events) => enqueue_reminders(state, events),
+        Ok(events) => enqueue_reminders(state, events)?,
         Err(SchedulerError::State(error)) => return Err(error),
         Err(SchedulerError::Persistence(error)) => {
             eprintln!("Scheduler persistence failed: {error}");
@@ -1380,7 +1381,7 @@ fn process_due(app: &AppHandle, state: &AppState) -> Result<(), String> {
             return Ok(());
         }
     }
-    drain_reminder_queue(app, state);
+    drain_reminder_queue(app, state)?;
     Ok(())
 }
 
@@ -1487,35 +1488,37 @@ fn clear_persistence_error(app: &AppHandle, state: &AppState) {
     }
 }
 
-fn enqueue_reminders(state: &AppState, events: Vec<QueuedReminder>) {
-    let mut queue = state.0.reminder_queue.lock().expect("reminder queue lock poisoned");
+fn enqueue_reminders(state: &AppState, events: Vec<QueuedReminder>) -> Result<(), String> {
+    let mut queue = state.0.reminder_queue.lock().map_err(lock_error)?;
     queue.extend(events);
     queue.make_contiguous().sort_by(|a, b| a.due_at.cmp(&b.due_at)
         .then_with(|| a.event.is_rest.cmp(&b.event.is_rest))
         .then_with(|| a.event.id.cmp(&b.event.id)));
+    Ok(())
 }
 
-fn next_queued_reminder(state: &AppState, now: DateTime<Local>) -> Option<ReminderTriggeredEvent> {
-    if state.0.active_reminder.lock().expect("reminder session lock poisoned").is_some() {
-        return None;
+fn next_queued_reminder(state: &AppState, now: DateTime<Local>) -> Result<Option<ReminderTriggeredEvent>, String> {
+    if state.0.active_reminder.lock().map_err(lock_error)?.is_some() {
+        return Ok(None);
     }
-    let mut queue = state.0.reminder_queue.lock().expect("reminder queue lock poisoned");
+    let mut queue = state.0.reminder_queue.lock().map_err(lock_error)?;
     while let Some(queued) = queue.pop_front() {
         if queued.event.is_test || queued.event.power_action.is_none()
             || should_trigger_power_action(queued.due_at, now) {
-            return Some(queued.event);
+            return Ok(Some(queued.event));
         }
     }
-    None
+    Ok(None)
 }
 
 // 调用方持有窗口操作锁；活动会话结束后调度器在下一轮继续队列。
-fn drain_reminder_queue(app: &AppHandle, state: &AppState) {
-    while let Some(event) = next_queued_reminder(state, Local::now()) {
+fn drain_reminder_queue(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    while let Some(event) = next_queued_reminder(state, Local::now())? {
         if let Err(error) = dispatch_trigger(app, state, event) {
             let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", error));
         }
     }
+    Ok(())
 }
 
 fn spawn_scheduler(app: AppHandle, state: AppState) {
@@ -1533,7 +1536,7 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
                 if !state.0.paused.load(Ordering::SeqCst) {
                     process_due(&app, &state)?;
                 }
-                reclaim_idle_windows(&app, &state);
+                reclaim_idle_windows(&app, &state)?;
                 Ok(())
             });
             if let Err(error) = result {
@@ -2037,8 +2040,8 @@ async fn test_reminder(
         }
         // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
         sync_reminder_settings(&app, &settings);
-        enqueue_reminders(&state, vec![QueuedReminder { due_at: Local::now(), event }]);
-        drain_reminder_queue(&app, &state);
+        enqueue_reminders(&state, vec![QueuedReminder { due_at: Local::now(), event }])?;
+        drain_reminder_queue(&app, &state)?;
         Ok(())
     }).await
 }
@@ -3543,15 +3546,32 @@ mod tests {
             QueuedReminder { due_at: now, event: rest },
             QueuedReminder { due_at: now - Duration::minutes(2), event: expired },
             QueuedReminder { due_at: now, event: first },
-        ]);
-        assert_eq!(next_queued_reminder(&state, now).unwrap().id, "a");
-        let active = next_queued_reminder(&state, now).unwrap();
+        ]).unwrap();
+        assert_eq!(next_queued_reminder(&state, now).unwrap().unwrap().id, "a");
+        let active = next_queued_reminder(&state, now).unwrap().unwrap();
         assert_eq!(active.id, "b");
         *state.0.active_reminder.lock().unwrap() = Some(active);
-        assert!(next_queued_reminder(&state, now).is_none());
+        assert!(next_queued_reminder(&state, now).unwrap().is_none());
         *state.0.active_reminder.lock().unwrap() = None;
-        assert!(next_queued_reminder(&state, now).unwrap().is_rest);
-        assert!(next_queued_reminder(&state, now).is_none());
+        assert!(next_queued_reminder(&state, now).unwrap().unwrap().is_rest);
+        assert!(next_queued_reminder(&state, now).unwrap().is_none());
+    }
+
+    #[test]
+    fn queue_lock_failure_does_not_poison_the_window_operation_lock() {
+        let state = rest_state(false);
+        let _: Result<(), _> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _queue = state.0.reminder_queue.lock().unwrap();
+            panic!("simulated queue failure");
+        }));
+        let result = guarded(|| {
+            let _operation = state.0.window_operations.lock().map_err(lock_error)?;
+            next_queued_reminder(&state, Local::now())
+        });
+        assert!(result.unwrap_err().contains("lock poisoned"));
+        assert!(enqueue_reminders(&state, Vec::new()).is_err());
+        assert!(state.0.reminder_queue.is_poisoned());
+        assert!(!state.0.window_operations.is_poisoned());
     }
 
     #[test]
