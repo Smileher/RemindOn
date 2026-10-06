@@ -17,6 +17,7 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_dialog::DialogExt;
 
 mod browser;
 mod i18n;
@@ -1940,48 +1941,77 @@ async fn test_reminder(
 
 #[tauri::command]
 async fn import_data(
-    path: String,
+    window: WebviewWindow,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<AppData, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    let content = fs::read_to_string(&path)
-        .map_err(|error| format!("Failed to read the import file: {error}"))?;
-    let mut data: AppData =
-        serde_json::from_str(&content).map_err(|error| format!("Invalid import file: {error}"))?;
-    validate_and_normalize(&mut data)?;
-    let mut current = state.0.data.lock().expect("settings lock poisoned");
-    write_json(&state.0.data_path, &data)?;
-    *current = data.clone();
-    state.0.rest_active.store(false, Ordering::SeqCst);
-    state.0.rest_round_pending.store(false, Ordering::SeqCst);
-    *state
-        .0
-        .rest_next
-        .lock()
-        .expect("break reminder lock poisoned") = None;
-    state.0.paused.store(false, Ordering::SeqCst);
-    drop(current);
-    reset_reminder_session(&app, state.inner(), "reminders-reset");
-    clear_persistence_error(&app, state.inner());
-    let _ = update_tray_menu(&app, data.settings.language, false);
-    #[cfg(target_os = "macos")]
-    apply_application_menu(&app, data.settings.language);
-    sync_reminder_settings(&app, &data.settings);
-    emit_rest_timer_updated(&app, &state);
-    Ok(data)
+) -> Result<Option<AppData>, String> {
+    if window.label() != "main" { return Err("Import is only available in the main window".into()); }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = app.dialog().file().add_filter("JSON", &["json"]).blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = path.into_path().map_err(|error| error.to_string())?;
+        let _operation = state
+            .0
+            .window_operations
+            .lock()
+            .expect("window operations lock poisoned");
+        let data = read_import_file(&path)?;
+        let mut current = state.0.data.lock().expect("settings lock poisoned");
+        write_json(&state.0.data_path, &data)?;
+        *current = data.clone();
+        state.0.rest_active.store(false, Ordering::SeqCst);
+        state.0.rest_round_pending.store(false, Ordering::SeqCst);
+        *state
+            .0
+            .rest_next
+            .lock()
+            .expect("break reminder lock poisoned") = None;
+        state.0.paused.store(false, Ordering::SeqCst);
+        drop(current);
+        reset_reminder_session(&app, &state, "reminders-reset");
+        clear_persistence_error(&app, &state);
+        let _ = update_tray_menu(&app, data.settings.language, false);
+        #[cfg(target_os = "macos")]
+        apply_application_menu(&app, data.settings.language);
+        sync_reminder_settings(&app, &data.settings);
+        emit_rest_timer_updated(&app, &state);
+        Ok(Some(data))
+    }).await.map_err(|error| format!("Import worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let data = app_data(&state);
-    let content = serde_json::to_string_pretty(&data)
-        .map_err(|error| format!("Failed to serialize the export: {error}"))?;
-    fs::write(path, content).map_err(|error| format!("Failed to write the export file: {error}"))
+async fn export_data(window: WebviewWindow, app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    if window.label() != "main" { return Err("Export is only available in the main window".into()); }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = app.dialog().file().add_filter("JSON", &["json"]).set_file_name("RemindOn-backup.json").blocking_save_file() else {
+            return Ok(false);
+        };
+        let path = path.into_path().map_err(|error| error.to_string())?;
+        validate_json_path(&path)?;
+        let data = app_data(&state);
+        write_json(&path, &data)?;
+        Ok(true)
+    }).await.map_err(|error| format!("Export worker failed: {error}"))?
+}
+
+fn validate_json_path(path: &Path) -> Result<(), String> {
+    if path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("json")) {
+        Ok(())
+    } else {
+        Err("Please choose a JSON file".into())
+    }
+}
+
+fn read_import_file(path: &Path) -> Result<AppData, String> {
+    validate_json_path(path)?;
+    if !path.is_file() { return Err("Import file does not exist".into()); }
+    let content = fs::read_to_string(path).map_err(|error| format!("Failed to read import file: {error}"))?;
+    let mut data: AppData = serde_json::from_str(&content).map_err(|error| format!("Invalid import file: {error}"))?;
+    validate_and_normalize(&mut data)?;
+    Ok(data)
 }
 
 /// Copy a user-picked image into the configuration folder and return it as a data URL.
@@ -2713,6 +2743,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imports_require_json_files_and_valid_current_data() {
+        assert!(validate_json_path(Path::new("backup.JSON")).is_ok());
+        assert!(validate_json_path(Path::new("backup.txt")).is_err());
+        let path = std::env::temp_dir().join(format!("remindon-import-{}-{}.json", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        assert!(read_import_file(&path).is_err());
+        fs::write(&path, b"invalid").unwrap();
+        assert!(read_import_file(&path).is_err());
+        let data = AppData::default();
+        write_json(&path, &data).unwrap();
+        assert_eq!(read_import_file(&path).unwrap().version, DATA_VERSION);
+        let mut invalid = data;
+        invalid.reminders[0].title.clear();
+        write_json(&path, &invalid).unwrap();
+        assert!(read_import_file(&path).is_err());
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn image_limit_accepts_boundary_and_preserves_existing_image_on_failure() {

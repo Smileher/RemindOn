@@ -234,6 +234,24 @@ test('normalized rest messages are returned to the editable draft', async () => 
   assert.equal(app.state.restMessageDraft.value, 'normalized')
 })
 
+test('import and export cancellations are silent and never pass a path from the frontend', async () => {
+  const app = await mountApp()
+  const before = JSON.stringify(app.state.data.value)
+  app.setInvoke('import_data', async (args) => { assert.equal(args, undefined); return null })
+  app.setInvoke('export_data', async (args) => { assert.equal(args, undefined); return false })
+  await app.state.importData()
+  await app.state.exportData()
+  assert.equal(JSON.stringify(app.state.data.value), before)
+  assert.equal(app.state.actionMessage.value, '')
+  app.setInvoke('import_data', async () => { throw new Error('invalid json') })
+  await app.state.importData()
+  assert.equal(JSON.stringify(app.state.data.value), before)
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.importFailed'))
+  app.setInvoke('export_data', async () => { throw new Error('disk full') })
+  await app.state.exportData()
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.exportFailed'))
+})
+
 test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {
   const app = await mountApp()
   app.state.data.value.settings = defaultData().settings

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { ask, confirm, open, save } from '@tauri-apps/plugin-dialog'
+import { ask, confirm, open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import ReminderPopup from './components/ReminderPopup.vue'
@@ -520,27 +520,30 @@ async function loadPopupImagePreview() {
 }
 
 async function importData() {
-  actionMessage.value = ''
-  try {
-    const path = await open({ multiple: false, directory: false, filters: [{ name: t('dialog.backupName'), extensions: ['json'] }] })
-    if (typeof path === 'string') {
-      data.value = await invoke<AppData>('import_data', { path })
-      restMessageDraft.value = data.value.settings.restMessage
-      actionMessage.value = t('status.imported')
-      await refreshTimers()
+  return queueSettings(async () => {
+    actionMessage.value = ''
+    try {
+      await persistQueue
+      const imported = await invoke<AppData | null>('import_data')
+      if (imported) {
+        data.value = imported
+        restMessageDraft.value = data.value.settings.restMessage
+        actionMessage.value = t('status.imported')
+        await refreshTimers()
+      }
+    } catch (error) {
+      logError('import data', error)
+      actionMessage.value = t('status.importFailed')
     }
-  } catch (error) {
-    logError('import data', error)
-    actionMessage.value = t('status.importFailed')
-  }
+  })
 }
 
 async function exportData() {
+  await settingsQueue
+  await persistQueue
   actionMessage.value = ''
   try {
-    const path = await save({ defaultPath: 'RemindOn-backup.json', filters: [{ name: t('dialog.backupName'), extensions: ['json'] }] })
-    if (typeof path === 'string') {
-      await invoke('export_data', { path })
+    if (await invoke<boolean>('export_data')) {
       actionMessage.value = t('status.exported')
     }
   } catch (error) {
