@@ -2,6 +2,7 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -361,9 +362,46 @@ fn data_path(app: &AppHandle) -> Result<PathBuf, String> {
 fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
     let content = serde_json::to_string_pretty(data)
         .map_err(|error| format!("Failed to serialize settings: {error}"))?;
-    // Windows cannot replace an existing file with std::fs::rename, so keep this
-    // small local configuration write straightforward and portable.
-    fs::write(path, content).map_err(|error| format!("Failed to save settings: {error}"))
+    atomic_write(path, content.as_bytes()).map_err(|error| format!("Failed to save settings: {error}"))
+}
+
+fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let name = path.file_name().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing file name"))?;
+    let mut temp_name = name.to_os_string();
+    temp_name.push(format!(".{}.{}.tmp", std::process::id(), NEXT_TEMP.fetch_add(1, Ordering::Relaxed)));
+    let temp = path.with_file_name(temp_name);
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+    let result = (|| {
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        replace_file(&temp, path)
+    })();
+    if result.is_err() {
+        if let Err(error) = fs::remove_file(&temp) {
+            eprintln!("Failed to remove temporary file {}: {error}", temp.display());
+        }
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Same-directory replacement never deletes the live configuration first.
+    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    fs::rename(source, target)
 }
 
 fn corrupt_backup_path(path: &Path) -> PathBuf {
@@ -383,9 +421,9 @@ fn load_json(path: &Path) -> Result<AppData, String> {
     match serde_json::from_str::<AppData>(&content) {
         Ok(data) if data.version == DATA_VERSION => Ok(data),
         Ok(_) => {
-            fs::rename(path, corrupt_backup_path(path))
-                .map_err(|error| format!("Failed to preserve unsupported settings: {error}"))?;
-            Ok(AppData::default())
+            let defaults = AppData::default();
+            write_json(path, &defaults)?;
+            Ok(defaults)
         }
         Err(error) => {
             let backup = corrupt_backup_path(path);
@@ -3220,7 +3258,7 @@ mod tests {
     }
 
     #[test]
-    fn old_configuration_is_preserved_before_reinitializing() {
+    fn old_configuration_is_rewritten_with_current_defaults() {
         let directory = std::env::temp_dir().join(format!("remindon-test-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("remindon.json");
@@ -3228,10 +3266,28 @@ mod tests {
         old.version = DATA_VERSION - 1;
         write_json(&path, &old).unwrap();
         assert_eq!(load_json(&path).unwrap().version, DATA_VERSION);
-        let backup = fs::read_dir(&directory).unwrap().next().unwrap().unwrap().path();
-        let preserved: AppData = serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
-        assert_eq!(preserved.version, DATA_VERSION - 1);
-        fs::remove_file(backup).unwrap();
+        let saved: AppData = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.version, DATA_VERSION);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_replaces_content_and_cleans_failed_replacements() {
+        let directory = std::env::temp_dir().join(format!("remindon-atomic-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("data.json");
+        atomic_write(&path, b"original").unwrap();
+        atomic_write(&path, "中文".as_bytes()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "中文");
+        let occupied = directory.join("occupied.json");
+        fs::create_dir(&occupied).unwrap();
+        assert!(atomic_write(&occupied, b"replacement").is_err());
+        assert!(occupied.is_dir());
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(occupied).unwrap();
         fs::remove_dir(directory).unwrap();
     }
 }
