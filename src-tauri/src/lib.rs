@@ -653,6 +653,18 @@ struct WindowCache {
 }
 
 impl WindowCache {
+    fn destroyed(&mut self, label: &str) {
+        self.idle.remove(label);
+        self.destroying.remove(label);
+    }
+
+    fn needs_destroy_wait(&mut self, label: &str, exists: bool) -> bool {
+        if !exists {
+            self.destroyed(label);
+        }
+        self.destroying.contains(label)
+    }
+
     fn hide(&mut self, label: &str, now: Instant) {
         // Repeated close events must not extend the same idle period.
         self.idle
@@ -732,8 +744,7 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
         .window_cache
         .lock()
         .expect("window cache lock poisoned")
-        .destroying
-        .contains(label)
+        .needs_destroy_wait(label, app.get_webview_window(label).is_some())
     {
         return Ok(());
     }
@@ -751,8 +762,7 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
         .window_cache
         .lock()
         .expect("window cache lock poisoned")
-        .destroying
-        .remove(label);
+        .destroyed(label);
     Ok(())
 }
 
@@ -770,8 +780,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
                 .window_cache
                 .lock()
                 .expect("window cache lock poisoned");
-            cache.idle.remove(&label);
-            cache.destroying.remove(&label);
+            cache.destroyed(&label);
             continue;
         };
         if !matches!(window.is_visible(), Ok(false)) {
@@ -805,9 +814,7 @@ fn reclaim_idle_windows(app: &AppHandle, state: &AppState) {
                 if label == "main" {
                     state.0.main_ready.store(false, Ordering::SeqCst);
                 }
-                if let Err(error) = wait_for_window_destroyed(app, state, &label) {
-                    eprintln!("{error}");
-                }
+                // Destroyed performs cleanup; reclamation must not wait under the window lock.
             }
             Err(error) => {
                 state
@@ -2529,6 +2536,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("RemindOn initialization failed")
         .run(|app, event| {
+            if let RunEvent::WindowEvent { label, event: WindowEvent::Destroyed, .. } = &event {
+                let state = app.state::<AppState>();
+                state.0.window_cache.lock().expect("window cache lock poisoned").destroyed(label);
+            }
             if let RunEvent::ExitRequested { code, ref api, .. } = event {
                 if code.is_none() {
                     // Keep the tray-only process alive after the last WebView is destroyed.
@@ -2594,6 +2605,23 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destroying_windows_remain_isolated_until_destroyed_or_absent() {
+        let mut cache = WindowCache::default();
+        cache.hide("main", Instant::now());
+        cache.destroying.insert("main".into());
+        assert!(cache.needs_destroy_wait("main", true));
+        // A timeout must preserve the marker while the old native window still exists.
+        assert!(cache.needs_destroy_wait("main", true));
+        cache.destroyed("main");
+        assert!(!cache.needs_destroy_wait("main", true));
+        assert!(!cache.idle.contains_key("main"));
+        cache.destroying.insert("main".into());
+        assert!(!cache.needs_destroy_wait("main", false));
+        cache.hide("main", Instant::now());
+        assert!(!cache.needs_destroy_wait("main", true));
+    }
 
     #[test]
     fn current_image_settings_preserve_reminders() {
