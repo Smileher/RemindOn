@@ -666,7 +666,7 @@ fn rest_timer_status(state: &AppState) -> RestTimerStatus {
 }
 
 fn emit_rest_timer_updated(app: &AppHandle, state: &AppState) {
-    let _ = app.emit_to("main", "rest-timer-updated", rest_timer_status(state));
+    let _ = report_native("Emit native event", app.emit_to("main", "rest-timer-updated", rest_timer_status(state)));
 }
 
 fn is_reminder_window_label(label: &str) -> bool {
@@ -684,8 +684,19 @@ fn reminder_windows(app: &AppHandle) -> Vec<WebviewWindow> {
 
 fn emit_to_reminder_windows<S: Clone + Serialize>(app: &AppHandle, event: &str, payload: S) {
     for window in reminder_windows(app) {
-        let _ = app.emit_to(window.label(), event, payload.clone());
+        let _ = report_native("Emit native event", app.emit_to(window.label(), event, payload.clone()));
     }
+}
+
+fn report_native<T, E: std::fmt::Display>(context: &str, result: Result<T, E>) -> Result<T, E> {
+    if let Err(error) = &result {
+        eprintln!("{context}: {error}");
+    }
+    result
+}
+
+fn report_window<T>(window: &WebviewWindow, property: &str, result: tauri::Result<T>) {
+    let _ = report_native(&format!("Window {} {property}", window.label()), result);
 }
 
 #[derive(Default)]
@@ -732,7 +743,7 @@ fn hide_cached_window(window: &WebviewWindow, state: &AppState) -> Result<(), St
     window.hide().map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     if is_reminder_window_label(window.label()) {
-        let _ = window.set_simple_fullscreen(false);
+        report_window(window, "set_simple_fullscreen", window.set_simple_fullscreen(false));
         window.hide().map_err(|error| error.to_string())?;
     }
     state
@@ -762,7 +773,7 @@ fn notify_tray_background(app: &AppHandle, state: &AppState) {
     let error = result.err();
     state.0.native_errors.lock().expect("native errors lock poisoned").notification_error = error.clone();
     if let Some(error) = error {
-        let _ = app.emit_to("main", "notification-failed", error);
+        let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", error));
     }
 }
 
@@ -983,26 +994,26 @@ fn ordered_monitors(app: &AppHandle) -> Vec<Monitor> {
 }
 
 fn configure_windowed_reminder(window: &WebviewWindow, settings: &AppSettings) {
-    let _ = window.hide();
-    let _ = window.set_title(i18n::notification_window_title(settings.language));
-    let _ = window.set_always_on_top(settings.popup_always_on_top);
-    let _ = window.set_decorations(true);
+    report_window(window, "hide", window.hide());
+    report_window(window, "set_title", window.set_title(i18n::notification_window_title(settings.language)));
+    report_window(window, "set_always_on_top", window.set_always_on_top(settings.popup_always_on_top));
+    report_window(window, "set_decorations", window.set_decorations(true));
     // 窗口模式弹窗有原生标题栏，同样用透明标题栏 + 显式背景色跟随深浅色。
     // 全屏弹窗是 transparent 的，不能上色，所以只在窗口模式生效。
     #[cfg(target_os = "macos")]
     if !is_transparent_popup(window.label()) {
-        let _ = window.set_title_bar_style(tauri::TitleBarStyle::Transparent);
-        let _ = window.set_background_color(Some(background_color_for(&settings.theme)));
+        report_window(window, "set_title_bar_style", window.set_title_bar_style(tauri::TitleBarStyle::Transparent));
+        report_window(window, "set_background_color", window.set_background_color(Some(background_color_for(&settings.theme))));
     }
-    let _ = window.set_resizable(false);
-    let _ = window.set_maximizable(false);
-    let _ = window.set_skip_taskbar(false);
-    let _ = window.set_size(LogicalSize::new(
+    report_window(window, "set_resizable", window.set_resizable(false));
+    report_window(window, "set_maximizable", window.set_maximizable(false));
+    report_window(window, "set_skip_taskbar", window.set_skip_taskbar(false));
+    report_window(window, "set_size", window.set_size(LogicalSize::new(
         REMINDER_WINDOW_WIDTH,
         REMINDER_WINDOW_HEIGHT,
-    ));
-    let _ = window.center();
-    let _ = window.hide();
+    )));
+    report_window(window, "center", window.center());
+    report_window(window, "hide", window.hide());
 }
 
 fn configure_fullscreen_reminder(
@@ -1021,51 +1032,51 @@ fn configure_fullscreen_reminder(
             .is_some_and(|current| same_monitor(current, monitor));
     #[cfg(not(target_os = "macos"))]
     if !reuse_native_fullscreen {
-        let _ = window.hide();
-        let _ = window.set_fullscreen(false);
-        let _ = window.hide();
+        report_window(window, "hide", window.hide());
+        report_window(window, "set_fullscreen", window.set_fullscreen(false));
+        report_window(window, "hide", window.hide());
     }
-    let _ = window.set_title(i18n::notification_window_title(settings.language));
-    let _ = window.set_always_on_top(settings.popup_always_on_top);
-    let _ = window.set_decorations(false);
-    let _ = window.set_resizable(false);
-    let _ = window.set_maximizable(false);
-    let _ = window.set_skip_taskbar(true);
+    report_window(window, "set_title", window.set_title(i18n::notification_window_title(settings.language)));
+    report_window(window, "set_always_on_top", window.set_always_on_top(settings.popup_always_on_top));
+    report_window(window, "set_decorations", window.set_decorations(false));
+    report_window(window, "set_resizable", window.set_resizable(false));
+    report_window(window, "set_maximizable", window.set_maximizable(false));
+    report_window(window, "set_skip_taskbar", window.set_skip_taskbar(true));
 
     #[cfg(target_os = "macos")]
     {
-        let _ = window.set_position(PhysicalPosition::new(
+        report_window(window, "set_position", window.set_position(PhysicalPosition::new(
             monitor.position().x,
             monitor.position().y,
-        ));
+        )));
         if is_controller {
-            let _ = window.set_simple_fullscreen(true);
-            let _ = window.hide();
+            report_window(window, "set_simple_fullscreen", window.set_simple_fullscreen(true));
+            report_window(window, "hide", window.hide());
             return;
         }
-        let _ = window.set_size(PhysicalSize::new(
+        report_window(window, "set_size", window.set_size(PhysicalSize::new(
             monitor.size().width,
             monitor.size().height,
-        ));
-        let _ = window.hide();
+        )));
+        report_window(window, "hide", window.hide());
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let _ = is_controller;
         if !reuse_native_fullscreen {
-            let _ = window.set_position(PhysicalPosition::new(
+            report_window(window, "set_position", window.set_position(PhysicalPosition::new(
                 monitor.position().x,
                 monitor.position().y,
-            ));
-            let _ = window.set_size(PhysicalSize::new(
+            )));
+            report_window(window, "set_size", window.set_size(PhysicalSize::new(
                 monitor.size().width,
                 monitor.size().height,
-            ));
-            let _ = window.set_fullscreen(true);
+            )));
+            report_window(window, "set_fullscreen", window.set_fullscreen(true));
         }
         // 原生全屏切换可能自行显示窗口，内容准备完成前必须保持隐藏。
-        let _ = window.hide();
+        report_window(window, "hide", window.hide());
     }
 }
 
@@ -1102,7 +1113,7 @@ async fn toggle_popup_fullscreen(
         write_json(&state.0.data_path, &data)?;
         drop(data);
         sync_reminder_settings(&app, &settings);
-        let _ = app.emit_to("main", "popup-fullscreen-updated", settings.popup_fullscreen);
+        let _ = report_native("Emit native event", app.emit_to("main", "popup-fullscreen-updated", settings.popup_fullscreen));
         let active = state
             .0
             .active_reminder
@@ -1115,7 +1126,7 @@ async fn toggle_popup_fullscreen(
             let labels = prepare_reminder_windows(&app, &state, &settings)?;
             for label in labels {
                 if app.get_webview_window(&label).is_some() {
-                    let _ = app.emit_to(&label, "reminder-triggered", event.clone());
+                    let _ = report_native("Emit native event", app.emit_to(&label, "reminder-triggered", event.clone()));
                 }
             }
         }
@@ -1206,11 +1217,11 @@ fn prepare_reminder_windows(
 
 fn sync_reminder_settings(app: &AppHandle, settings: &AppSettings) {
     for window in reminder_windows(app) {
-        let _ = window.set_title(i18n::notification_window_title(settings.language));
-        let _ = window.set_always_on_top(settings.popup_always_on_top);
+        report_window(&window, "set_title", window.set_title(i18n::notification_window_title(settings.language)));
+        report_window(&window, "set_always_on_top", window.set_always_on_top(settings.popup_always_on_top));
         // 原生主题统一由后端同步；macOS 同时更新透明标题栏的背景色。
         apply_window_appearance(&window, &settings.theme);
-        let _ = app.emit_to(window.label(), "settings-updated", settings);
+        let _ = report_native("Emit native event", app.emit_to(window.label(), "settings-updated", settings));
     }
     if let Some(window) = app.get_webview_window("main") {
         apply_window_appearance(&window, &settings.theme);
@@ -1268,12 +1279,12 @@ fn dispatch_trigger(
     };
     for label in labels {
         if app.get_webview_window(&label).is_some() {
-            let _ = app.emit_to(&label, "reminder-triggered", event.clone());
+            let _ = report_native("Emit native event", app.emit_to(&label, "reminder-triggered", event.clone()));
         }
     }
 
     // 主窗口必须先收到事件，即使可选的系统通知发送失败，也不能留下过期倒计时。
-    let _ = app.emit_to("main", "reminder-triggered", event.clone());
+    let _ = report_native("Emit native event", app.emit_to("main", "reminder-triggered", event.clone()));
 
     if settings.system_notification_enabled {
         let title = i18n::notification_title(settings.language, &event);
@@ -1311,7 +1322,7 @@ fn process_due(app: &AppHandle, state: &AppState) {
         Err(error) => {
             eprintln!("Scheduler persistence failed: {error}");
             state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error = Some(error.clone());
-            let _ = app.emit_to("main", "persistence-failed", Some(error));
+            let _ = report_native("Emit native event", app.emit_to("main", "persistence-failed", Some(error)));
             return;
         }
     }
@@ -1420,7 +1431,7 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
 
 fn clear_persistence_error(app: &AppHandle, state: &AppState) {
     if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.take().is_some() {
-        let _ = app.emit_to("main", "persistence-failed", Option::<String>::None);
+        let _ = report_native("Emit native event", app.emit_to("main", "persistence-failed", Option::<String>::None));
     }
 }
 
@@ -1450,7 +1461,7 @@ fn next_queued_reminder(state: &AppState, now: DateTime<Local>) -> Option<Remind
 fn drain_reminder_queue(app: &AppHandle, state: &AppState) {
     while let Some(event) = next_queued_reminder(state, Local::now()) {
         if let Err(error) = dispatch_trigger(app, state, event) {
-            let _ = app.emit_to("main", "notification-failed", error);
+            let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", error));
         }
     }
 }
@@ -1538,7 +1549,13 @@ async fn save_data(
     }
     drop(current);
     if autostart_changed {
-        state.0.native_errors.lock().expect("native errors lock poisoned").autostart_error = None;
+        // The frontend owns enable/disable; only acknowledge an observed matching state.
+        let error = match app.autolaunch().is_enabled() {
+            Ok(enabled) if enabled == data.settings.autostart => None,
+            Ok(_) => Some("Saved autostart preference does not match the system state".to_string()),
+            Err(error) => Some(error.to_string()),
+        };
+        state.0.native_errors.lock().expect("native errors lock poisoned").autostart_error = error;
     }
     state.0.reminder_queue.lock().expect("reminder queue lock poisoned")
         .retain(|item| !changed_ids.contains(&item.event.id)
@@ -1547,11 +1564,11 @@ async fn save_data(
     if let Some(active) = active.filter(|event| changed_ids.contains(&event.id)) {
         close_reminder_session(&app, state.inner(), active.session_id);
     }
-    let _ = update_tray_menu(
+    let _ = report_native("Update tray menu", update_tray_menu(
         &app,
         data.settings.language,
         state.0.paused.load(Ordering::SeqCst),
-    );
+    ));
     #[cfg(target_os = "macos")]
     apply_application_menu(&app, data.settings.language);
     sync_reminder_settings(&app, &data.settings);
@@ -1723,7 +1740,7 @@ async fn show_reminder(
         }
         close_reminder_session(&app, state.inner(), session_id);
         let message = error.to_string();
-        let _ = app.emit_to("main", "notification-failed", &message);
+        let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", &message));
         return Err(message);
     }
     if window.label() == REMINDER_LABEL || window.label() == WINDOWED_REMINDER_LABEL {
@@ -1972,7 +1989,7 @@ async fn import_data(
         drop(current);
         reset_reminder_session(&app, &state, "reminders-reset");
         clear_persistence_error(&app, &state);
-        let _ = update_tray_menu(&app, data.settings.language, false);
+        let _ = report_native("Update tray menu", update_tray_menu(&app, data.settings.language, false));
         #[cfg(target_os = "macos")]
         apply_application_menu(&app, data.settings.language);
         sync_reminder_settings(&app, &data.settings);
@@ -2281,23 +2298,23 @@ fn resolve_theme(theme: &Theme) -> Theme {
 fn apply_window_appearance(window: &WebviewWindow, theme: &Theme) {
     let resolved = resolve_theme(theme);
     // System 保持 None 让窗口继续跟随系统外观，只有显式 Dark/Light 才钉死。
-    let _ = window.set_theme(match theme {
+    report_window(window, "set_theme", window.set_theme(match theme {
         Theme::System => None,
         _ => tauri_theme(&resolved),
-    });
+    }));
     // 透明弹窗自身是透明的，不能给窗口上色，否则会盖掉背景图。
     if !window.label().starts_with(REMINDER_LABEL) || window.label() == WINDOWED_REMINDER_LABEL {
         let background = match resolved {
             Theme::Light => WINDOW_BG_LIGHT,
             _ => WINDOW_BG_DARK,
         };
-        let _ = window.set_background_color(Some(background));
+        report_window(window, "set_background_color", window.set_background_color(Some(background)));
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 fn apply_window_appearance(window: &WebviewWindow, theme: &Theme) {
-    let _ = window.set_theme(tauri_theme(theme));
+    report_window(window, "set_theme", window.set_theme(tauri_theme(theme)));
 }
 
 /// 把主题同步到主窗口与所有提醒弹窗，用于设置变更与启动时统一对齐。
@@ -2532,7 +2549,7 @@ fn apply_application_menu(app: &tauri::AppHandle, language: Language) {
         MenuBuilder::new(app).items(&[&app_submenu, &window_submenu]).build()
     })();
     if let Ok(menu) = result {
-        let _ = app.set_menu(menu);
+        let _ = report_native("Set application menu", app.set_menu(menu));
     }
 }
 
@@ -2665,7 +2682,7 @@ pub fn run() {
                     .expect("settings lock poisoned")
                     .settings
                     .language;
-                let _ = update_tray_menu(app, language, paused);
+                let _ = report_native("Update tray menu", update_tray_menu(app, language, paused));
             }
             "about" => show_about(app),
             "quit" => app.exit(0),
@@ -2743,6 +2760,12 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_reporting_preserves_success_and_failure() {
+        assert_eq!(report_native("window main size", Ok::<_, String>(42)), Ok(42));
+        assert_eq!(report_native::<(), _>("window main size", Err("native failure")), Err("native failure"));
+    }
 
     #[test]
     fn imports_require_json_files_and_valid_current_data() {
