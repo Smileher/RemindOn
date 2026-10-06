@@ -39,7 +39,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
 </script>
 
 <template>
-  <section class="page-section reminder-page">
+  <section class="page-section">
     <header class="page-header reminder-header">
       <div>
         <h1>{{ t('events.title') }}</h1>

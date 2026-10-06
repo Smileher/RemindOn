@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import type { AppSettings } from '../types'
 
-const props = defineProps<{ settings: AppSettings; url: string }>()
+type BackgroundSettings = Pick<AppSettings, 'popupBackgroundFit' | 'popupBackgroundOffsetX' | 'popupBackgroundOffsetY' | 'popupBackgroundScale' | 'popupOverlayOpacity'>
+const props = defineProps<{ settings: BackgroundSettings; url: string }>()
 
 // 图片盒与弹窗等大，先缩放再平移，保证位移比例不受缩放影响。
 const imageStyle = computed(() => props.settings.popupBackgroundFit === 'stretch'

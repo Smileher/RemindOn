@@ -39,6 +39,12 @@ const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
 const POWER_COMMAND_TIMEOUT: StdDuration = StdDuration::from_secs(10);
 const MAX_POPUP_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const POWER_GRACE_SECONDS: i64 = 60;
+const WINDOW_DESTROY_TIMEOUT: StdDuration = StdDuration::from_secs(2);
+const WINDOW_DESTROY_POLL: StdDuration = StdDuration::from_millis(10);
+const SCHEDULER_INTERVAL: StdDuration = StdDuration::from_secs(1);
+#[cfg(target_os = "macos")]
+const THEME_POLL_INTERVAL: StdDuration = StdDuration::from_secs(2);
 
 /// 窗口背景色需与前端 `--page-bg` 保持一致。
 ///
@@ -501,7 +507,7 @@ fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String,
 }
 
 fn should_trigger_power_action(due: DateTime<Local>, now: DateTime<Local>) -> bool {
-    due <= now && now.signed_duration_since(due) <= Duration::minutes(1)
+    due <= now && now.signed_duration_since(due) <= Duration::seconds(POWER_GRACE_SECONDS)
 }
 
 fn complete_rest_round(state: &AppState) -> bool {
@@ -670,9 +676,20 @@ fn emit_rest_timer_updated(app: &AppHandle, state: &AppState) {
 }
 
 fn is_reminder_window_label(label: &str) -> bool {
-    label == REMINDER_LABEL
-        || label == WINDOWED_REMINDER_LABEL
-        || label.starts_with(REMINDER_MONITOR_PREFIX)
+    matches!(window_kind(label), WindowKind::FullscreenReminder | WindowKind::WindowedReminder)
+}
+
+#[derive(Debug, PartialEq)]
+enum WindowKind { Main, FullscreenReminder, WindowedReminder, Other }
+
+fn window_kind(label: &str) -> WindowKind {
+    match label {
+        "main" => WindowKind::Main,
+        WINDOWED_REMINDER_LABEL => WindowKind::WindowedReminder,
+        REMINDER_LABEL => WindowKind::FullscreenReminder,
+        _ if label.starts_with(REMINDER_MONITOR_PREFIX) => WindowKind::FullscreenReminder,
+        _ => WindowKind::Other,
+    }
 }
 
 fn reminder_windows(app: &AppHandle) -> Vec<WebviewWindow> {
@@ -803,12 +820,12 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
     }
     // destroy() only posts a message. Reuse the label after the manager handles Destroyed.
     // Waiting is safe only on a background thread while the native event loop keeps running.
-    let deadline = Instant::now() + StdDuration::from_secs(2);
+    let deadline = Instant::now() + WINDOW_DESTROY_TIMEOUT;
     while app.get_webview_window(label).is_some() {
         if Instant::now() >= deadline {
             return Err(format!("Window {label} is still being destroyed"));
         }
-        thread::sleep(StdDuration::from_millis(10));
+        thread::sleep(WINDOW_DESTROY_POLL);
     }
     state
         .0
@@ -1084,7 +1101,7 @@ fn configure_fullscreen_reminder(
 /// 仅无装饰的弹窗（全屏模式）启用：macOS 上透明会连原生标题栏一起变透明，
 /// 窗口模式弹窗（有标题栏）在所有平台都保持不透明。
 fn is_transparent_popup(label: &str) -> bool {
-    is_reminder_window_label(label) && label != WINDOWED_REMINDER_LABEL
+    window_kind(label) == WindowKind::FullscreenReminder
 }
 
 #[tauri::command]
@@ -1264,7 +1281,7 @@ fn dispatch_trigger(
         event.rest_started_at_ms = Some(now_ms);
     }
     if event.power_action.is_some() && event.power_deadline_ms.is_none() {
-        event.power_deadline_ms = Some(now_ms + 60_000);
+        event.power_deadline_ms = Some(now_ms + POWER_GRACE_SECONDS * 1000);
     }
     activate_reminder_session(app, state, event.clone());
     let labels = match prepare_reminder_windows(app, state, &settings) {
@@ -1484,7 +1501,7 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
                 }
                 reclaim_idle_windows(&app, &state);
             }
-            thread::sleep(StdDuration::from_secs(1));
+            thread::sleep(SCHEDULER_INTERVAL);
         }
         state.0.scheduler_started.store(false, Ordering::SeqCst);
     });
@@ -1567,7 +1584,6 @@ async fn save_data(
     let _ = report_native("Update tray menu", update_tray_menu(
         &app,
         data.settings.language,
-        state.0.paused.load(Ordering::SeqCst),
     ));
     #[cfg(target_os = "macos")]
     apply_application_menu(&app, data.settings.language);
@@ -1989,7 +2005,7 @@ async fn import_data(
         drop(current);
         reset_reminder_session(&app, &state, "reminders-reset");
         clear_persistence_error(&app, &state);
-        let _ = report_native("Update tray menu", update_tray_menu(&app, data.settings.language, false));
+        let _ = report_native("Update tray menu", update_tray_menu(&app, data.settings.language));
         #[cfg(target_os = "macos")]
         apply_application_menu(&app, data.settings.language);
         sync_reminder_settings(&app, &data.settings);
@@ -2199,7 +2215,6 @@ async fn clear_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result
 fn tray_menu(
     app: &AppHandle,
     language: Language,
-    _paused: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let (show_text, quit_text, about_text) = i18n::tray_labels(language);
     let show = MenuItemBuilder::with_id("show", show_text).build(app)?;
@@ -2213,9 +2228,9 @@ fn tray_menu(
         .build()
 }
 
-fn update_tray_menu(app: &AppHandle, language: Language, paused: bool) -> tauri::Result<()> {
+fn update_tray_menu(app: &AppHandle, language: Language) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        tray.set_menu(Some(tray_menu(app, language, paused)?))?;
+        tray.set_menu(Some(tray_menu(app, language)?))?;
     }
     Ok(())
 }
@@ -2231,11 +2246,14 @@ fn tauri_theme(theme: &Theme) -> Option<tauri::Theme> {
 
 /// 读系统当前是否深色（`AppleInterfaceStyle` = Dark）。
 #[cfg(target_os = "macos")]
-fn system_prefers_dark() -> bool {
+fn system_prefers_dark() -> Result<bool, String> {
     use std::ffi::c_void;
 
     extern "C" {
         fn CFPreferencesCopyAppValue(key: *const c_void, app_id: *const c_void) -> *mut c_void;
+        fn CFPreferencesAppSynchronize(app_id: *const c_void) -> u8;
+        fn CFGetTypeID(value: *const c_void) -> usize;
+        fn CFStringGetTypeID() -> usize;
         fn CFRelease(cf: *const c_void);
         fn CFStringCreateWithCString(
             alloc: *const c_void,
@@ -2256,18 +2274,36 @@ fn system_prefers_dark() -> bool {
             c"Apple Global Domain".as_ptr(),
             UTF8,
         );
+        if key.is_null() || domain.is_null() {
+            if !key.is_null() { CFRelease(key); }
+            if !domain.is_null() { CFRelease(domain); }
+            return Err("Failed to allocate system appearance preference strings".into());
+        }
+        if CFPreferencesAppSynchronize(domain) == 0 {
+            CFRelease(key);
+            CFRelease(domain);
+            return Err("Failed to synchronize system appearance preferences".into());
+        }
         let value = CFPreferencesCopyAppValue(key, domain);
         CFRelease(key);
         CFRelease(domain);
         // 缺省即浅色。
         if value.is_null() {
-            return false;
+            return Ok(false);
+        }
+        if CFGetTypeID(value) != CFStringGetTypeID() {
+            CFRelease(value);
+            return Err("System appearance preference is not a string".into());
         }
         let dark = CFStringCreateWithCString(std::ptr::null(), c"Dark".as_ptr(), UTF8);
+        if dark.is_null() {
+            CFRelease(value);
+            return Err("Failed to allocate dark appearance string".into());
+        }
         let equal = CFStringCompare(value, dark, 0) == 0;
         CFRelease(dark);
         CFRelease(value);
-        equal
+        Ok(equal)
     }
 }
 
@@ -2279,7 +2315,7 @@ fn system_prefers_dark() -> bool {
 fn resolve_theme(theme: &Theme) -> Theme {
     match theme {
         Theme::System => {
-            if system_prefers_dark() {
+            if report_native("Read system appearance", system_prefers_dark()).unwrap_or(false) {
                 Theme::Dark
             } else {
                 Theme::Light
@@ -2303,7 +2339,7 @@ fn apply_window_appearance(window: &WebviewWindow, theme: &Theme) {
         _ => tauri_theme(&resolved),
     }));
     // 透明弹窗自身是透明的，不能给窗口上色，否则会盖掉背景图。
-    if !window.label().starts_with(REMINDER_LABEL) || window.label() == WINDOWED_REMINDER_LABEL {
+    if !is_transparent_popup(window.label()) {
         let background = match resolved {
             Theme::Light => WINDOW_BG_LIGHT,
             _ => WINDOW_BG_DARK,
@@ -2332,13 +2368,19 @@ fn apply_theme_to_windows(app: &AppHandle, theme: &Theme) {
 /// 只在偏好为 System 时才真正生效；显式 Dark/Light 不受影响。
 #[cfg(target_os = "macos")]
 fn start_system_theme_watcher(app: AppHandle, state: AppState) {
-    thread::Builder::new()
+    let result = thread::Builder::new()
         .name("system-theme-watcher".into())
         .spawn(move || {
-            let mut last = system_prefers_dark();
+            let mut last = match report_native("Read initial system appearance", system_prefers_dark()) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
             while !state.0.scheduler_stop.load(Ordering::SeqCst) {
-                thread::sleep(StdDuration::from_secs(2));
-                let now = system_prefers_dark();
+                thread::sleep(THEME_POLL_INTERVAL);
+                let now = match report_native("Read system appearance", system_prefers_dark()) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
                 if now == last {
                     continue;
                 }
@@ -2349,8 +2391,8 @@ fn start_system_theme_watcher(app: AppHandle, state: AppState) {
                 }
                 apply_theme_to_windows(&app, &Theme::System);
             }
-        })
-        .ok();
+        });
+    let _ = report_native("Start system theme watcher", result);
 }
 
 /// macOS 上把窗口背景色钉到当前主题，创建时用，避免透明标题栏闪出默认灰。
@@ -2486,7 +2528,7 @@ async fn take_pending_navigation(state: State<'_, AppState>) -> Result<Option<St
 }
 
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
-    let menu = tray_menu(app.handle(), language, false)?;
+    let menu = tray_menu(app.handle(), language)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -2670,19 +2712,6 @@ pub fn run() {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 show_main_window(app);
-            }
-            "pause" => {
-                let state = app.state::<AppState>();
-                let paused = !state.0.paused.load(Ordering::SeqCst);
-                state.0.paused.store(paused, Ordering::SeqCst);
-                let language = state
-                    .0
-                    .data
-                    .lock()
-                    .expect("settings lock poisoned")
-                    .settings
-                    .language;
-                let _ = report_native("Update tray menu", update_tray_menu(app, language, paused));
             }
             "about" => show_about(app),
             "quit" => app.exit(0),
