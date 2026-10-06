@@ -254,7 +254,8 @@ async function executePowerAction() {
     if (sequence !== notificationSequence) return
   } catch (error) {
     logError('execute power action', error)
-    powerError.value = t('popup.actionFailed', { action: powerVerb.value })
+    if (sequence !== notificationSequence) return
+    powerError.value = t('popup.actionFailed', { action: powerVerb.value, error: String(error) })
   }
 }
 

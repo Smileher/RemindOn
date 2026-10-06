@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -36,6 +36,7 @@ const REMINDER_WINDOW_HEIGHT: f64 = 320.0;
 const MAIN_WINDOW_WIDTH: f64 = 780.0;
 const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
+const POWER_COMMAND_TIMEOUT: StdDuration = StdDuration::from_secs(10);
 
 /// 窗口背景色需与前端 `--page-bg` 保持一致。
 ///
@@ -1779,38 +1780,53 @@ fn execute_power_action_impl(action: &PowerAction) -> Result<(), String> {
         let system_root = std::env::var_os("SystemRoot")
             .ok_or_else(|| "Failed to resolve the Windows system directory".to_string())?;
         let (program, args) = windows_power_command(action, &PathBuf::from(system_root));
-        Command::new(program)
-            .args(args)
-            .spawn()
-            .map_err(|error| format!("Failed to execute the system action: {error}"))?;
-        return Ok(());
+        return run_system_command(Command::new(program).args(args));
     }
 
     #[cfg(target_os = "macos")]
     {
         if *action == PowerAction::Lock {
-            Command::new(
+            return run_system_command(Command::new(
                 "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession",
             )
-            .arg("-suspend")
-            .spawn()
-            .map_err(|error| format!("Failed to lock the computer: {error}"))?;
-            return Ok(());
+            .arg("-suspend"));
         }
         let script = if *action == PowerAction::Shutdown {
             "tell application \"System Events\" to shut down"
         } else {
             "tell application \"System Events\" to restart"
         };
-        Command::new("/usr/bin/osascript")
-            .args(["-e", script])
-            .spawn()
-            .map_err(|error| format!("Failed to execute the system action: {error}"))?;
-        return Ok(());
+        return run_system_command(Command::new("/usr/bin/osascript").args(["-e", script]));
     }
 
     #[allow(unreachable_code)]
     Err("The current platform does not support this scheduled action".to_string())
+}
+
+fn run_system_command(command: &mut Command) -> Result<(), String> {
+    let mut child = command.spawn().map_err(|error| format!("Failed to start system action: {error}"))?;
+    wait_for_system_command(&mut child, POWER_COMMAND_TIMEOUT)
+}
+
+fn wait_for_system_command(child: &mut Child, timeout: StdDuration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("System action exited with {status}")),
+            Ok(None) if Instant::now() < deadline => thread::sleep(StdDuration::from_millis(20)),
+            result => {
+                let error = match result {
+                    Err(error) => format!("Failed to wait for system action: {error}"),
+                    _ => "System action timed out".to_string(),
+                };
+                // Reap the child on errors too; dropping Child does not terminate it.
+                if let Err(error) = child.kill() { eprintln!("Failed to terminate system command: {error}"); }
+                if let Err(error) = child.wait() { eprintln!("Failed to reap system command: {error}"); }
+                return Err(error);
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -1820,42 +1836,47 @@ async fn execute_power_action(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    let matches = state
-        .0
-        .active_reminder
-        .lock()
-        .expect("reminder session lock poisoned")
-        .as_ref()
-        .is_some_and(|event| {
-            event.session_id == session_id && event.power_action.as_ref() == Some(&action)
-        });
-    if !matches {
-        return Ok(false);
-    }
-    if state
-        .0
-        .power_action_session
-        .compare_exchange(0, session_id, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Ok(false);
-    }
-    if let Err(error) = execute_power_action_impl(&action) {
-        let _ = state.0.power_action_session.compare_exchange(
-            session_id,
-            0,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
-        return Err(error);
-    }
-    close_reminder_session(&app, state.inner(), session_id);
-    Ok(true)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock()
+            .expect("window operations lock poisoned");
+        let matches = state
+            .0
+            .active_reminder
+            .lock()
+            .expect("reminder session lock poisoned")
+            .as_ref()
+            .is_some_and(|event| {
+                event.session_id == session_id && event.power_action.as_ref() == Some(&action)
+            });
+        if !matches {
+            return Ok(false);
+        }
+        if state
+            .0
+            .power_action_session
+            .compare_exchange(0, session_id, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        drop(_operation);
+        if let Err(error) = execute_power_action_impl(&action) {
+            let _ = state.0.power_action_session.compare_exchange(
+                session_id,
+                0,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+            return Err(error);
+        }
+        let _operation = state.0.window_operations.lock().expect("window operations lock poisoned");
+        close_reminder_session(&app, &state, session_id);
+        Ok(true)
+    }).await.map_err(|error| format!("System action worker failed: {error}"))?
 }
 
 fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> ReminderTriggeredEvent {
@@ -2671,6 +2692,21 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_command_reports_nonzero_exit_and_timeout() {
+        #[cfg(target_os = "windows")]
+        let mut failed = Command::new("cmd.exe").args(["/C", "exit 7"]).spawn().unwrap();
+        #[cfg(not(target_os = "windows"))]
+        let mut failed = Command::new("/bin/sh").args(["-c", "exit 7"]).spawn().unwrap();
+        assert!(wait_for_system_command(&mut failed, StdDuration::from_secs(2)).unwrap_err().contains("exited"));
+        #[cfg(target_os = "windows")]
+        let mut delayed = Command::new("ping.exe").args(["-n", "5", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+        #[cfg(not(target_os = "windows"))]
+        let mut delayed = Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        assert!(wait_for_system_command(&mut delayed, StdDuration::ZERO).unwrap_err().contains("timed out"));
+        assert!(delayed.try_wait().unwrap().is_some());
+    }
 
     #[test]
     fn destroying_windows_remain_isolated_until_destroyed_or_absent() {

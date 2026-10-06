@@ -228,7 +228,7 @@ const zh = {
   'popup.testMode': '测试定时操作',
   'popup.testPowerConfirm': '当前是测试模式，是否立即{action}？',
   'popup.confirmExecute': '确认执行',
-  'popup.actionFailed': '无法{action}，请检查系统权限和定时提醒设置。',
+  'popup.actionFailed': '无法{action}：{error}',
   'popup.openPowerSettings': '打开定时提醒',
   'popup.settingsOpenFailed': '无法打开定时提醒，请关闭此通知后手动打开。',
 } as const
@@ -463,7 +463,7 @@ const en: Record<MessageKey, string> = {
   'popup.testMode': 'Test scheduled action',
   'popup.testPowerConfirm': 'This is a test. Do you want to {action} now?',
   'popup.confirmExecute': 'Continue',
-  'popup.actionFailed': 'Could not {action}. Check system permissions and scheduled action settings.',
+  'popup.actionFailed': 'Could not {action}: {error}',
   'popup.openPowerSettings': 'Open scheduled reminders',
   'popup.settingsOpenFailed': 'Could not open scheduled action settings. Close this notification and open it manually.',
 }

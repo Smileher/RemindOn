@@ -21,6 +21,18 @@ const settle = () => new Promise(setImmediate)
 const restEvent = { sessionId: 1, id: '__rest__', title: '休息时间到了', type: 'interval', isRest: true, isTest: false }
 const powerEvent = { sessionId: 2, id: 'lock-plan', title: '锁定电脑', type: 'daily', isRest: false, powerAction: 'lock', isTest: false }
 
+test('failed power actions retain the popup and can be retried', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(powerEvent)
+  popup.setInvoke('execute_power_action', async () => { throw new Error('permission denied') })
+  await popup.state.executePowerAction()
+  assert.match(popup.state.powerError.value, /permission denied/)
+  assert.equal(popup.state.current.value.sessionId, powerEvent.sessionId)
+  popup.setInvoke('execute_power_action', async () => true)
+  await popup.state.executePowerAction()
+  assert.equal(popup.calls.filter((name) => name === 'execute_power_action').length, 2)
+})
+
 test('new settings enable fullscreen reminders by default', () => {
   assert.equal(defaultData().settings.popupFullscreen, true)
 })
@@ -174,7 +186,7 @@ async function mountPopup({ label = 'reminder', active = null, readActive } = {}
     '../i18n': { translate },
     '../types': { defaultData },
     './PopupBackground.vue': { default: { render: noop } },
-    '../error': { logError: (_context, error) => { throw error } },
+    '../error': { logError: noop },
   }
   const exports = {}
   runInNewContext(scriptCode, {
