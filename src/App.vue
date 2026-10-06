@@ -261,6 +261,7 @@ function formatNext(reminder: Reminder) {
 
 // 串行写入并在实际发送时读取最新数据，防止旧快照最后落盘。
 let persistToken = 0
+let externalModeRevision = 0
 let persistQueue: Promise<unknown> = Promise.resolve()
 let settingsQueue: Promise<unknown> = Promise.resolve()
 
@@ -379,6 +380,7 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
 
 async function saveSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
   const previous = data.value.settings[key]
+  const modeRevision = externalModeRevision
   data.value.settings = { ...data.value.settings, [key]: value }
   try {
     await persist(key === 'popupFullscreen' ? value as boolean : undefined)
@@ -386,7 +388,9 @@ async function saveSetting<K extends keyof AppData['settings']>(key: K, value: A
     if (key === 'systemNotificationEnabled') notificationError.value = ''
     return true
   } catch (error) {
-    data.value.settings = { ...data.value.settings, [key]: previous }
+    if (key !== 'popupFullscreen' || modeRevision === externalModeRevision) {
+      data.value.settings = { ...data.value.settings, [key]: previous }
+    }
     if (key === 'restMessage') restMessageDraft.value = data.value.settings.restMessage
     logError(`save setting: ${String(key)}`, error)
     actionMessage.value = t('status.saveFailed')
@@ -454,25 +458,25 @@ async function updateLanguage(language: Language) {
     data.value.reminders = previousReminders.map((reminder) => {
       const index = currentPresets.findIndex((preset) => preset.id === reminder.id && preset.title === reminder.title)
       return index >= 0 ? { ...reminder, title: nextPresets[index].title } : reminder
-  })
-  const currentDefaults = localizedDefaultMessages(previous.language)
-  const nextDefaults = localizedDefaultMessages(language)
-  data.value.settings = {
-    ...previous,
-    language,
-    restMessage: previous.restMessage === currentDefaults.rest ? nextDefaults.rest : previous.restMessage,
-  }
-  restMessageDraft.value = data.value.settings.restMessage
-  try {
-    await persist()
-    await refreshTimers()
-  } catch (error) {
-    data.value.settings = previous
-    data.value.reminders = previousReminders
-    restMessageDraft.value = previous.restMessage
-    logError('save language', error)
-    actionMessage.value = t('status.saveFailed')
-  }
+    })
+    const currentDefaults = localizedDefaultMessages(previous.language)
+    const nextDefaults = localizedDefaultMessages(language)
+    data.value.settings = {
+      ...previous,
+      language,
+      restMessage: previous.restMessage === currentDefaults.rest ? nextDefaults.rest : previous.restMessage,
+    }
+    restMessageDraft.value = data.value.settings.restMessage
+    try {
+      await persist()
+      await refreshTimers()
+    } catch (error) {
+      data.value.settings = { ...data.value.settings, language: previous.language, restMessage: previous.restMessage }
+      data.value.reminders = previousReminders
+      restMessageDraft.value = previous.restMessage
+      logError('save language', error)
+      actionMessage.value = t('status.saveFailed')
+    }
   })
 }
 
@@ -572,6 +576,7 @@ async function resetSettings() {
   return queueSettings(async () => {
     await persistQueue
     const previous = data.value.settings
+    const modeRevision = externalModeRevision
     const defaults = defaultData().settings
     data.value.settings = {
       ...defaults,
@@ -585,7 +590,10 @@ async function resetSettings() {
       await persist(defaults.popupFullscreen)
       await refreshTimers()
     } catch (error) {
-      data.value.settings = previous
+      data.value.settings = {
+        ...previous,
+        popupFullscreen: modeRevision === externalModeRevision ? previous.popupFullscreen : data.value.settings.popupFullscreen,
+      }
       restMessageDraft.value = previous.restMessage
       const rollback = await Promise.allSettled([
         previous.autostart ? enable() : disable(),
@@ -709,13 +717,13 @@ onMounted(async () => {
     })
     unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       await queueSettings(async () => {
-      try {
-        data.value = await invoke<AppData>('load_data')
-        restMessageDraft.value = data.value.settings.restMessage
-      } catch {
-        // Keep the current data while the backend is temporarily unavailable.
-      }
-      await refreshTimers()
+        try {
+          data.value = await invoke<AppData>('load_data')
+          restMessageDraft.value = data.value.settings.restMessage
+        } catch {
+          // Keep the current data while the backend is temporarily unavailable.
+        }
+        await refreshTimers()
       })
     })
     unlistenRestTimer = await getCurrentWindow().listen<RestTimerStatus>('rest-timer-updated', (event) => {
@@ -731,6 +739,7 @@ onMounted(async () => {
     })
     // 外部切换只更新相关字段，不能覆盖正在编辑的其他参数。
     unlistenSettingsSync = await getCurrentWindow().listen<boolean>('popup-fullscreen-updated', (event) => {
+      externalModeRevision += 1
       persistToken += 1
       data.value.settings.popupFullscreen = event.payload
     })

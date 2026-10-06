@@ -311,6 +311,22 @@ test('a failed reminder mutation cannot replace a later successful setting', asy
   assert.equal(app.state.data.value.settings.theme, 'light')
 })
 
+test('failed fullscreen and language edits preserve a newer native mode event', async () => {
+  for (const languageEdit of [false, true]) {
+    const app = await mountApp()
+    app.state.data.value.settings.popupFullscreen = false
+    let reject
+    app.setSaveData(() => new Promise((_, fail) => { reject = fail }))
+    const change = languageEdit ? app.state.updateLanguage('en') : app.state.updateSetting('popupFullscreen', true)
+    await new Promise(setImmediate)
+    await app.emit('popup-fullscreen-updated', true)
+    reject(new Error('disk full'))
+    await change
+    assert.equal(app.state.data.value.settings.popupFullscreen, true)
+    assert.equal(app.state.data.value.settings.language, 'zh-CN')
+  }
+})
+
 test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {
   const app = await mountApp()
   app.state.data.value.settings = defaultData().settings
