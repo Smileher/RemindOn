@@ -653,16 +653,18 @@ async function refreshTimers() {
 }
 
 async function retryPersistence() {
-  await settingsQueue
-  await persistQueue
-  try {
-    data.value = await invoke<AppData>('load_data')
-    persistenceError.value = ''
-    await refreshTimers()
-  } catch (error) {
-    logError('retry persistence', error)
-    persistenceError.value = formatError(error)
-  }
+  return queueSettings(async () => {
+    await persistQueue
+    try {
+      data.value = await invoke<AppData>('load_data')
+      restMessageDraft.value = data.value.settings.restMessage
+      persistenceError.value = ''
+      await refreshTimers()
+    } catch (error) {
+      logError('retry persistence', error)
+      persistenceError.value = formatError(error)
+    }
+  })
 }
 
 function applyRestTimerStatus(status: RestTimerStatus) {

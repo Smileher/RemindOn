@@ -46,6 +46,23 @@ test('persistence failures remain visible until a successful retry or recovery e
   assert.equal(app.state.persistenceError.value, '')
 })
 
+test('persistence retry synchronizes the draft before the next queued setting', async () => {
+  const app = await mountApp({ nativeErrors: { persistenceError: 'disk full' } })
+  assert.equal(app.state.persistenceError.value, 'disk full')
+  let resolveLoad
+  app.setInvoke('load_data', () => new Promise((resolve) => { resolveLoad = resolve }))
+  const retry = app.state.retryPersistence()
+  await new Promise(setImmediate)
+  const edit = app.state.updateSetting('theme', 'light')
+  const loaded = defaultData()
+  loaded.settings.restMessage = 'recovered text'
+  resolveLoad(loaded)
+  await Promise.all([retry, edit])
+  assert.equal(app.state.persistenceError.value, '')
+  assert.equal(app.state.restMessageDraft.value, 'recovered text')
+  assert.equal(app.state.data.value.settings.theme, 'light')
+})
+
 async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null } } = {}) {
   const settingsData = defaultData()
   settingsData.settings.restEnabled = enabled
