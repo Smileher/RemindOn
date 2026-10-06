@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 const api = 'https://gitee.com/api/v5/repos/smileher/RemindOn'
 // Gitee 会掐断长时间的上传连接；超时过长只会让整个 job 挂到 GitHub 的6 小时上限。
 const requestTimeoutMs = 3 * 60 * 1000
+const apiTimeoutMs = 60 * 1000
 // socket timeout 只检测空闲连接；上传持续有数据但迟迟不结束时仍会无限等待。
 const uploadDeadlineMs = 8 * 60 * 1000
 // 整轮镜像的总预算，防止个别资产反复重试把 workflow拖死。
@@ -23,9 +24,23 @@ const assetNames = (version, legacyX64) => [
 async function request(fetchImpl, token, path, { method = 'GET', body } = {}) {
   const url = new URL(`${api}${path}`)
   if (method === 'GET' || method === 'DELETE') url.searchParams.set('access_token', token)
-  const response = await fetchImpl(url, { method, body, signal: AbortSignal.timeout(requestTimeoutMs) })
-  if (!response.ok) throw new Error(`Gitee API ${method} ${path} returned HTTP ${response.status}`)
-  return response.status === 204 ? null : response.json()
+  // 只自动重试查询；写请求由上传恢复逻辑处理，避免重复创建 Release 或附件。
+  const attempts = method === 'GET' ? 3 : 1
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let retryable = true
+    try {
+      const response = await fetchImpl(url, { method, body, signal: AbortSignal.timeout(apiTimeoutMs) })
+      if (!response.ok) {
+        retryable = response.status === 408 || response.status === 429 || response.status >= 500
+        throw new Error(`Gitee API ${method} ${path} returned HTTP ${response.status}`)
+      }
+      return response.status === 204 ? null : await response.json()
+    } catch (error) {
+      if (!retryable || attempt === attempts) throw error
+      console.warn(`Retrying Gitee API ${method} ${path} (attempt ${attempt}/${attempts}): ${error.message}`)
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5000))
+    }
+  }
 }
 
 async function downloadWithRetry(fetchImpl, url, name) {

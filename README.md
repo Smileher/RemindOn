@@ -120,7 +120,7 @@ pnpm tauri:build --bundles nsis
 2. 执行上述检查，提交代码并推送版本标签，例如 `v1.1.0`。
 3. Release 工作流创建草稿，并行构建 Windows x64、Windows ARM64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
 4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 GitHub `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
-5. 发布完成后，`sync-gitee` job 创建或复用同 tag 的 Gitee Release，上传 6 个二进制资产和 Gitee 版 `latest.json`。Gitee 仓库不接收源码同步。
+5. Release 成功后，独立的 `Retry Gitee release sync` 工作流自动创建或复用同 tag 的 Gitee Release，上传 6 个二进制资产和 Gitee 版 `latest.json`。镜像失败不会阻塞 Release 或 Pages；Gitee 仓库不接收源码同步。
 
 如需重跑失败的发布，可重新运行工作流，或在 Actions 中选择对应版本标签手动运行。已公开的版本不可覆盖，应递增版本号重新发布。macOS 构建使用 ad-hoc 签名，未配置 Apple Developer ID 公证；更新签名与操作系统代码签名是不同机制。
 
@@ -132,7 +132,7 @@ pnpm tauri:build --bundles nsis
 
 令牌只配置在 GitHub Secret 中，不提交到仓库，也不要写入 workflow 文件。Gitee 仓库必须先有默认分支；空仓库请先在 Gitee 页面创建一个最小 README。正常发布会自动同步，失败时可在 `Retry Gitee release sync` workflow 中输入已发布的 tag 重试。旧版本（例如尚无 ARM64 的 `v0.8.0`）重试时可启用 `legacy_x64`；正常发布仍要求全部架构资产。同步脚本会匿名下载镜像文件并比对 SHA-256，再上传和验证 Gitee 清单。
 
-2026-09-29 实测：`GITEE_TOKEN` 能创建 Gitee Release，但 `v0.8.0` 和 `v0.9.0` 的同步曾因 Gitee 附件接口请求超时而失败，Release 页面显示的源码压缩包不代表安装包附件。同步脚本现将单次 Gitee 请求超时提高到 10 分钟，并输出上传阶段；重试成功后再以附件列表和匿名下载为准。此前失败记录见 [v0.8.0 测试](https://github.com/Smileher/RemindOn/actions/runs/36420353389)，[v0.9.0 测试](https://github.com/Smileher/RemindOn/actions/runs/36523413163)。
+同步失败时先查看上传和校验日志。上传使用 3 分钟空闲超时、8 分钟总时限，查询接口使用 1 分钟时限；脚本整轮预算为 25 分钟，工作流上限为 30 分钟。上传、下载和查询均有有限重试；上传响应丢失后先查询并验证远端文件，SHA-256 不符的残留附件会重新上传。同版本自动同步与手动重试互斥，全部二进制校验通过后才发布 `latest.json`。重试时必须选择 `master`，才能使用最新修复。Release 页面显示的源码压缩包不代表安装包附件，最终以 6 个二进制附件、清单和匿名下载校验为准。
 
 ### Microsoft Store MSIX
 
