@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
@@ -97,7 +98,10 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
         listen: async (name, callback) => { listeners.set(name, { target: 'main', callback }); return noop },
       }),
     },
-    '@tauri-apps/plugin-dialog': { ask: noop, confirm: () => confirmReset(), open: noop, save: noop },
+    '@tauri-apps/plugin-dialog': {
+      ask: () => confirmReset(), confirm: () => confirmReset(),
+      open: (options) => nativeHandlers.get('open')?.(options), save: noop,
+    },
     '@tauri-apps/plugin-autostart': { disable: async () => nativeHandlers.get('disable')?.(), enable: async () => nativeHandlers.get('enable')?.(), isEnabled: async () => false },
     '@tauri-apps/plugin-notification': { sendNotification: noop, onAction: async () => ({ unregister: async () => {} }), isPermissionGranted: async () => true, requestPermission: async () => 'granted' },
     '@lucide/vue': new Proxy({}, { get: () => ({ render: noop }) }),
@@ -141,6 +145,7 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
       localStorage: { getItem: () => null, setItem: noop },
       document: { visibilityState: 'visible', hasFocus: () => true },
       console,
+      crypto: { randomUUID },
     })
     return exports
   }
@@ -250,6 +255,60 @@ test('import and export cancellations are silent and never pass a path from the 
   app.setInvoke('export_data', async () => { throw new Error('disk full') })
   await app.state.exportData()
   assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.exportFailed'))
+})
+
+test('reminder CRUD validates, preserves disabled state and rolls back failures', async () => {
+  const app = await mountApp()
+  app.state.data.value.reminders = []
+  app.state.patchForm({ title: '', type: 'daily', time: '09:00' })
+  await app.state.saveReminder()
+  assert.equal(app.state.data.value.reminders.length, 0)
+  app.state.patchForm({ title: 'event', type: 'weekly', weekdays: [] })
+  await app.state.saveReminder()
+  assert.equal(app.state.data.value.reminders.length, 0)
+  app.state.patchForm({ type: 'daily' })
+  await app.state.saveReminder()
+  assert.equal(app.state.data.value.reminders.length, 1)
+  const id = app.state.data.value.reminders[0].id
+  await app.state.toggleReminder(app.state.data.value.reminders[0])
+  assert.equal(app.state.data.value.reminders[0].enabled, false)
+  app.state.editReminder(app.state.data.value.reminders[0])
+  app.state.patchForm({ title: 'edited' })
+  await app.state.saveReminder()
+  assert.equal(app.state.data.value.reminders[0].id, id)
+  assert.equal(app.state.data.value.reminders[0].title, 'edited')
+  assert.equal(app.state.data.value.reminders[0].enabled, false)
+  app.setSaveData(async () => { throw new Error('disk full') })
+  await app.state.toggleReminder(app.state.data.value.reminders[0])
+  assert.equal(app.state.data.value.reminders[0].enabled, false)
+  app.state.patchForm({ title: 'failed edit' })
+  await app.state.saveReminder()
+  assert.equal(app.state.data.value.reminders[0].title, 'edited')
+  app.setConfirm(async () => false)
+  await app.state.removeReminder(id)
+  assert.equal(app.state.data.value.reminders.length, 1)
+  app.setConfirm(async () => true)
+  await app.state.removeReminder(id)
+  assert.equal(app.state.data.value.reminders.length, 1)
+  app.setSaveData(async (data) => data)
+  await app.state.removeReminder(id)
+  assert.equal(app.state.data.value.reminders.length, 0)
+})
+
+test('a failed reminder mutation cannot replace a later successful setting', async () => {
+  const app = await mountApp()
+  app.state.data.value.reminders = []
+  app.state.patchForm({ title: 'event', type: 'daily', time: '09:00' })
+  let rejectFirst
+  let count = 0
+  app.setSaveData(async (data) => ++count === 1 ? new Promise((_, reject) => { rejectFirst = reject }) : data)
+  const first = app.state.saveReminder()
+  await new Promise(setImmediate)
+  const setting = app.state.updateSetting('theme', 'light')
+  rejectFirst(new Error('disk full'))
+  await Promise.all([first, setting])
+  assert.equal(app.state.data.value.reminders.length, 0)
+  assert.equal(app.state.data.value.settings.theme, 'light')
 })
 
 test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {

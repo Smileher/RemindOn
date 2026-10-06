@@ -315,31 +315,37 @@ async function saveReminder() {
     nextTriggerAt: null,
   }
 
-  const previous = [...data.value.reminders]
-  const index = data.value.reminders.findIndex((item) => item.id === reminder.id)
-  if (index >= 0) data.value.reminders.splice(index, 1, reminder)
-  else data.value.reminders.push(reminder)
-  try {
-    await persist()
-    showForm.value = false
-    actionMessage.value = t('status.reminderSaved')
-  } catch (error) {
-    data.value.reminders = previous
-    logError('save reminder', error)
-    actionMessage.value = t('status.saveFailed')
-  }
+  return queueSettings(async () => {
+    const previous = [...data.value.reminders]
+    const index = data.value.reminders.findIndex((item) => item.id === reminder.id)
+    if (index >= 0) data.value.reminders.splice(index, 1, reminder)
+    else data.value.reminders.push(reminder)
+    try {
+      await persist()
+      showForm.value = false
+      actionMessage.value = t('status.reminderSaved')
+    } catch (error) {
+      data.value.reminders = previous
+      logError('save reminder', error)
+      actionMessage.value = t('status.saveFailed')
+    }
+  })
 }
 
 async function toggleReminder(reminder: Reminder) {
-  const previous = reminder.enabled
-  reminder.enabled = !reminder.enabled
-  try {
-    await persist()
-  } catch (error) {
-    reminder.enabled = previous
-    logError('toggle reminder', error)
-    actionMessage.value = t('status.saveFailed')
-  }
+  return queueSettings(async () => {
+    const current = data.value.reminders.find((item) => item.id === reminder.id)
+    if (!current) return
+    const previous = current.enabled
+    current.enabled = !current.enabled
+    try {
+      await persist()
+    } catch (error) {
+      current.enabled = previous
+      logError('toggle reminder', error)
+      actionMessage.value = t('status.saveFailed')
+    }
+  })
 }
 
 async function removeReminder(id: string) {
@@ -353,16 +359,18 @@ async function removeReminder(id: string) {
   })
   if (!confirmed) return
 
-  const previous = data.value.reminders
-  data.value.reminders = data.value.reminders.filter((item) => item.id !== id)
-  try {
-    await persist()
-    actionMessage.value = t('status.reminderDeleted')
-  } catch (error) {
-    data.value.reminders = previous
-    logError('delete reminder', error)
-    actionMessage.value = t('status.saveFailed')
-  }
+  return queueSettings(async () => {
+    const previous = data.value.reminders
+    data.value.reminders = data.value.reminders.filter((item) => item.id !== id)
+    try {
+      await persist()
+      actionMessage.value = t('status.reminderDeleted')
+    } catch (error) {
+      data.value.reminders = previous
+      logError('delete reminder', error)
+      actionMessage.value = t('status.saveFailed')
+    }
+  })
 }
 
 async function updateSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
@@ -700,6 +708,7 @@ onMounted(async () => {
       void refreshTimers()
     })
     unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
+      await queueSettings(async () => {
       try {
         data.value = await invoke<AppData>('load_data')
         restMessageDraft.value = data.value.settings.restMessage
@@ -707,6 +716,7 @@ onMounted(async () => {
         // Keep the current data while the backend is temporarily unavailable.
       }
       await refreshTimers()
+      })
     })
     unlistenRestTimer = await getCurrentWindow().listen<RestTimerStatus>('rest-timer-updated', (event) => {
       applyRestTimerStatus(event.payload)
