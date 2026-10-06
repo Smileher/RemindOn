@@ -37,6 +37,7 @@ const restIsActive = ref(false)
 const restMessageDraft = ref(defaultData().settings.restMessage)
 const notificationError = ref('')
 const persistenceError = ref('')
+const schedulerError = ref('')
 const autostartError = ref('')
 const appVersion = ref('1.1')
 const popupBackgroundPreview = ref('')
@@ -50,10 +51,12 @@ let unlistenNavigation: (() => void) | undefined
 let unlistenRestTimer: (() => void) | undefined
 let unlistenNotificationFailure: (() => void) | undefined
 let unlistenPersistenceFailure: (() => void) | undefined
+let unlistenSchedulerFailure: (() => void) | undefined
 let unlistenSettingsSync: (() => void) | undefined
 let unlistenWindowFocus: (() => void) | undefined
 let clockTimer: number | undefined
 let timerRefreshToken = 0
+let nativeErrorRevision = 0
 let actionMessageTimer: number | undefined
 
 // 状态消息只短暂停留，避免一直占位或把旁边的按钮挤走。
@@ -655,6 +658,8 @@ async function refreshTimers() {
 async function retryPersistence() {
   return queueSettings(async () => {
     await persistQueue
+    await refreshNativeErrors()
+    if (schedulerError.value) return
     try {
       data.value = await invoke<AppData>('load_data')
       restMessageDraft.value = data.value.settings.restMessage
@@ -665,6 +670,23 @@ async function retryPersistence() {
       persistenceError.value = formatError(error)
     }
   })
+}
+
+async function refreshNativeErrors() {
+  const revision = nativeErrorRevision
+  try {
+    const errors = await invoke<NativeErrors>('get_native_errors')
+    if (errors.autostartError) autostartError.value = t('status.autostartFailed', { error: errors.autostartError })
+    if (errors.notificationError) notificationError.value = t('status.notificationFailed', { error: errors.notificationError })
+    // 致命故障只在进程重启后恢复，不能被较早的状态响应或保存成功覆盖。
+    schedulerError.value ||= errors.schedulerError || ''
+    if (revision === nativeErrorRevision) persistenceError.value = errors.persistenceError || ''
+  } catch (error) {
+    if ('__TAURI_INTERNALS__' in window) {
+      schedulerError.value ||= formatError(error)
+      logError('read native errors', error)
+    }
+  }
 }
 
 function applyRestTimerStatus(status: RestTimerStatus) {
@@ -685,6 +707,14 @@ onMounted(async () => {
   void loadUpdateStatus?.()
   void loadPopupImagePreview()
   try {
+    unlistenSchedulerFailure = await getCurrentWindow().listen<string>('scheduler-failed', (event) => {
+      nativeErrorRevision += 1
+      schedulerError.value = event.payload
+    })
+    unlistenPersistenceFailure = await getCurrentWindow().listen<string | null>('persistence-failed', (event) => {
+      nativeErrorRevision += 1
+      persistenceError.value = event.payload || ''
+    })
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
     })
@@ -706,16 +736,10 @@ onMounted(async () => {
     } catch {
       // Keep the saved value when the platform autostart API is unavailable.
     }
-    try {
-      const errors = await invoke<NativeErrors>('get_native_errors')
-      if (errors.autostartError) autostartError.value = t('status.autostartFailed', { error: errors.autostartError })
-      if (errors.notificationError) notificationError.value = t('status.notificationFailed', { error: errors.notificationError })
-      persistenceError.value = errors.persistenceError || ''
-    } catch {
-      // The browser preview has no native startup integrations.
-    }
+    await refreshNativeErrors()
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
       void refreshTimers()
+      void refreshNativeErrors()
     })
     unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       await queueSettings(async () => {
@@ -736,9 +760,6 @@ onMounted(async () => {
       notificationError.value = message
       actionMessage.value = message
     })
-    unlistenPersistenceFailure = await getCurrentWindow().listen<string | null>('persistence-failed', (event) => {
-      persistenceError.value = event.payload || ''
-    })
     // 外部切换只更新相关字段，不能覆盖正在编辑的其他参数。
     unlistenSettingsSync = await getCurrentWindow().listen<boolean>('popup-fullscreen-updated', (event) => {
       externalModeRevision += 1
@@ -750,6 +771,7 @@ onMounted(async () => {
       now.value = Date.now()
     }, 1000)
   } catch (error) {
+    await refreshNativeErrors()
     logError('load application data', error)
     actionMessage.value = t('status.loadFailed')
   }
@@ -763,6 +785,7 @@ onUnmounted(() => {
   unlistenRestTimer?.()
   unlistenNotificationFailure?.()
   unlistenPersistenceFailure?.()
+  unlistenSchedulerFailure?.()
   unlistenSettingsSync?.()
   unlistenWindowFocus?.()
   if (clockTimer) window.clearInterval(clockTimer)
@@ -782,9 +805,12 @@ onUnmounted(() => {
     />
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
+      <div v-if="schedulerError" class="update-banner" role="alert">
+        <span>{{ t('status.schedulerFailed', { error: schedulerError }) }}</span>
+      </div>
       <div v-if="persistenceError" class="update-banner" role="alert">
         <span>{{ t('status.persistenceFailed', { error: persistenceError }) }}</span>
-        <button class="button" type="button" @click="retryPersistence">{{ t('common.retry') }}</button>
+        <button v-if="!schedulerError" class="button" type="button" @click="retryPersistence">{{ t('common.retry') }}</button>
       </div>
       <div v-if="newVersion && currentView !== 'about'" class="update-banner" role="status">
         <span>{{ t('update.available', { version: newVersion }) }}</span>

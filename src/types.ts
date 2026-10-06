@@ -81,6 +81,7 @@ export interface NativeErrors {
   autostartError: string | null
   notificationError: string | null
   persistenceError: string | null
+  schedulerError: string | null
 }
 
 export const defaultReminders = (language: Language): Reminder[] => [

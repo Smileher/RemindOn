@@ -63,6 +63,32 @@ test('persistence retry synchronizes the draft before the next queued setting', 
   assert.equal(app.state.data.value.settings.theme, 'light')
 })
 
+test('scheduler failures survive reload and cannot be cleared by a persistence retry', async () => {
+  const app = await mountApp({ nativeErrors: { schedulerError: 'state lock poisoned' } })
+  assert.equal(app.state.schedulerError.value, 'state lock poisoned')
+  const reads = app.calls.filter((command) => command === 'load_data').length
+  await app.emit('persistence-failed', 'disk full')
+  await app.emit('scheduler-failed', 'scheduler stopped')
+  await app.state.retryPersistence()
+  assert.equal(app.calls.filter((command) => command === 'load_data').length, reads)
+  assert.equal(app.state.schedulerError.value, 'scheduler stopped')
+  await app.emit('persistence-failed', null)
+  assert.equal(app.state.schedulerError.value, 'scheduler stopped')
+  const html = await app.render()
+  assert.ok(html.includes(translate('zh-CN', 'status.schedulerFailed', { error: 'scheduler stopped' })))
+})
+
+test('a late native status read cannot hide a newer persistence failure', async () => {
+  const app = await mountApp()
+  let resolveErrors
+  app.setInvoke('get_native_errors', () => new Promise((resolve) => { resolveErrors = resolve }))
+  const read = app.state.refreshNativeErrors()
+  await app.emit('persistence-failed', 'new failure')
+  resolveErrors({ persistenceError: null, schedulerError: null })
+  await read
+  assert.equal(app.state.persistenceError.value, 'new failure')
+})
+
 async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null } } = {}) {
   const settingsData = defaultData()
   settingsData.settings.restEnabled = enabled
@@ -550,7 +576,7 @@ test('window focus changes preserve the active backend break', async () => {
     const before = app.calls.length
     app.focus(focused)
     await new Promise(setImmediate)
-    assert.equal(app.calls.length, before + 1)
+    assert.deepEqual(app.calls.slice(before), ['get_rest_timer_status', 'get_native_errors'])
     assert.equal(app.state.restIsActive.value, true)
     assert.equal(app.state.nextRestTrigger.value, null)
   }

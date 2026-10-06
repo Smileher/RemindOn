@@ -327,6 +327,7 @@ struct NativeErrors {
     autostart_error: Option<String>,
     notification_error: Option<String>,
     persistence_error: Option<String>,
+    scheduler_error: Option<String>,
 }
 
 struct InnerState {
@@ -335,6 +336,8 @@ struct InnerState {
     paused: AtomicBool,
     scheduler_started: AtomicBool,
     scheduler_stop: AtomicBool,
+    // 故障原因独立保存，业务状态锁中毒也不能丢失停止原因。
+    scheduler_error: Mutex<Option<String>>,
     next_reminder_session: AtomicU64,
     power_action_session: AtomicU64,
     active_reminder: Mutex<Option<ReminderTriggeredEvent>>,
@@ -1357,27 +1360,35 @@ fn dispatch_trigger(
     Ok(())
 }
 
-fn process_due(app: &AppHandle, state: &AppState) {
-    if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.is_some() {
-        return;
+#[derive(Debug)]
+enum SchedulerError {
+    Persistence(String),
+    State(String),
+}
+
+fn process_due(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    if state.0.native_errors.lock().map_err(lock_error)?.persistence_error.is_some() {
+        return Ok(());
     }
     match collect_due_reminders(state, Local::now()) {
         Ok(events) => enqueue_reminders(state, events),
-        Err(error) => {
+        Err(SchedulerError::State(error)) => return Err(error),
+        Err(SchedulerError::Persistence(error)) => {
             eprintln!("Scheduler persistence failed: {error}");
-            state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error = Some(error.clone());
+            state.0.native_errors.lock().map_err(lock_error)?.persistence_error = Some(error.clone());
             let _ = report_native("Emit native event", app.emit_to("main", "persistence-failed", Some(error)));
-            return;
+            return Ok(());
         }
     }
     drain_reminder_queue(app, state);
+    Ok(())
 }
 
-fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<QueuedReminder>, String> {
+fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<QueuedReminder>, SchedulerError> {
     let mut triggered = Vec::new();
     let mut changed = false;
     {
-        let mut current = state.0.data.lock().map_err(lock_error)?;
+        let mut current = state.0.data.lock().map_err(|error| SchedulerError::State(lock_error(error)))?;
         let mut data = current.clone();
         for reminder in &mut data.reminders {
             if !reminder.enabled {
@@ -1422,16 +1433,16 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
         }
         // Commit scheduled deadlines before changing rest state or emitting any reminders.
         if changed {
-            commit_app_data(&state.0.data_path, &mut current, data.clone())?;
+            commit_app_data(&state.0.data_path, &mut current, data.clone()).map_err(SchedulerError::Persistence)?;
         }
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst)
-                && !state.0.reminder_queue.lock().map_err(lock_error)?.iter().any(|item| item.event.is_rest) {
+                && !state.0.reminder_queue.lock().map_err(|error| SchedulerError::State(lock_error(error)))?.iter().any(|item| item.event.is_rest) {
                 let due = {
                     let mut next_rest = state
                         .0
                         .rest_next
-                        .lock().map_err(lock_error)?;
+                        .lock().map_err(|error| SchedulerError::State(lock_error(error)))?;
                     if next_rest.is_none() {
                         *next_rest = Some(
                             now + Duration::minutes(data.settings.rest_interval_minutes as i64),
@@ -1461,7 +1472,7 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
                     *state
                         .0
                         .rest_next
-                        .lock().map_err(lock_error)? = None;
+                        .lock().map_err(|error| SchedulerError::State(lock_error(error)))? = None;
                     state.0.rest_round_pending.store(true, Ordering::SeqCst);
                 }
             }
@@ -1520,15 +1531,17 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
                     .window_operations
                     .lock().map_err(lock_error)?;
                 if !state.0.paused.load(Ordering::SeqCst) {
-                    process_due(&app, &state);
+                    process_due(&app, &state)?;
                 }
                 reclaim_idle_windows(&app, &state);
                 Ok(())
             });
             if let Err(error) = result {
                 eprintln!("Scheduler stopped: {error}");
-                state.0.scheduler_stop.store(true, Ordering::SeqCst);
-                let _ = report_native("Report scheduler failure", app.emit_to("main", "persistence-failed", Some(error)));
+                if let Err(record_error) = record_scheduler_failure(&state, &error) {
+                    eprintln!("Failed to record scheduler failure: {record_error}");
+                }
+                let _ = report_native("Report scheduler failure", app.emit_to("main", "scheduler-failed", &error));
                 break;
             }
             thread::sleep(SCHEDULER_INTERVAL);
@@ -1537,12 +1550,26 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
     });
 }
 
+fn record_scheduler_failure(state: &AppState, error: &str) -> Result<(), String> {
+    state.0.scheduler_stop.store(true, Ordering::SeqCst);
+    *state.0.scheduler_error.lock().map_err(lock_error)? = Some(error.to_string());
+    Ok(())
+}
+
+fn ensure_scheduler_healthy(state: &AppState) -> Result<(), String> {
+    match state.0.scheduler_error.lock().map_err(lock_error)?.as_ref() {
+        Some(error) => Err(format!("Scheduler stopped; restart the application: {error}")),
+        None => Ok(()),
+    }
+}
+
 #[tauri::command]
 async fn load_data(app: AppHandle, state: State<'_, AppState>) -> Result<AppData, String> {
     let state = state.inner().clone();
     blocking_command(move || {
         let data = state.0.data.lock().map_err(lock_error)?;
         if state.0.native_errors.lock().map_err(lock_error)?.persistence_error.is_some() {
+            ensure_scheduler_healthy(&state)?;
             write_json(&state.0.data_path, &data)?;
             clear_persistence_error(&app, &state);
         }
@@ -1643,6 +1670,7 @@ fn changed_reminder_ids(previous: &[Reminder], next: &[Reminder]) -> HashSet<Str
 
 #[tauri::command(rename = "start_scheduler")]
 fn start_scheduler_command(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    ensure_scheduler_healthy(&state)?;
     spawn_scheduler(app, state.inner().clone());
     Ok(())
 }
@@ -1834,7 +1862,9 @@ async fn get_rest_timer_status(state: State<'_, AppState>) -> Result<RestTimerSt
 
 #[tauri::command]
 fn get_native_errors(state: State<'_, AppState>) -> Result<NativeErrors, String> {
-    Ok(state.0.native_errors.lock().map_err(lock_error)?.clone())
+    let mut errors = state.0.native_errors.lock().map_err(lock_error)?.clone();
+    errors.scheduler_error = state.0.scheduler_error.lock().map_err(lock_error)?.clone();
+    Ok(errors)
 }
 
 #[cfg(target_os = "windows")]
@@ -2689,6 +2719,7 @@ pub fn run() {
                 paused: AtomicBool::new(false),
                 scheduler_started: AtomicBool::new(false),
                 scheduler_stop: AtomicBool::new(false),
+                scheduler_error: Mutex::new(None),
                 next_reminder_session: AtomicU64::new(0),
                 power_action_session: AtomicU64::new(0),
                 active_reminder: Mutex::new(None),
@@ -2865,6 +2896,23 @@ mod tests {
         assert!(error.contains("lock poisoned"));
         assert!(lock.is_poisoned());
         assert!(guarded::<()>(|| panic!("internal failure")).unwrap_err().contains("internal failure"));
+    }
+
+    #[test]
+    fn scheduler_fault_is_sticky_and_separate_from_persistence() {
+        let state = rest_state(true);
+        let _: Result<(), _> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _data = state.0.data.lock().unwrap();
+            panic!("simulated scheduler fault");
+        }));
+        let error = collect_due_reminders(&state, Local::now()).unwrap_err();
+        let SchedulerError::State(error) = error else { panic!("poisoned data must be a state error"); };
+        record_scheduler_failure(&state, &error).unwrap();
+        assert!(state.0.scheduler_stop.load(Ordering::SeqCst));
+        assert!(ensure_scheduler_healthy(&state).unwrap_err().contains("restart"));
+        assert!(state.0.native_errors.lock().unwrap().persistence_error.is_none());
+        assert_eq!(state.0.scheduler_error.lock().unwrap().as_deref(), Some(error.as_str()));
+        assert!(state.0.data.is_poisoned());
     }
 
     #[test]
@@ -3083,6 +3131,7 @@ mod tests {
             paused: AtomicBool::new(false),
             scheduler_started: AtomicBool::new(false),
             scheduler_stop: AtomicBool::new(false),
+            scheduler_error: Mutex::new(None),
             next_reminder_session: AtomicU64::new(0),
             power_action_session: AtomicU64::new(0),
             active_reminder: Mutex::new(None),
@@ -3535,7 +3584,7 @@ mod tests {
         once.next_trigger_at = once.trigger_at.clone();
         state.0.data.lock().unwrap().reminders = vec![once];
         *state.0.rest_next.lock().unwrap() = Some(now - Duration::seconds(5));
-        assert!(collect_due_reminders(&state, now).is_err());
+        assert!(matches!(collect_due_reminders(&state, now), Err(SchedulerError::Persistence(_))));
         let data = app_data(&state);
         assert!(data.reminders[0].enabled);
         assert!(data.reminders[0].next_trigger_at.is_some());
