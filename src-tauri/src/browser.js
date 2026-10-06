@@ -8,19 +8,22 @@
   ])
   const commandKeys = new Set(['p', 'r', 's', 'o', 'f', 'g', 'l', 'u', '+', '-', '=', '0', '[', ']'])
 
-  window.addEventListener('contextmenu', prevent, true)
+  const isEditable = (target) => target instanceof Element
+    && (target.closest('input, textarea') !== null || target.isContentEditable)
+  window.addEventListener('contextmenu', (event) => {
+    if (!isEditable(event.target)) event.preventDefault()
+  }, true)
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase()
     const command = event.metaKey || (!isMac && event.ctrlKey)
     const inspect = command && (event.shiftKey || event.altKey) && ['i', 'j', 'c', 'k'].includes(key)
-    const editable = event.target instanceof Element
-      && (event.target.closest('input, textarea') !== null || event.target.isContentEditable)
+    const editable = isEditable(event.target)
     // macOS 的 Option + 方向键用于按词移动，Command + 方向键用于行首行尾。
     const navigation = (!editable || !isMac)
       && ((event.altKey && ['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key))
         || (isMac && event.metaKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)))
-    if (browserKeys.has(event.key)
-      || (event.shiftKey && event.key === 'F10')
+    if ((browserKeys.has(event.key) && !(event.key === 'ContextMenu' && editable))
+      || (event.shiftKey && event.key === 'F10' && !editable)
       || (command && commandKeys.has(key))
       || inspect || navigation
       || (event.key === 'Backspace' && !editable)) {

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Download, Image, RotateCcw, Upload } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { AccentColor, AppSettings, Language, PopupBackgroundFit, Theme } from '../types'
+import type { AccentColor, AppSettings, Language, PopupBackgroundFit, SettingsTab, Theme } from '../types'
 import PopupBackground from './PopupBackground.vue'
 
 const props = defineProps<{
@@ -15,10 +15,11 @@ const props = defineProps<{
   actionMessage: string
   canReset: boolean
   backgroundPreview: string
-  initialTab?: 'general' | 'appearance' | 'popup' | 'notification' | 'data'
+  initialTab?: SettingsTab
 }>()
 
 const emit = defineEmits<{
+  'update:initialTab': [tab: SettingsTab]
   'update:setting': [key: keyof AppSettings, value: AppSettings[keyof AppSettings]]
   importData: []
   exportData: []
@@ -57,6 +58,8 @@ onMounted(() => {
 })
 onUnmounted(() => previewObserver?.disconnect())
 const activeTab = ref(props.initialTab || 'general')
+watch(() => props.initialTab, (tab) => { activeTab.value = tab || 'general' })
+watch(activeTab, (tab) => emit('update:initialTab', tab))
 const tabs = [
   { id: 'general', label: 'settings.groupGeneral' },
   { id: 'appearance', label: 'settings.groupAppearance' },
@@ -84,7 +87,7 @@ const imageControls = [
   { key: 'popupBackgroundOffsetY', label: 'settings.imageOffsetY', min: -50, max: 50 },
 ] as const
 
-function updateImageValue(key: typeof imageControls[number]['key'], event: Event, min: number, max: number) {
+function updateImageValue(key: typeof imageControls[number]['key'] | 'popupTitleSize' | 'popupOverlayOpacity', event: Event, min: number, max: number) {
   const value = Number((event.target as HTMLInputElement).value)
   if (Number.isFinite(value)) emit('update:setting', key, Math.round(Math.min(max, Math.max(min, value))))
 }
@@ -184,7 +187,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </template>
         <label class="slider-row">
           <span>{{ t('settings.popupOverlay') }}</span>
-          <input :value="settings.popupOverlayOpacity" :style="{ '--fill': `${settings.popupOverlayOpacity}%` }" type="range" min="0" max="100" step="5" @input="emit('update:setting', 'popupOverlayOpacity', Number(($event.target as HTMLInputElement).value))" />
+          <input :value="settings.popupOverlayOpacity" :style="{ '--fill': `${settings.popupOverlayOpacity}%` }" type="range" min="0" max="100" step="5" @input="updateImageValue('popupOverlayOpacity', $event, 0, 100)" />
           <em>{{ settings.popupOverlayOpacity }}%</em>
         </label>
       </div>
@@ -199,7 +202,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
             <input type="color" :aria-label="t('settings.popupText')" :value="settings.popupTextColor || '#f3f4f6'" @input="emit('update:setting', 'popupTextColor', ($event.target as HTMLInputElement).value)" />
             <button v-if="settings.popupTextColor" class="button" type="button" @click="emit('update:setting', 'popupTextColor', '')">{{ t('settings.popupResetColor') }}</button>
           </span>
-          <label class="number-field"><input :aria-label="t('settings.popupText')" :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="emit('update:setting', 'popupTitleSize', Number(($event.target as HTMLInputElement).value))" /><span>px</span></label>
+          <label class="number-field"><input :aria-label="t('settings.popupText')" :value="settings.popupTitleSize" type="number" min="20" max="72" step="1" @change="updateImageValue('popupTitleSize', $event, 20, 72)" /><span>px</span></label>
         </div>
       </div>
       <div class="popup-preview-section">

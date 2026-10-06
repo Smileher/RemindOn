@@ -7,6 +7,17 @@ export type AccentColor = 'mint' | 'blue' | 'violet' | 'amber'
 export type PowerAction = 'shutdown' | 'lock' | 'restart'
 export type TestReminderKind = 'event' | 'rest'
 export type PopupBackgroundFit = 'stretch' | 'contain'
+export type SettingsTab = 'general' | 'appearance' | 'popup' | 'notification' | 'data'
+
+export interface ReminderForm {
+  title: string
+  type: Exclude<ReminderType, 'interval'>
+  triggerAt: string
+  time: string
+  weekdays: number[]
+  monthDays: number[]
+  powerAction: PowerAction | null
+}
 
 export interface Reminder {
   id: string

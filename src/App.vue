@@ -6,7 +6,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, confirm, open, save } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { LockKeyhole, Power, RotateCw } from '@lucide/vue'
 import ReminderPopup from './components/ReminderPopup.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import EventsView from './components/EventsView.vue'
@@ -16,7 +15,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderTriggeredEvent, ReminderType, RestTimerStatus, TestReminderKind } from './types'
+import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderForm, ReminderTriggeredEvent, ReminderType, RestTimerStatus, SettingsTab, TestReminderKind } from './types'
 import { defaultData, defaultReminders } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -28,7 +27,7 @@ const isPopup = window.location.hash === '#/reminder'
 const isStoreBuild = typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__
 const data = ref<AppData>(defaultData())
 const currentView = ref<View>('rest')
-const settingsTab = ref<'general' | 'popup'>('general')
+const settingsTab = ref<SettingsTab>('general')
 const showForm = ref(false)
 const editingId = ref<string | null>(null)
 const actionMessage = ref('')
@@ -90,10 +89,10 @@ const frequencyOptions = computed<Array<{ value: EditableReminderType; label: st
   { value: 'monthly', label: t('frequency.monthly') },
 ])
 
-const powerActionOptions = computed<Array<{ value: AutomaticPowerAction; label: string; icon: typeof Power }>>(() => [
-  { value: 'shutdown', label: t('power.shutdown'), icon: Power },
-  { value: 'lock', label: t('power.lock'), icon: LockKeyhole },
-  { value: 'restart', label: t('power.restart'), icon: RotateCw },
+const powerActionOptions = computed<Array<{ value: AutomaticPowerAction; label: string }>>(() => [
+  { value: 'shutdown', label: t('power.shutdown') },
+  { value: 'lock', label: t('power.lock') },
+  { value: 'restart', label: t('power.restart') },
 ])
 const accentColors: AccentColor[] = ['mint', 'blue', 'violet', 'amber']
 
@@ -107,7 +106,7 @@ const typeLabels = computed<Record<ReminderType, string>>(() => ({
   interval: t('frequency.interval'),
 }))
 
-const form = reactive({
+const form = reactive<ReminderForm>({
   title: '',
   type: 'once' as EditableReminderType,
   triggerAt: '',
@@ -174,7 +173,7 @@ const updateStatusText = computed(() => {
   return t('update.idle')
 })
 
-function patchForm(patch: Record<string, unknown>) {
+function patchForm(patch: Partial<ReminderForm>) {
   Object.assign(form, patch)
 }
 
@@ -700,6 +699,7 @@ onMounted(async () => {
     unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       try {
         data.value = await invoke<AppData>('load_data')
+        restMessageDraft.value = data.value.settings.restMessage
       } catch {
         // Keep the current data while the backend is temporarily unavailable.
       }
@@ -816,7 +816,7 @@ onUnmounted(() => {
         v-else-if="currentView === 'settings'"
         :language="data.settings.language"
         :settings="data.settings"
-        :initial-tab="settingsTab"
+        v-model:initial-tab="settingsTab"
         :accent-colors="accentColors"
         :autostart-error="autostartError"
         :notification-error="notificationError"

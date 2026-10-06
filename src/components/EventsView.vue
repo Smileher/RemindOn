@@ -2,18 +2,18 @@
 import { CalendarClock, Check, Pencil, Play, Plus, Trash2, X } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
-import type { Language, PowerAction, Reminder, ReminderType } from '../types'
+import type { Language, PowerAction, Reminder, ReminderForm, ReminderType } from '../types'
 
 const props = defineProps<{
   language: Language
   subtitle: string
   showForm: boolean
   editingId: string | null
-  form: { title: string; type: ReminderType; triggerAt: string; time: string; weekdays: number[]; monthDays: number[]; powerAction: PowerAction | null }
-  powerActionOptions: { value: PowerAction; label: string; icon: unknown }[]
-  frequencyOptions: { value: ReminderType; label: string }[]
+  form: ReminderForm
+  powerActionOptions: { value: PowerAction; label: string }[]
+  frequencyOptions: { value: ReminderForm['type']; label: string }[]
   weekdayOptions: { value: number; label: string }[]
-  typeLabels: Record<string, string>
+  typeLabels: Record<ReminderType, string>
   reminders: Reminder[]
   actionMessage: string
   formatNext: (reminder: Reminder) => string
@@ -25,7 +25,7 @@ const emit = defineEmits<{
   add: []
   closeForm: []
   save: []
-  'update:form': [patch: Record<string, unknown>]
+  'update:form': [patch: Partial<ReminderForm>]
   toggleWeekday: [day: number]
   toggleMonthDay: [day: number]
   toggleReminder: [reminder: Reminder]
@@ -96,7 +96,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <small v-if="actionMessage" class="status-message form-message">{{ actionMessage }}</small>
       <label class="field">
         <span>{{ t('events.action') }}</span>
-        <select :value="form.powerAction || ''" @change="emit('update:form', { powerAction: ($event.target as HTMLSelectElement).value || null })">
+        <select :value="form.powerAction || ''" @change="emit('update:form', { powerAction: (($event.target as HTMLSelectElement).value || null) as PowerAction | null })">
           <option value="">{{ t('events.noAction') }}</option>
           <option v-for="option in powerActionOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>

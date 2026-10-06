@@ -47,9 +47,8 @@ function installPolicy(platform = 'Win32') {
 test('Windows browser shortcuts are blocked even inside inputs', () => {
   const policy = installPolicy()
   const shortcuts = [
-    ...['F1', 'F3', 'F5', 'F6', 'F7', 'F11', 'F12', 'ContextMenu', 'BrowserBack', 'BrowserForward',
+    ...['F1', 'F3', 'F5', 'F6', 'F7', 'F11', 'F12', 'BrowserBack', 'BrowserForward',
       'BrowserRefresh', 'BrowserStop', 'BrowserSearch', 'BrowserFavorites', 'BrowserHome'].map((key) => ({ key })),
-    { key: 'F10', shiftKey: true },
     ...['ArrowLeft', 'ArrowRight', 'Home'].map((key) => ({ key, altKey: true })),
     ...['ctrlKey', 'metaKey'].flatMap((modifier) => [
       ...['p', 'r', 's', 'o', 'f', 'g', 'l', 'u', '+', '-', '=', '0', '[', ']']
@@ -128,4 +127,13 @@ test('context menus, zoom gestures, auxiliary mouse actions, drops and printing 
   }
   policy.window.print()
   assert.equal(policy.prints(), 0)
+})
+
+test('editable targets keep pointer and keyboard context menus', () => {
+  const policy = installPolicy()
+  for (const target of [policy.input, policy.contentEditable]) {
+    assert.equal(policy.dispatch('contextmenu', { target }).defaultPrevented, false)
+    assert.equal(policy.dispatch('keydown', { target, key: 'ContextMenu' }).defaultPrevented, false)
+    assert.equal(policy.dispatch('keydown', { target, key: 'F10', shiftKey: true }).defaultPrevented, false)
+  }
 })

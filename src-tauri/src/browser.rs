@@ -14,7 +14,8 @@ pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
                 // Tauri 将回调调度到 WebView 所属线程，COM 对象仅在此回调内使用。
                 unsafe {
                     let settings = platform.controller().CoreWebView2()?.Settings()?;
-                    settings.SetAreDefaultContextMenusEnabled(false)?;
+                    // DOM policy blocks non-editable targets while preserving input editing menus.
+                    settings.SetAreDefaultContextMenusEnabled(true)?;
                     settings
                         .cast::<ICoreWebView2Settings3>()?
                         .SetAreBrowserAcceleratorKeysEnabled(false)?;
