@@ -60,7 +60,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <div class="setting-card">
         <div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div>
         <label class="number-field">
-          <input :value="intervalMinutes" type="number" min="1" max="1440" @input="emit('update:interval', ($event.target as HTMLInputElement).value)" />
+          <input :value="intervalMinutes" type="number" min="1" max="1440" @change="emit('update:interval', ($event.target as HTMLInputElement).value)" />
           <span>{{ t('common.minutes') }}</span>
         </label>
       </div>

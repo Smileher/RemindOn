@@ -36,6 +36,26 @@ test('settings tabs follow navigation and numeric settings clamp before emitting
   assert.deepEqual(emitted.at(-1), ['update:setting', 'popupTitleSize', 72])
   state.updateImageValue('popupOverlayOpacity', { target: { value: '-1' } }, 0, 100)
   assert.deepEqual(emitted.at(-1), ['update:setting', 'popupOverlayOpacity', 0])
+  const beforeRangeCommit = emitted.length
+  for (const value of ['20', '35', '55']) {
+    state.updateImageValue('popupOverlayOpacity', { target: { value } }, 0, 100, true)
+  }
+  assert.equal(emitted.length, beforeRangeCommit)
+  assert.equal(state.previewSettings.value.popupOverlayOpacity, 55)
+  assert.equal(props.settings.popupOverlayOpacity, defaultData().settings.popupOverlayOpacity)
+  state.updateImageValue('popupOverlayOpacity', { target: { value: '55' } }, 0, 100)
+  assert.equal(emitted.length, beforeRangeCommit + 1)
+  assert.deepEqual(emitted.at(-1), ['update:setting', 'popupOverlayOpacity', 55])
+  props.settings.popupOverlayOpacity = 35
+  await vue.nextTick()
+  assert.equal(state.previewSettings.value.popupOverlayOpacity, 35)
+  const beforeColorCommit = emitted.length
+  state.updateTextColor({ target: { value: '#abcdef' } }, true)
+  assert.equal(emitted.length, beforeColorCommit)
+  assert.equal(state.previewSettings.value.popupTextColor, '#abcdef')
+  state.updateTextColor({ target: { value: '#abcdef' } })
+  assert.deepEqual(emitted.at(-1), ['update:setting', 'popupTextColor', '#abcdef'])
+  assert.equal(state.previewSettings.value.popupTextColor, props.settings.popupTextColor)
   const count = emitted.length
   state.updateImageValue('popupTitleSize', { target: { value: 'NaN' } }, 20, 72)
   assert.equal(emitted.length, count)
