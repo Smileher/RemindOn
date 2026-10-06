@@ -1160,7 +1160,17 @@ async fn toggle_popup_fullscreen(
         if let Some(mut event) = active {
             event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
             activate_reminder_session(&app, &state, event.clone());
-            let labels = prepare_reminder_windows(&app, &state, &settings)?;
+            let labels = match prepare_reminder_windows(&app, &state, &settings) {
+                Ok(labels) => labels,
+                Err(error) => {
+                    if event.is_rest && complete_rest_round(&state) {
+                        emit_rest_timer_updated(&app, &state);
+                    }
+                    close_reminder_session(&app, &state, event.session_id);
+                    let _ = report_native("Report popup mode failure", app.emit_to("main", "notification-failed", &error));
+                    return Err(error);
+                }
+            };
             for label in labels {
                 if app.get_webview_window(&label).is_some() {
                     let _ = report_native("Emit native event", app.emit_to(&label, "reminder-triggered", event.clone()));

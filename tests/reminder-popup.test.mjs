@@ -55,6 +55,23 @@ test('mode changes preserve the rest start and automatic power deadline', async 
   assert.equal(power.calls.filter((name) => name === 'execute_power_action').length, 1)
 })
 
+test('failed mode preparation cannot restore the closed reminder or its timer', async () => {
+  const popup = await mountPopup()
+  await popup.state.handleTrigger(restEvent)
+  popup.setInvoke('toggle_popup_fullscreen', async () => {
+    await popup.emitTo('reminder', 'reminder-closed', restEvent.sessionId)
+    await popup.emitTo('reminder', 'reminder-closed', restEvent.sessionId + 1)
+    throw new Error('window preparation failed')
+  })
+  await popup.state.toggleFullscreenMode()
+  assert.equal(popup.state.current.value, null)
+  assert.equal(popup.intervals.size, 0)
+  await popup.state.handleTrigger(restEvent)
+  assert.equal(popup.state.current.value, null)
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 3 })
+  assert.equal(popup.state.current.value.sessionId, 3)
+})
+
 test('image changes refresh cached popups without rereading images for settings', async () => {
   const popup = await mountPopup()
   const reads = popup.calls.filter((name) => name === 'read_popup_image').length
