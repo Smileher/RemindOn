@@ -375,6 +375,12 @@ fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
     atomic_write(path, content.as_bytes()).map_err(|error| format!("Failed to save settings: {error}"))
 }
 
+fn commit_app_data(path: &Path, current: &mut AppData, candidate: AppData) -> Result<(), String> {
+    write_json(path, &candidate)?;
+    *current = candidate;
+    Ok(())
+}
+
 fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
     let name = path.file_name().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing file name"))?;
@@ -1139,9 +1145,10 @@ async fn toggle_popup_fullscreen(
             .window_operations
             .lock().map_err(lock_error)?;
         let mut data = state.0.data.lock().map_err(lock_error)?;
-        data.settings.popup_fullscreen = !data.settings.popup_fullscreen;
+        let mut candidate = data.clone();
+        candidate.settings.popup_fullscreen = !candidate.settings.popup_fullscreen;
+        commit_app_data(&state.0.data_path, &mut data, candidate)?;
         let settings = data.settings.clone();
-        write_json(&state.0.data_path, &data)?;
         drop(data);
         sync_reminder_settings(&app, &settings);
         let _ = report_native("Emit native event", app.emit_to("main", "popup-fullscreen-updated", settings.popup_fullscreen));
@@ -1405,8 +1412,7 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
         }
         // Commit scheduled deadlines before changing rest state or emitting any reminders.
         if changed {
-            write_json(&state.0.data_path, &data)?;
-            *current = data.clone();
+            commit_app_data(&state.0.data_path, &mut current, data.clone())?;
         }
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst)
@@ -1562,8 +1568,7 @@ async fn save_data(
             current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
         let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
         let autostart_changed = current.settings.autostart != data.settings.autostart;
-        write_json(&state.0.data_path, &data)?;
-        *current = data.clone();
+        commit_app_data(&state.0.data_path, &mut current, data.clone())?;
         clear_persistence_error(&app, &state);
         if rest_enabled_changed && !data.settings.rest_enabled {
             state.0.rest_active.store(false, Ordering::SeqCst);
@@ -1674,10 +1679,11 @@ async fn snooze_reminder(
         }
         let mut data = state.0.data.lock().map_err(lock_error)?;
         let delay = Duration::seconds(seconds.max(1) as i64);
-        if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
+        let mut candidate = data.clone();
+        if let Some(reminder) = candidate.reminders.iter_mut().find(|item| item.id == id) {
             reminder.enabled = true;
             reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
-            write_json(&state.0.data_path, &data)?;
+            commit_app_data(&state.0.data_path, &mut data, candidate)?;
         }
         drop(data);
         close_reminder_session(&app, &state, session_id);
@@ -2016,8 +2022,7 @@ async fn import_data(
             .lock().map_err(lock_error)?;
         let data = read_import_file(&path)?;
         let mut current = state.0.data.lock().map_err(lock_error)?;
-        write_json(&state.0.data_path, &data)?;
-        *current = data.clone();
+        commit_app_data(&state.0.data_path, &mut current, data.clone())?;
         state.0.rest_active.store(false, Ordering::SeqCst);
         state.0.rest_round_pending.store(false, Ordering::SeqCst);
         *state
@@ -2850,6 +2855,19 @@ mod tests {
         assert!(error.contains("lock poisoned"));
         assert!(lock.is_poisoned());
         assert!(guarded::<()>(|| panic!("internal failure")).unwrap_err().contains("internal failure"));
+    }
+
+    #[test]
+    fn failed_mode_or_snooze_write_does_not_commit_the_candidate() {
+        let mut current = AppData::default();
+        let mut candidate = current.clone();
+        candidate.settings.popup_fullscreen = !current.settings.popup_fullscreen;
+        candidate.reminders[0].enabled = true;
+        candidate.reminders[0].next_trigger_at = Some(Local::now().to_rfc3339());
+        assert!(commit_app_data(Path::new(""), &mut current, candidate).is_err());
+        assert_eq!(current.settings.popup_fullscreen, AppData::default().settings.popup_fullscreen);
+        assert!(!current.reminders[0].enabled);
+        assert!(current.reminders[0].next_trigger_at.is_none());
     }
 
     #[test]
