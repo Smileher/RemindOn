@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import https from 'node:https'
+import { EventEmitter } from 'node:events'
 import { createGiteeManifest, syncGiteeRelease } from '../scripts/sync-gitee-release.mjs'
 
 const version = '0.8.0'
@@ -56,9 +58,15 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
   let existingAssets = []
   let releaseExists = false
   let corruptDownload = false
+  let transientDownload = false
+  let lostManifestResponse = false
   const fetchImpl = async (url, options = {}) => {
     if (new URL(url).pathname.startsWith('/smileher/RemindOn/releases/download/')) {
       const name = new URL(url).pathname.split('/').at(-1)
+      if (transientDownload) {
+        transientDownload = false
+        return new Response('unavailable', { status: 503 })
+      }
       return new Response(corruptDownload ? 'invalid file' : remoteBytes.get(name))
     }
     const path = new URL(url).pathname.replace('/api/v5/repos/smileher/RemindOn', '') || ''
@@ -72,6 +80,10 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
       remoteBytes.set(file.name, await file.arrayBuffer())
       const asset = { id: uploaded.length, name: file.name, browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/${file.name}` }
       existingAssets.push(asset)
+      if (file.name === 'latest.json' && lostManifestResponse) {
+        lostManifestResponse = false
+        throw new Error('connection reset after upload completed')
+      }
       return Response.json(asset)
     }
     if (options.method === 'DELETE') {
@@ -100,6 +112,15 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
   await syncGiteeRelease(options)
   assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json'].sort())
   assert.equal(existingAssets.length, selectedNames.length + 1)
+  transientDownload = true
+  lostManifestResponse = true
+  await syncGiteeRelease(options)
+  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json', 'latest.json'].sort())
+  assert.equal(existingAssets.length, selectedNames.length + 1)
+  remoteBytes.set(selectedNames[0], Buffer.from('partial attachment'))
+  await syncGiteeRelease(options)
+  assert.equal(Buffer.from(remoteBytes.get(selectedNames[0])).toString('utf8'), selectedNames[0])
+  assert.equal(existingAssets.filter((asset) => asset.name === selectedNames[0]).length, 1)
   corruptDownload = true
   // 并发下所有资产同时校验失败，错误按数量聚合；具体原因仍逐条打印。
   await assert.rejects(syncGiteeRelease(options), (error) => {
@@ -107,6 +128,56 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
     return true
   })
   assert.equal(existingAssets.length, selectedNames.length + 1)
+})
+}
+
+for (const failure of ['response error', 'aborted response', 'deadline']) {
+test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout: 2000 }, async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'remindon-gitee-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  for (const name of names) await writeFile(join(directory, name), name)
+  const assets = names.map((name, id) => ({ id, name, browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/${name}` }))
+  let manifestBytes
+  let uploadCount = 0
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  context.mock.method(globalThis, 'fetch', async (url) => {
+    const parsed = new URL(url)
+    if (parsed.pathname.includes('/releases/download/')) {
+      const name = parsed.pathname.split('/').at(-1)
+      return new Response(name === 'latest.json' ? manifestBytes : name)
+    }
+    if (parsed.pathname.endsWith('/attach_files')) return Response.json(assets)
+    if (parsed.pathname.endsWith('/releases')) return Response.json([{ id: 42, tag_name: `v${version}` }])
+    return Response.json({ default_branch: 'master' })
+  })
+  context.mock.method(https, 'request', (_url, _options, callback) => {
+    uploadCount += 1
+    const request = new EventEmitter()
+    request.destroy = (error) => request.emit('error', error)
+    request.end = (body) => {
+      const text = body.toString('utf8')
+      manifestBytes = Buffer.from(text.split('Content-Type: application/octet-stream\r\n\r\n')[1].split('\r\n--')[0], 'utf8')
+      assets.push({ id: 100, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` })
+      queueMicrotask(() => {
+        if (failure === 'deadline') {
+          context.mock.timers.tick(8 * 60 * 1000)
+          return
+        }
+        const response = new EventEmitter()
+        callback(response)
+        if (failure === 'response error') response.emit('error', new Error('connection reset'))
+        else response.emit('aborted')
+      })
+    }
+    return request
+  })
+  const result = await syncGiteeRelease({
+    tag: `v${version}`, githubRelease: { tag_name: `v${version}`, assets: names.map((name) => ({ name })) },
+    githubManifest: manifest(), assetDir: directory, token: 'test-token',
+  })
+  assert.equal(result.assetCount, names.length)
+  assert.equal(uploadCount, 1)
+  assert.equal(assets.filter((asset) => asset.name === 'latest.json').length, 1)
 })
 }
 

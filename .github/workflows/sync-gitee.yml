@@ -1,6 +1,9 @@
 name: Retry Gitee release sync
 
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -17,21 +20,25 @@ permissions:
   contents: read
 
 concurrency:
-  group: gitee-sync-${{ inputs.tag }}
+  group: gitee-sync-${{ inputs.tag || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   sync:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Test Gitee release sync
+        run: node --test tests/sync-gitee.test.mjs
       - name: Download published assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
           gh release download "$TAG" --pattern '*.exe' --pattern '*.dmg' --pattern '*.app.tar.gz' --dir assets
@@ -39,7 +46,7 @@ jobs:
       - name: Sync Gitee release
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
           LEGACY_X64: ${{ inputs.legacy_x64 }}
         run: |
           options=()

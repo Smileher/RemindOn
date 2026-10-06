@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url'
 const api = 'https://gitee.com/api/v5/repos/smileher/RemindOn'
 // Gitee 会掐断长时间的上传连接；超时过长只会让整个 job 挂到 GitHub 的6 小时上限。
 const requestTimeoutMs = 3 * 60 * 1000
+// socket timeout 只检测空闲连接；上传持续有数据但迟迟不结束时仍会无限等待。
+const uploadDeadlineMs = 8 * 60 * 1000
 // 整轮镜像的总预算，防止个别资产反复重试把 workflow拖死。
 const syncDeadlineMs = 25 * 60 * 1000
 const assetNames = (version, legacyX64) => [
@@ -24,6 +26,20 @@ async function request(fetchImpl, token, path, { method = 'GET', body } = {}) {
   const response = await fetchImpl(url, { method, body, signal: AbortSignal.timeout(requestTimeoutMs) })
   if (!response.ok) throw new Error(`Gitee API ${method} ${path} returned HTTP ${response.status}`)
   return response.status === 204 ? null : response.json()
+}
+
+async function downloadWithRetry(fetchImpl, url, name) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(requestTimeoutMs) })
+      if (!response.ok) throw new Error(`Gitee anonymous download failed for ${name}: HTTP ${response.status}`)
+      return Buffer.from(await response.arrayBuffer())
+    } catch (error) {
+      if (attempt === 3) throw error
+      console.warn(`Retrying Gitee download ${name} (attempt ${attempt}/3): ${error.message}`)
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5000))
+    }
+  }
 }
 
 async function upload(fetchImpl, token, releaseId, name, bytes) {
@@ -50,7 +66,13 @@ async function uploadWithRetry(fetchImpl, token, releaseId, name, bytes) {
       try {
         const existing = await request(fetchImpl, token, `/releases/${releaseId}/attach_files?per_page=100`)
         const uploaded = existing.find((asset) => asset.name === name)
-        if (uploaded) return uploaded
+        if (uploaded) {
+          const downloaded = await downloadWithRetry(fetchImpl, uploaded.browser_download_url, name)
+          const actual = createHash('sha256').update(downloaded).digest('hex')
+          const expected = createHash('sha256').update(bytes).digest('hex')
+          if (actual === expected) return uploaded
+          await request(fetchImpl, token, `/releases/${releaseId}/attach_files/${uploaded.id}`, { method: 'DELETE' })
+        }
       } catch {
         // Keep the original upload error if the recovery lookup also fails.
       }
@@ -75,6 +97,14 @@ function uploadWithHttps(token, releaseId, name, bytes) {
   const body = Buffer.concat([prefix, Buffer.from(bytes), suffix])
   const url = new URL(`${api}/releases/${releaseId}/attach_files`)
   return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (error, asset) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      if (error) reject(error)
+      else resolve(asset)
+    }
     const request = https.request(url, {
       method: 'POST',
       headers: {
@@ -84,24 +114,29 @@ function uploadWithHttps(token, releaseId, name, bytes) {
       timeout: requestTimeoutMs,
     }, (response) => {
       const chunks = []
+      response.on('error', (error) => finish(error))
+      response.on('aborted', () => finish(new Error(`Gitee upload response aborted: ${name}`)))
       response.on('data', (chunk) => chunks.push(chunk))
       response.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8')
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          reject(new Error(`Gitee API POST /releases/${releaseId}/attach_files returned HTTP ${response.statusCode}`))
+          finish(new Error(`Gitee API POST /releases/${releaseId}/attach_files returned HTTP ${response.statusCode}`))
           return
         }
         try {
           const asset = JSON.parse(text)
           if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
-          resolve(asset)
+          finish(null, asset)
         } catch (error) {
-          reject(error)
+          finish(error)
         }
       })
     })
     request.on('timeout', () => request.destroy(new Error(`Gitee upload timed out: ${name}`)))
-    request.on('error', reject)
+    request.on('error', (error) => finish(error))
+    const deadline = setTimeout(() => {
+      request.destroy(new Error(`Gitee upload exceeded ${uploadDeadlineMs / 60000} minute deadline: ${name}`))
+    }, uploadDeadlineMs)
     request.end(body)
   })
 }
@@ -159,11 +194,20 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     }
     const url = assets.get(name)?.browser_download_url
     if (!url || new URL(url).protocol !== 'https:') throw new Error(`Gitee download URL is missing or invalid: ${name}`)
-    const downloaded = await fetchImpl(url, { signal: AbortSignal.timeout(requestTimeoutMs) })
-    if (!downloaded.ok) throw new Error(`Gitee anonymous download failed for ${name}: HTTP ${downloaded.status}`)
+    console.log(`Verifying Gitee asset: ${name}`)
+    let downloaded = await downloadWithRetry(fetchImpl, url, name)
     const expected = createHash('sha256').update(bytes).digest('hex')
-    const actual = createHash('sha256').update(Buffer.from(await downloaded.arrayBuffer())).digest('hex')
+    let actual = createHash('sha256').update(downloaded).digest('hex')
+    if (actual !== expected) {
+      // 修复上次中断留下的同名附件；仍以 GitHub 文件的 SHA256 为准。
+      console.warn(`Replacing corrupt Gitee asset: ${name}`)
+      await request(fetchImpl, token, `/releases/${release.id}/attach_files/${assets.get(name).id}`, { method: 'DELETE' })
+      assets.set(name, await uploadWithRetry(fetchImpl, token, release.id, name, bytes))
+      downloaded = await downloadWithRetry(fetchImpl, assets.get(name).browser_download_url, name)
+      actual = createHash('sha256').update(downloaded).digest('hex')
+    }
     if (actual !== expected) throw new Error(`Gitee asset SHA256 does not match GitHub: ${name}`)
+    console.log(`Verified Gitee asset: ${name}`)
     return name
   }))
   const failed = outcomes.filter((outcome) => outcome.status === 'rejected')
@@ -175,9 +219,9 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
   if (previousManifest) {
     await request(fetchImpl, token, `/releases/${release.id}/attach_files/${previousManifest.id}`, { method: 'DELETE' })
   }
-  const uploadedManifest = await upload(fetchImpl, token, release.id, 'latest.json', manifestBytes)
-  const downloadedManifest = await fetchImpl(uploadedManifest.browser_download_url, { signal: AbortSignal.timeout(requestTimeoutMs) })
-  if (!downloadedManifest.ok || !manifestBytes.equals(Buffer.from(await downloadedManifest.arrayBuffer()))) {
+  const uploadedManifest = await uploadWithRetry(fetchImpl, token, release.id, 'latest.json', manifestBytes)
+  const downloadedManifest = await downloadWithRetry(fetchImpl, uploadedManifest.browser_download_url, 'latest.json')
+  if (!manifestBytes.equals(downloadedManifest)) {
     throw new Error('Gitee latest.json is not anonymously downloadable or does not match the generated manifest')
   }
   return { releaseId: release.id, assetCount: names.length }

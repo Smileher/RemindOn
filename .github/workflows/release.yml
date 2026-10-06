@@ -158,28 +158,3 @@ jobs:
           node scripts/create-updater-manifest.mjs "$VERSION" release.json signatures checksums latest.json
           gh release upload "$TAG" latest.json --clobber
           gh release edit "$TAG" --draft=false --latest
-
-  sync-gitee:
-    needs: [prepare, publish]
-    runs-on: ubuntu-latest
-    # Gitee 只是镜像源；不可用时不应把整个 Release 判为失败，否则会连带阻塞官网发布。
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Download published assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release view "$TAG" --json tagName,body,assets > github-release.json
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
-          gh release download "$TAG" --pattern '*.exe' --pattern '*.dmg' --pattern '*.app.tar.gz' --dir assets
-          gh release download "$TAG" --pattern 'latest.json' --dir assets
-      - name: Sync Gitee release
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: node scripts/sync-gitee-release.mjs "$TAG" release.json assets/latest.json assets
