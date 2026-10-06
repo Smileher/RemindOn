@@ -495,7 +495,7 @@ async function pickPopupImage() {
     actionMessage.value = t('status.imageSaved')
   } catch (error) {
     logError('pick popup image', error)
-    actionMessage.value = t('status.imageFailed')
+    actionMessage.value = t('status.imageImportFailed', { error: formatError(error) })
   }
 }
 

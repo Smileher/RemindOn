@@ -2,7 +2,7 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -37,6 +37,7 @@ const MAIN_WINDOW_WIDTH: f64 = 780.0;
 const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
 const POWER_COMMAND_TIMEOUT: StdDuration = StdDuration::from_secs(10);
+const MAX_POPUP_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// 窗口背景色需与前端 `--page-bg` 保持一致。
 ///
@@ -2005,10 +2006,30 @@ async fn import_popup_image(
         .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
     // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
     let target = directory.join("popup-background.img");
-    let bytes = fs::read(&origin).map_err(|error| format!("Failed to read the image: {error}"))?;
-    let mime = image_mime(&bytes)?;
-    fs::write(&target, &bytes).map_err(|error| format!("Failed to save the image: {error}"))?;
+    let data_url = save_popup_image(&origin, &target)?;
     emit_to_reminder_windows(&app, "popup-image-updated", ());
+    Ok(data_url)
+}
+
+fn read_bounded_image(path: &Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(path).map_err(|error| format!("Failed to open image: {error}"))?;
+    if file.metadata().map_err(|error| error.to_string())?.len() > MAX_POPUP_IMAGE_BYTES {
+        return Err("Image must not exceed 10 MiB".to_string());
+    }
+    let mut bytes = Vec::new();
+    // Also bound the actual read in case the file grows after the metadata check.
+    file.take(MAX_POPUP_IMAGE_BYTES + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_POPUP_IMAGE_BYTES {
+        return Err("Image must not exceed 10 MiB".to_string());
+    }
+    Ok(bytes)
+}
+
+fn save_popup_image(origin: &Path, target: &Path) -> Result<String, String> {
+    image_extension(origin)?;
+    let bytes = read_bounded_image(origin)?;
+    let mime = image_mime(&bytes)?;
+    atomic_write(target, &bytes).map_err(|error| format!("Failed to save image: {error}"))?;
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
@@ -2070,7 +2091,7 @@ async fn read_popup_image(
     if !target.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(&target).map_err(|error| format!("Failed to read the image: {error}"))?;
+    let bytes = read_bounded_image(&target)?;
     let mime = image_mime(&bytes)?;
     Ok(Some(format!(
         "data:{};base64,{}",
@@ -2692,6 +2713,29 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_limit_accepts_boundary_and_preserves_existing_image_on_failure() {
+        let directory = std::env::temp_dir().join(format!("remindon-image-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("source.png");
+        let target = directory.join("popup-background.img");
+        fs::write(&target, b"original").unwrap();
+        let mut file = fs::File::create(&source).unwrap();
+        file.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
+        file.set_len(MAX_POPUP_IMAGE_BYTES).unwrap();
+        assert_eq!(read_bounded_image(&source).unwrap().len() as u64, MAX_POPUP_IMAGE_BYTES);
+        file.set_len(MAX_POPUP_IMAGE_BYTES + 1).unwrap();
+        drop(file);
+        assert!(save_popup_image(&source, &target).unwrap_err().contains("10 MiB"));
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        fs::write(&source, b"invalid").unwrap();
+        assert!(save_popup_image(&source, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        fs::remove_file(source).unwrap();
+        fs::remove_file(target).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
 
     #[test]
     fn system_command_reports_nonzero_exit_and_timeout() {
