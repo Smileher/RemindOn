@@ -424,11 +424,20 @@ fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
 }
 
 fn corrupt_backup_path(path: &Path) -> PathBuf {
+    backup_path(path, "corrupt")
+}
+
+// 旧版本配置是可用的用户数据，单独标记以区别于解析失败产生的损坏文件。
+fn unsupported_backup_path(path: &Path) -> PathBuf {
+    backup_path(path, "unsupported")
+}
+
+fn backup_path(path: &Path, kind: &str) -> PathBuf {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or_default();
-    PathBuf::from(format!("{}.corrupt.{seconds}", path.display()))
+    PathBuf::from(format!("{}.{kind}.{seconds}", path.display()))
 }
 
 fn load_json(path: &Path) -> Result<AppData, String> {
@@ -440,6 +449,11 @@ fn load_json(path: &Path) -> Result<AppData, String> {
     match serde_json::from_str::<AppData>(&content) {
         Ok(data) if data.version == DATA_VERSION => Ok(data),
         Ok(_) => {
+            // 旧版本配置本身是有效数据，先备份再重写，避免降级时提醒不可恢复地丢失。
+            let backup = unsupported_backup_path(path);
+            fs::rename(path, &backup).map_err(|rename_error| {
+                format!("Failed to preserve unsupported settings: {rename_error}")
+            })?;
             let defaults = AppData::default();
             write_json(path, &defaults)?;
             Ok(defaults)
@@ -3655,12 +3669,40 @@ mod tests {
         let path = directory.join("remindon.json");
         let mut old = AppData::default();
         old.version = DATA_VERSION - 1;
+        let preset_count = old.reminders.len();
+        old.reminders.push(Reminder {
+            id: "keep-me".to_string(),
+            title: "旧版本提醒".to_string(),
+            reminder_type: ReminderType::Once,
+            trigger_at: Some("2026-10-06T08:00:00+08:00".to_string()),
+            time: None,
+            weekdays: Vec::new(),
+            month_days: Vec::new(),
+            enabled: true,
+            power_action: None,
+            next_trigger_at: None,
+        });
         write_json(&path, &old).unwrap();
         assert_eq!(load_json(&path).unwrap().version, DATA_VERSION);
         let saved: AppData = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved.version, DATA_VERSION);
-        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        // 旧配置是有效用户数据，必须留下备份，否则降级会不可恢复地丢失提醒。
+        let backups: Vec<PathBuf> = fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|item| item.path()))
+            .filter(|item| item.to_string_lossy().contains(".unsupported."))
+            .collect();
+        assert_eq!(backups.len(), 1, "the unsupported configuration must be preserved exactly once");
+        let preserved: AppData =
+            serde_json::from_str(&fs::read_to_string(&backups[0]).unwrap()).unwrap();
+        assert_eq!(preserved.version, DATA_VERSION - 1);
+        // 预设提醒之外，用户的自定义提醒也必须完整留在备份里。
+        assert_eq!(preserved.reminders.len(), preset_count + 1);
+        assert!(preserved.reminders.iter().any(|item| item.id == "keep-me"));
         fs::remove_file(path).unwrap();
+        for backup in backups {
+            fs::remove_file(backup).unwrap();
+        }
         fs::remove_dir(directory).unwrap();
     }
 
