@@ -3023,6 +3023,16 @@ mod tests {
     }
 
     #[test]
+    fn image_extensions_and_base64_encoding_are_stable() {
+        assert_eq!(image_extension(Path::new("photo.PNG")).unwrap(), "png");
+        assert_eq!(image_extension(Path::new("photo.jpeg")).unwrap(), "jpeg");
+        assert!(image_extension(Path::new("photo.svg")).is_err());
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+        assert_eq!(base64_encode(b"Ma"), "TWE=");
+        assert_eq!(base64_encode(b"M"), "TQ==");
+    }
+
+    #[test]
     fn reopening_cancels_reclamation_and_reclosing_starts_a_new_delay() {
         let mut cache = WindowCache::default();
         let now = Instant::now();

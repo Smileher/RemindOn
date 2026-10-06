@@ -256,6 +256,17 @@ test('normalized rest messages are returned to the editable draft', async () => 
   assert.equal(app.state.restMessageDraft.value, 'normalized')
 })
 
+test('background image import failures preserve the existing preview', async () => {
+  const app = await mountApp()
+  const previous = 'data:image/png;base64,existing'
+  app.state.popupBackgroundPreview.value = previous
+  app.setNative('open', async () => 'selected.png')
+  app.setInvoke('import_popup_image', async () => { throw new Error('Image must not exceed 10 MiB') })
+  await app.state.pickPopupImage()
+  assert.equal(app.state.popupBackgroundPreview.value, previous)
+  assert.match(app.state.actionMessage.value, /10 MiB/)
+})
+
 test('import and export cancellations are silent and never pass a path from the frontend', async () => {
   const app = await mountApp()
   const before = JSON.stringify(app.state.data.value)
@@ -272,6 +283,21 @@ test('import and export cancellations are silent and never pass a path from the 
   app.setInvoke('export_data', async () => { throw new Error('disk full') })
   await app.state.exportData()
   assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.exportFailed'))
+})
+
+test('successful import synchronizes reminders and the draft before export', async () => {
+  const app = await mountApp()
+  const imported = defaultData()
+  imported.settings.restMessage = 'imported text'
+  imported.reminders = []
+  app.setInvoke('import_data', async () => imported)
+  app.setInvoke('export_data', async () => true)
+  await app.state.importData()
+  assert.equal(app.state.data.value.reminders.length, 0)
+  assert.equal(app.state.restMessageDraft.value, 'imported text')
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.imported'))
+  await app.state.exportData()
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.exported'))
 })
 
 test('reminder CRUD validates, preserves disabled state and rolls back failures', async () => {
