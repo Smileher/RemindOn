@@ -185,7 +185,7 @@ test('serial saves keep newer edits and external popup mode changes', async () =
   const second = app.state.updateSetting('popupOverlayOpacity', 90)
   assert.equal(writes.length, 1)
   await app.emit('popup-fullscreen-updated', false)
-  assert.equal(app.state.data.value.settings.popupOverlayOpacity, 90)
+  assert.equal(app.state.data.value.settings.popupOverlayOpacity, 10)
   writes[0].resolve(writes[0].data)
   await new Promise(setImmediate)
   assert.equal(writes.length, 2)
@@ -204,6 +204,34 @@ test('explicit main-window mode changes are included in the save', async () => {
   app.setSaveData(async (data, args) => { savedArgs = args; return data })
   await app.state.updateSetting('popupFullscreen', false)
   assert.equal(savedArgs.popupFullscreen, false)
+})
+
+test('failed setting rolls back before the next queued field or same-field edit', async () => {
+  for (const nextKey of ['theme', 'popupOverlayOpacity']) {
+    const app = await mountApp()
+    const original = app.state.data.value.settings.popupOverlayOpacity
+    let rejectFirst
+    let count = 0
+    app.setSaveData(async (data) => {
+      if (++count === 1) return new Promise((_, reject) => { rejectFirst = reject })
+      assert.equal(data.settings.popupOverlayOpacity, nextKey === 'theme' ? original : 90)
+      return data
+    })
+    const first = app.state.updateSetting('popupOverlayOpacity', 10)
+    await new Promise(setImmediate)
+    const second = app.state.updateSetting(nextKey, nextKey === 'theme' ? 'light' : 90)
+    rejectFirst(new Error('disk full'))
+    assert.equal(await first, false)
+    assert.equal(await second, true)
+    assert.equal(app.state.data.value.settings[nextKey], nextKey === 'theme' ? 'light' : 90)
+  }
+})
+
+test('normalized rest messages are returned to the editable draft', async () => {
+  const app = await mountApp()
+  app.setSaveData(async (data) => ({ ...data, settings: { ...data.settings, restMessage: 'normalized' } }))
+  await app.state.saveRestMessage('')
+  assert.equal(app.state.restMessageDraft.value, 'normalized')
 })
 
 test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {

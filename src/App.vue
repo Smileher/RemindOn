@@ -263,6 +263,14 @@ function formatNext(reminder: Reminder) {
 // 串行写入并在实际发送时读取最新数据，防止旧快照最后落盘。
 let persistToken = 0
 let persistQueue: Promise<unknown> = Promise.resolve()
+let settingsQueue: Promise<unknown> = Promise.resolve()
+
+// Queue the mutation and rollback together, not just the IPC write.
+function queueSettings<T>(operation: () => Promise<T>): Promise<T> {
+  const queued = settingsQueue.then(operation)
+  settingsQueue = queued.catch(() => {})
+  return queued
+}
 async function persist(popupFullscreen?: boolean) {
   const token = ++persistToken
   const operation = persistQueue.then(() => invoke<AppData>('save_data', {
@@ -271,7 +279,10 @@ async function persist(popupFullscreen?: boolean) {
   }))
   persistQueue = operation.catch(() => {})
   const saved = await operation
-  if (token === persistToken) data.value = saved
+  if (token === persistToken) {
+    data.value = saved
+    restMessageDraft.value = saved.settings.restMessage
+  }
 }
 
 async function saveReminder() {
@@ -356,15 +367,20 @@ async function removeReminder(id: string) {
 }
 
 async function updateSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
-  const previous = data.value.settings
-  data.value.settings = { ...previous, [key]: value }
+  return queueSettings(() => saveSetting(key, value))
+}
+
+async function saveSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
+  const previous = data.value.settings[key]
+  data.value.settings = { ...data.value.settings, [key]: value }
   try {
     await persist(key === 'popupFullscreen' ? value as boolean : undefined)
     await refreshTimers()
     if (key === 'systemNotificationEnabled') notificationError.value = ''
     return true
   } catch (error) {
-    data.value.settings = previous
+    data.value.settings = { ...data.value.settings, [key]: previous }
+    if (key === 'restMessage') restMessageDraft.value = data.value.settings.restMessage
     logError(`save setting: ${String(key)}`, error)
     actionMessage.value = t('status.saveFailed')
     return false
@@ -400,18 +416,20 @@ async function ensureNotificationPermission() {
 }
 
 async function updateAutostart(value: boolean) {
-  autostartError.value = ''
-  try {
-    if (value) await enable()
-    else await disable()
-    if (!await updateSetting('autostart', value)) {
-      if (value) await disable()
-      else await enable()
+  return queueSettings(async () => {
+    autostartError.value = ''
+    try {
+      if (value) await enable()
+      else await disable()
+      if (!await saveSetting('autostart', value)) {
+        if (value) await disable()
+        else await enable()
+      }
+    } catch (error) {
+      logError('update autostart', error)
+      autostartError.value = t('status.autostartFailed', { error: formatError(error) })
     }
-  } catch (error) {
-    logError('update autostart', error)
-    autostartError.value = t('status.autostartFailed', { error: formatError(error) })
-  }
+  })
 }
 
 function localizedDefaultMessages(language: Language) {
@@ -421,13 +439,14 @@ function localizedDefaultMessages(language: Language) {
 }
 
 async function updateLanguage(language: Language) {
-  const previous = data.value.settings
-  const previousReminders = data.value.reminders
-  const currentPresets = defaultReminders(previous.language)
-  const nextPresets = defaultReminders(language)
-  data.value.reminders = previousReminders.map((reminder) => {
-    const index = currentPresets.findIndex((preset) => preset.id === reminder.id && preset.title === reminder.title)
-    return index >= 0 ? { ...reminder, title: nextPresets[index].title } : reminder
+  return queueSettings(async () => {
+    const previous = data.value.settings
+    const previousReminders = data.value.reminders
+    const currentPresets = defaultReminders(previous.language)
+    const nextPresets = defaultReminders(language)
+    data.value.reminders = previousReminders.map((reminder) => {
+      const index = currentPresets.findIndex((preset) => preset.id === reminder.id && preset.title === reminder.title)
+      return index >= 0 ? { ...reminder, title: nextPresets[index].title } : reminder
   })
   const currentDefaults = localizedDefaultMessages(previous.language)
   const nextDefaults = localizedDefaultMessages(language)
@@ -447,6 +466,7 @@ async function updateLanguage(language: Language) {
     logError('save language', error)
     actionMessage.value = t('status.saveFailed')
   }
+  })
 }
 
 async function updateRestInterval(raw: string) {
@@ -457,17 +477,7 @@ async function updateRestInterval(raw: string) {
 }
 
 async function saveRestMessage(value: string) {
-  const previous = data.value.settings
-  restMessageDraft.value = value
-  data.value.settings = { ...previous, restMessage: value }
-  try {
-    await persist()
-  } catch (error) {
-    data.value.settings = previous
-    restMessageDraft.value = previous.restMessage
-    logError('save rest message', error)
-    actionMessage.value = t('status.saveFailed')
-  }
+  return updateSetting('restMessage', value)
 }
 
 // 选图后由 Rust 复制成配置目录里的固定文件名，清空则是删掉该文件。
@@ -549,51 +559,54 @@ async function resetSettings() {
   })
   if (!confirmed) return
 
-  await persistQueue
-  const previous = data.value.settings
-  const defaults = defaultData().settings
-  data.value.settings = {
-    ...defaults,
-    language: previous.language,
-    restMessage: translate(previous.language, 'rest.defaultMessage'),
-  }
-  restMessageDraft.value = data.value.settings.restMessage
-  try {
-    if (defaults.autostart) await enable()
-    else await disable()
-    await persist(defaults.popupFullscreen)
-    await refreshTimers()
-  } catch (error) {
-    data.value.settings = previous
-    restMessageDraft.value = previous.restMessage
-    const rollback = await Promise.allSettled([
-      previous.autostart ? enable() : disable(),
-    ])
-    for (const result of rollback) {
-      if (result.status === 'rejected') logError('restore system settings after reset', result.reason)
+  return queueSettings(async () => {
+    await persistQueue
+    const previous = data.value.settings
+    const defaults = defaultData().settings
+    data.value.settings = {
+      ...defaults,
+      language: previous.language,
+      restMessage: translate(previous.language, 'rest.defaultMessage'),
     }
-    if (rollback[0].status === 'rejected') {
-      autostartError.value = t('status.autostartFailed', { error: formatError(rollback[0].reason) })
+    restMessageDraft.value = data.value.settings.restMessage
+    try {
+      if (defaults.autostart) await enable()
+      else await disable()
+      await persist(defaults.popupFullscreen)
+      await refreshTimers()
+    } catch (error) {
+      data.value.settings = previous
+      restMessageDraft.value = previous.restMessage
+      const rollback = await Promise.allSettled([
+        previous.autostart ? enable() : disable(),
+      ])
+      for (const result of rollback) {
+        if (result.status === 'rejected') logError('restore system settings after reset', result.reason)
+      }
+      if (rollback[0].status === 'rejected') {
+        autostartError.value = t('status.autostartFailed', { error: formatError(rollback[0].reason) })
+      }
+      logError('reset settings', error)
+      actionMessage.value = t('status.saveFailed')
+      return
     }
-    logError('reset settings', error)
-    actionMessage.value = t('status.saveFailed')
-    return
-  }
-  autostartError.value = ''
-  notificationError.value = ''
-  // 参数已落盘，删图失败时保留真实图片状态并提示，不回滚成旧参数。
-  try {
-    await invoke('clear_popup_image')
-    popupBackgroundPreview.value = ''
-    actionMessage.value = t('status.resetDone')
-  } catch (error) {
-    logError('clear popup image on reset', error)
-    await loadPopupImagePreview()
-    actionMessage.value = t('status.imageFailed')
-  }
+    autostartError.value = ''
+    notificationError.value = ''
+    // 参数已落盘，删图失败时保留真实图片状态并提示，不回滚成旧参数。
+    try {
+      await invoke('clear_popup_image')
+      popupBackgroundPreview.value = ''
+      actionMessage.value = t('status.resetDone')
+    } catch (error) {
+      logError('clear popup image on reset', error)
+      await loadPopupImagePreview()
+      actionMessage.value = t('status.imageFailed')
+    }
+  })
 }
 
 async function testNotification(kind: TestReminderKind, reminder?: Reminder) {
+  await settingsQueue
   actionMessage.value = ''
   notificationError.value = ''
   try {
@@ -622,6 +635,7 @@ async function refreshTimers() {
 }
 
 async function retryPersistence() {
+  await settingsQueue
   await persistQueue
   try {
     data.value = await invoke<AppData>('load_data')
