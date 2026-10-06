@@ -129,23 +129,21 @@ pub fn get_update_mode(app: tauri::AppHandle) -> Result<UpdateMode, String> {
 }
 
 #[tauri::command]
-pub fn get_update_status(state: State<'_, AppState>) -> UpdateRuntimeState {
-    state
+pub fn get_update_status(state: State<'_, AppState>) -> Result<UpdateRuntimeState, String> {
+    Ok(state
         .0
         .update_state
-        .lock()
-        .expect("update state lock poisoned")
-        .clone()
+        .lock().map_err(crate::lock_error)?
+        .clone())
 }
 
 #[tauri::command]
-pub fn get_update_progress(state: State<'_, AppState>) -> Option<UpdateProgress> {
-    state
+pub fn get_update_progress(state: State<'_, AppState>) -> Result<Option<UpdateProgress>, String> {
+    Ok(state
         .0
         .update_progress
-        .lock()
-        .expect("update progress lock poisoned")
-        .clone()
+        .lock().map_err(crate::lock_error)?
+        .clone())
 }
 
 #[tauri::command]
@@ -159,7 +157,11 @@ pub async fn check_for_updates(
 
 pub fn start_background_update_checks(app: AppHandle, state: AppState) {
     std::thread::spawn(move || loop {
-        let _ = tauri::async_runtime::block_on(run_update_check(app.clone(), state.clone()));
+        if state.0.update_state.is_poisoned() || state.0.update_progress.is_poisoned() {
+            eprintln!("Background update checks stopped because state is poisoned");
+            break;
+        }
+        let _ = crate::report_native("Background update check", tauri::async_runtime::block_on(run_update_check(app.clone(), state.clone())));
         std::thread::sleep(std::time::Duration::from_secs(UPDATE_INTERVAL_SECONDS));
     });
 }
@@ -172,15 +174,14 @@ async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRunti
             UpdatePhase::Idle,
             None,
             None,
-        ));
+        )?);
     }
 
     {
         let mut current = state
             .0
             .update_state
-            .lock()
-            .expect("update state lock poisoned");
+            .lock().map_err(crate::lock_error)?;
         if matches!(
             current.phase,
             UpdatePhase::Checking | UpdatePhase::Downloading | UpdatePhase::Installing
@@ -195,14 +196,13 @@ async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRunti
     *state
         .0
         .update_progress
-        .lock()
-        .expect("update progress lock poisoned") = None;
+        .lock().map_err(crate::lock_error)? = None;
 
     let result = run_platform_update(&app, &state).await;
     match result {
         Ok(state) => Ok(state),
         Err(error) => {
-            set_update_state(&app, &state, UpdatePhase::Error, None, Some(error.clone()));
+            set_update_state(&app, &state, UpdatePhase::Error, None, Some(error.clone()))?;
             Err(error)
         }
     }
@@ -222,7 +222,7 @@ async fn run_platform_update(
                 .await
                 .map_err(|error| error.to_string())?;
             let Some(update) = update else {
-                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None));
+                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?);
             };
             set_update_state(
                 app,
@@ -230,14 +230,14 @@ async fn run_platform_update(
                 UpdatePhase::Available,
                 Some(update.version.clone()),
                 None,
-            );
+            )?;
             set_update_state(
                 app,
                 state,
                 UpdatePhase::Downloading,
                 Some(update.version.clone()),
                 None,
-            );
+            )?;
             let mut downloaded = 0_u64;
             let progress_app = app.clone();
             let progress_state = state.clone();
@@ -248,27 +248,27 @@ async fn run_platform_update(
                 .download_and_install(
                     move |chunk, total| {
                         downloaded = downloaded.saturating_add(chunk as u64);
-                        set_update_progress(&progress_app, &progress_state, downloaded, total);
+                        let _ = crate::report_native("Set updater progress", set_update_progress(&progress_app, &progress_state, downloaded, total));
                     },
                     || {
-                        let _ = set_update_state(
+                        let _ = crate::report_native("Set updater install state", set_update_state(
                             &install_app,
                             &install_state,
                             UpdatePhase::Installing,
                             Some(install_version),
                             None,
-                        );
+                        ));
                     },
                 )
                 .await
                 .map_err(|error| error.to_string())?;
             #[cfg(target_os = "macos")]
             app.request_restart();
-            Ok(get_update_status_from_state(state))
+            get_update_status_from_state(state)
         }
         UpdateMode::Portable => {
             let Some((version, manifest_url)) = check_portable_update(app).await? else {
-                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None));
+                return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?);
             };
             set_update_state(
                 app,
@@ -276,14 +276,14 @@ async fn run_platform_update(
                 UpdatePhase::Available,
                 Some(version.clone()),
                 None,
-            );
+            )?;
             set_update_state(
                 app,
                 state,
                 UpdatePhase::Downloading,
                 Some(version.clone()),
                 None,
-            );
+            )?;
             download_portable_update_from_manifest(app, &version, &manifest_url).await?;
             Ok(set_update_state(
                 app,
@@ -291,10 +291,10 @@ async fn run_platform_update(
                 UpdatePhase::Available,
                 Some(version),
                 None,
-            ))
+            )?)
         }
         UpdateMode::Development | UpdateMode::Unsupported => {
-            Ok(set_update_state(app, state, UpdatePhase::Idle, None, None))
+            Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?)
         }
     }
 }
@@ -304,16 +304,15 @@ async fn run_platform_update(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<UpdateRuntimeState, String> {
-    Ok(set_update_state(app, state, UpdatePhase::Idle, None, None))
+    Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?)
 }
 
-fn get_update_status_from_state(state: &AppState) -> UpdateRuntimeState {
-    state
+fn get_update_status_from_state(state: &AppState) -> Result<UpdateRuntimeState, String> {
+    Ok(state
         .0
         .update_state
-        .lock()
-        .expect("update state lock poisoned")
-        .clone()
+        .lock().map_err(crate::lock_error)?
+        .clone())
 }
 
 fn set_update_state(
@@ -322,7 +321,7 @@ fn set_update_state(
     phase: UpdatePhase,
     version: Option<String>,
     error: Option<String>,
-) -> UpdateRuntimeState {
+) -> Result<UpdateRuntimeState, String> {
     let next = UpdateRuntimeState {
         phase,
         version,
@@ -331,10 +330,9 @@ fn set_update_state(
     *state
         .0
         .update_state
-        .lock()
-        .expect("update state lock poisoned") = next.clone();
+        .lock().map_err(crate::lock_error)? = next.clone();
     emit_update_status(app, &next);
-    next
+    Ok(next)
 }
 
 fn emit_update_status(app: &AppHandle, state: &UpdateRuntimeState) {
@@ -346,7 +344,7 @@ fn set_update_progress(
     state: &AppState,
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
-) {
+) -> Result<(), String> {
     let progress = UpdateProgress {
         downloaded_bytes,
         total_bytes,
@@ -356,9 +354,9 @@ fn set_update_progress(
     *state
         .0
         .update_progress
-        .lock()
-        .expect("update progress lock poisoned") = Some(progress.clone());
+        .lock().map_err(crate::lock_error)? = Some(progress.clone());
     let _ = app.emit_to("main", UPDATE_PROGRESS_EVENT, &progress);
+    Ok(())
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -752,7 +750,7 @@ async fn download_to_file(
 fn emit_download_progress(app: &tauri::AppHandle, downloaded: u64, total: Option<u64>) {
     let percentage = total.map(|total| ((downloaded.saturating_mul(100) / total).min(100)) as u8);
     if let Some(state) = app.try_state::<AppState>() {
-        set_update_progress(app, state.inner(), downloaded, total);
+        let _ = crate::report_native("Set download progress", set_update_progress(app, state.inner(), downloaded, total));
     }
     let _ = app.emit_to(
         "main",

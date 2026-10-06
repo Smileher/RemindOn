@@ -40,5 +40,5 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_Packaging_Appx", "W
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = true

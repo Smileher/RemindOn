@@ -716,6 +716,24 @@ fn report_window<T>(window: &WebviewWindow, property: &str, result: tauri::Resul
     let _ = report_native(&format!("Window {} {property}", window.label()), result);
 }
 
+fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
+    format!("State lock poisoned: {error}")
+}
+
+// An internal panic may poison state; return the error without recovering that state.
+fn guarded<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
+        let detail = payload.downcast_ref::<String>().map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied()).unwrap_or("unknown panic");
+        Err(format!("Background operation stopped: {detail}"))
+    })
+}
+
+async fn blocking_command<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || guarded(work)).await
+        .map_err(|error| format!("Background worker failed: {error}"))?
+}
+
 #[derive(Default)]
 struct WindowCache {
     idle: HashMap<String, Instant>,
@@ -766,8 +784,7 @@ fn hide_cached_window(window: &WebviewWindow, state: &AppState) -> Result<(), St
     state
         .0
         .window_cache
-        .lock()
-        .expect("window cache lock poisoned")
+        .lock().map_err(lock_error)?
         .hide(window.label(), Instant::now());
     if window.label() == "main" && state.0.main_visible.swap(false, Ordering::SeqCst) {
         notify_tray_background(window.app_handle(), state);
@@ -812,8 +829,7 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
     if !state
         .0
         .window_cache
-        .lock()
-        .expect("window cache lock poisoned")
+        .lock().map_err(lock_error)?
         .needs_destroy_wait(label, app.get_webview_window(label).is_some())
     {
         return Ok(());
@@ -830,8 +846,7 @@ fn wait_for_window_destroyed(app: &AppHandle, state: &AppState, label: &str) -> 
     state
         .0
         .window_cache
-        .lock()
-        .expect("window cache lock poisoned")
+        .lock().map_err(lock_error)?
         .destroyed(label);
     Ok(())
 }
@@ -906,15 +921,15 @@ where
 {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let result = guarded(|| {
         let state = app.state::<AppState>();
         let _operation = state
             .0
             .window_operations
-            .lock()
-            .expect("window operations lock poisoned");
-        if let Err(error) = action(&app, state.inner()) {
-            eprintln!("Window operation failed: {error}");
-        }
+            .lock().map_err(lock_error)?;
+        action(&app, state.inner())
+        });
+        let _ = report_native("Window operation failed", result);
     });
 }
 
@@ -1118,13 +1133,12 @@ async fn toggle_popup_fullscreen(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking_command(move || {
         let _operation = state
             .0
             .window_operations
-            .lock()
-            .expect("window operations lock poisoned");
-        let mut data = state.0.data.lock().expect("settings lock poisoned");
+            .lock().map_err(lock_error)?;
+        let mut data = state.0.data.lock().map_err(lock_error)?;
         data.settings.popup_fullscreen = !data.settings.popup_fullscreen;
         let settings = data.settings.clone();
         write_json(&state.0.data_path, &data)?;
@@ -1134,8 +1148,7 @@ async fn toggle_popup_fullscreen(
         let active = state
             .0
             .active_reminder
-            .lock()
-            .expect("reminder session lock poisoned")
+            .lock().map_err(lock_error)?
             .clone();
         if let Some(mut event) = active {
             event.session_id = state.0.next_reminder_session.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1150,7 +1163,6 @@ async fn toggle_popup_fullscreen(
         Ok(settings.popup_fullscreen)
     })
     .await
-    .map_err(|error| format!("Failed to switch popup mode: {error}"))?
 }
 
 fn create_reminder_window(
@@ -1213,8 +1225,7 @@ fn prepare_reminder_windows(
         state
             .0
             .window_cache
-            .lock()
-            .expect("window cache lock poisoned")
+            .lock().map_err(lock_error)?
             .reuse(label);
         if let Some(monitor) = monitors.get(index) {
             configure_fullscreen_reminder(&window, monitor, settings, index == 0);
@@ -1227,8 +1238,7 @@ fn prepare_reminder_windows(
     *state
         .0
         .reminder_targets
-        .lock()
-        .expect("reminder targets lock poisoned") = labels.iter().cloned().collect();
+        .lock().map_err(lock_error)? = labels.iter().cloned().collect();
     Ok(labels)
 }
 
@@ -1350,7 +1360,7 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
     let mut triggered = Vec::new();
     let mut changed = false;
     {
-        let mut current = state.0.data.lock().expect("settings lock poisoned");
+        let mut current = state.0.data.lock().map_err(lock_error)?;
         let mut data = current.clone();
         for reminder in &mut data.reminders {
             if !reminder.enabled {
@@ -1400,13 +1410,12 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
         }
         if data.settings.rest_enabled {
             if !state.0.rest_active.load(Ordering::SeqCst)
-                && !state.0.reminder_queue.lock().expect("reminder queue lock poisoned").iter().any(|item| item.event.is_rest) {
+                && !state.0.reminder_queue.lock().map_err(lock_error)?.iter().any(|item| item.event.is_rest) {
                 let due = {
                     let mut next_rest = state
                         .0
                         .rest_next
-                        .lock()
-                        .expect("break reminder lock poisoned");
+                        .lock().map_err(lock_error)?;
                     if next_rest.is_none() {
                         *next_rest = Some(
                             now + Duration::minutes(data.settings.rest_interval_minutes as i64),
@@ -1436,8 +1445,7 @@ fn collect_due_reminders(state: &AppState, now: DateTime<Local>) -> Result<Vec<Q
                     *state
                         .0
                         .rest_next
-                        .lock()
-                        .expect("break reminder lock poisoned") = None;
+                        .lock().map_err(lock_error)? = None;
                     state.0.rest_round_pending.store(true, Ordering::SeqCst);
                 }
             }
@@ -1490,16 +1498,22 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
     state.0.scheduler_stop.store(false, Ordering::SeqCst);
     thread::spawn(move || {
         while !state.0.scheduler_stop.load(Ordering::SeqCst) {
-            {
+            let result = guarded(|| {
                 let _operation = state
                     .0
                     .window_operations
-                    .lock()
-                    .expect("window operations lock poisoned");
+                    .lock().map_err(lock_error)?;
                 if !state.0.paused.load(Ordering::SeqCst) {
                     process_due(&app, &state);
                 }
                 reclaim_idle_windows(&app, &state);
+                Ok(())
+            });
+            if let Err(error) = result {
+                eprintln!("Scheduler stopped: {error}");
+                state.0.scheduler_stop.store(true, Ordering::SeqCst);
+                let _ = report_native("Report scheduler failure", app.emit_to("main", "persistence-failed", Some(error)));
+                break;
             }
             thread::sleep(SCHEDULER_INTERVAL);
         }
@@ -1508,13 +1522,16 @@ fn spawn_scheduler(app: AppHandle, state: AppState) {
 }
 
 #[tauri::command]
-fn load_data(app: AppHandle, state: State<'_, AppState>) -> Result<AppData, String> {
-    let data = state.0.data.lock().expect("settings lock poisoned");
-    if state.0.native_errors.lock().expect("native errors lock poisoned").persistence_error.is_some() {
-        write_json(&state.0.data_path, &data)?;
-        clear_persistence_error(&app, state.inner());
-    }
-    Ok(data.clone())
+async fn load_data(app: AppHandle, state: State<'_, AppState>) -> Result<AppData, String> {
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let data = state.0.data.lock().map_err(lock_error)?;
+        if state.0.native_errors.lock().map_err(lock_error)?.persistence_error.is_some() {
+            write_json(&state.0.data_path, &data)?;
+            clear_persistence_error(&app, &state);
+        }
+        Ok(data.clone())
+    }).await
 }
 
 #[tauri::command]
@@ -1524,77 +1541,77 @@ async fn save_data(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppData, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    let mut current = state.0.data.lock().expect("settings lock poisoned");
-    // 普通保存保留后端当前模式，只有主窗口明确切换时才覆盖它。
-    data.settings.popup_fullscreen = popup_fullscreen.unwrap_or(current.settings.popup_fullscreen);
-    let current_by_id: HashMap<_, _> = current.reminders.iter().map(|item| (&item.id, item)).collect();
-    for reminder in &mut data.reminders {
-        if current_by_id.get(&reminder.id).is_none_or(|old| !same_reminder_plan(old, reminder)) {
-            reminder.next_trigger_at = None;
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        let mut current = state.0.data.lock().map_err(lock_error)?;
+        // 普通保存保留后端当前模式，只有主窗口明确切换时才覆盖它。
+        data.settings.popup_fullscreen = popup_fullscreen.unwrap_or(current.settings.popup_fullscreen);
+        let current_by_id: HashMap<_, _> = current.reminders.iter().map(|item| (&item.id, item)).collect();
+        for reminder in &mut data.reminders {
+            if current_by_id.get(&reminder.id).is_none_or(|old| !same_reminder_plan(old, reminder)) {
+                reminder.next_trigger_at = None;
+            }
         }
-    }
-    validate_and_normalize(&mut data)?;
-    let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
-    let rest_interval_changed =
-        current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
-    let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
-    let autostart_changed = current.settings.autostart != data.settings.autostart;
-    write_json(&state.0.data_path, &data)?;
-    *current = data.clone();
-    clear_persistence_error(&app, state.inner());
-    if rest_enabled_changed && !data.settings.rest_enabled {
-        state.0.rest_active.store(false, Ordering::SeqCst);
-        state.0.rest_round_pending.store(false, Ordering::SeqCst);
-        *state
-            .0
-            .rest_next
-            .lock()
-            .expect("break reminder lock poisoned") = None;
-    } else if (rest_enabled_changed || rest_interval_changed)
-        && !state.0.rest_round_pending.load(Ordering::SeqCst)
-    {
-        *state
-            .0
-            .rest_next
-            .lock()
-            .expect("break reminder lock poisoned") = None;
-    }
-    drop(current);
-    if autostart_changed {
-        // The frontend owns enable/disable; only acknowledge an observed matching state.
-        let error = match app.autolaunch().is_enabled() {
-            Ok(enabled) if enabled == data.settings.autostart => None,
-            Ok(_) => Some("Saved autostart preference does not match the system state".to_string()),
-            Err(error) => Some(error.to_string()),
-        };
-        state.0.native_errors.lock().expect("native errors lock poisoned").autostart_error = error;
-    }
-    state.0.reminder_queue.lock().expect("reminder queue lock poisoned")
-        .retain(|item| !changed_ids.contains(&item.event.id)
-            && (!item.event.is_rest || data.settings.rest_enabled));
-    let active = state.0.active_reminder.lock().expect("reminder session lock poisoned").clone();
-    if let Some(active) = active.filter(|event| changed_ids.contains(&event.id)) {
-        close_reminder_session(&app, state.inner(), active.session_id);
-    }
-    let _ = report_native("Update tray menu", update_tray_menu(
-        &app,
-        data.settings.language,
-    ));
-    #[cfg(target_os = "macos")]
-    apply_application_menu(&app, data.settings.language);
-    sync_reminder_settings(&app, &data.settings);
-    if rest_enabled_changed && !data.settings.rest_enabled {
-        cancel_active_rest_reminder(&app, state.inner());
-    }
-    if rest_enabled_changed || rest_interval_changed {
-        emit_rest_timer_updated(&app, &state);
-    }
-    Ok(data)
+        validate_and_normalize(&mut data)?;
+        let rest_enabled_changed = current.settings.rest_enabled != data.settings.rest_enabled;
+        let rest_interval_changed =
+            current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
+        let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
+        let autostart_changed = current.settings.autostart != data.settings.autostart;
+        write_json(&state.0.data_path, &data)?;
+        *current = data.clone();
+        clear_persistence_error(&app, &state);
+        if rest_enabled_changed && !data.settings.rest_enabled {
+            state.0.rest_active.store(false, Ordering::SeqCst);
+            state.0.rest_round_pending.store(false, Ordering::SeqCst);
+            *state
+                .0
+                .rest_next
+                .lock().map_err(lock_error)? = None;
+        } else if (rest_enabled_changed || rest_interval_changed)
+            && !state.0.rest_round_pending.load(Ordering::SeqCst)
+        {
+            *state
+                .0
+                .rest_next
+                .lock().map_err(lock_error)? = None;
+        }
+        drop(current);
+        if autostart_changed {
+            // The frontend owns enable/disable; only acknowledge an observed matching state.
+            let error = match app.autolaunch().is_enabled() {
+                Ok(enabled) if enabled == data.settings.autostart => None,
+                Ok(_) => Some("Saved autostart preference does not match the system state".to_string()),
+                Err(error) => Some(error.to_string()),
+            };
+            state.0.native_errors.lock().map_err(lock_error)?.autostart_error = error;
+        }
+        state.0.reminder_queue.lock().map_err(lock_error)?
+            .retain(|item| !changed_ids.contains(&item.event.id)
+                && (!item.event.is_rest || data.settings.rest_enabled));
+        let active = state.0.active_reminder.lock().map_err(lock_error)?.clone();
+        if let Some(active) = active.filter(|event| changed_ids.contains(&event.id)) {
+            close_reminder_session(&app, &state, active.session_id);
+        }
+        let _ = report_native("Update tray menu", update_tray_menu(
+            &app,
+            data.settings.language,
+        ));
+        #[cfg(target_os = "macos")]
+        apply_application_menu(&app, data.settings.language);
+        sync_reminder_settings(&app, &data.settings);
+        if rest_enabled_changed && !data.settings.rest_enabled {
+            cancel_active_rest_reminder(&app, &state);
+        }
+        if rest_enabled_changed || rest_interval_changed {
+            emit_rest_timer_updated(&app, &state);
+        }
+        Ok(data)
+    }).await
 }
 
 fn same_reminder_plan(a: &Reminder, b: &Reminder) -> bool {
@@ -1635,35 +1652,37 @@ async fn snooze_reminder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    if !active_reminder_matches(state.inner(), &id, session_id) {
-        return Ok(());
-    }
-    if state.0.active_reminder.lock().expect("reminder session lock poisoned")
-        .as_ref().is_some_and(|event| event.power_action.is_some()) {
-        return Err("Scheduled actions cannot be snoozed".to_string());
-    }
-    if id == REST_ID || id == TEST_REST_ID {
-        if snooze_rest_round(state.inner(), seconds) {
-            emit_rest_timer_updated(&app, &state);
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        if !active_reminder_matches(&state, &id, session_id) {
+            return Ok(());
         }
-        close_reminder_session(&app, state.inner(), session_id);
-        return Ok(());
-    }
-    let mut data = state.0.data.lock().expect("settings lock poisoned");
-    let delay = Duration::seconds(seconds.max(1) as i64);
-    if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
-        reminder.enabled = true;
-        reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
-        write_json(&state.0.data_path, &data)?;
-    }
-    drop(data);
-    close_reminder_session(&app, state.inner(), session_id);
-    Ok(())
+        if state.0.active_reminder.lock().map_err(lock_error)?
+            .as_ref().is_some_and(|event| event.power_action.is_some()) {
+            return Err("Scheduled actions cannot be snoozed".to_string());
+        }
+        if id == REST_ID || id == TEST_REST_ID {
+            if snooze_rest_round(&state, seconds) {
+                emit_rest_timer_updated(&app, &state);
+            }
+            close_reminder_session(&app, &state, session_id);
+            return Ok(());
+        }
+        let mut data = state.0.data.lock().map_err(lock_error)?;
+        let delay = Duration::seconds(seconds.max(1) as i64);
+        if let Some(reminder) = data.reminders.iter_mut().find(|item| item.id == id) {
+            reminder.enabled = true;
+            reminder.next_trigger_at = Some((Local::now() + delay).to_rfc3339());
+            write_json(&state.0.data_path, &data)?;
+        }
+        drop(data);
+        close_reminder_session(&app, &state, session_id);
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
@@ -1673,21 +1692,23 @@ async fn dismiss_reminder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    if !active_reminder_matches(state.inner(), &id, session_id) {
-        return Ok(());
-    }
-    if id == REST_ID || id == TEST_REST_ID {
-        if complete_rest_round(state.inner()) {
-            emit_rest_timer_updated(&app, state.inner());
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        if !active_reminder_matches(&state, &id, session_id) {
+            return Ok(());
         }
-    }
-    close_reminder_session(&app, state.inner(), session_id);
-    Ok(())
+        if id == REST_ID || id == TEST_REST_ID {
+            if complete_rest_round(&state) {
+                emit_rest_timer_updated(&app, &state);
+            }
+        }
+        close_reminder_session(&app, &state, session_id);
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
@@ -1695,26 +1716,26 @@ async fn get_active_reminder(
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<ReminderTriggeredEvent>, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    if !state
-        .0
-        .reminder_targets
-        .lock()
-        .expect("reminder targets lock poisoned")
-        .contains(window.label())
-    {
-        return Ok(None);
-    }
-    Ok(state
-        .0
-        .active_reminder
-        .lock()
-        .expect("reminder session lock poisoned")
-        .clone())
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        if !state
+            .0
+            .reminder_targets
+            .lock().map_err(lock_error)?
+            .contains(window.label())
+        {
+            return Ok(None);
+        }
+        Ok(state
+            .0
+            .active_reminder
+            .lock().map_err(lock_error)?
+            .clone())
+    }).await
 }
 
 #[tauri::command]
@@ -1724,76 +1745,80 @@ async fn show_reminder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    let active = state
-        .0
-        .active_reminder
-        .lock()
-        .expect("reminder session lock poisoned")
-        .clone();
-    let current = active
-        .as_ref()
-        .is_some_and(|event| event.session_id == session_id);
-    if !current
-        || !state
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
             .0
-            .reminder_targets
-            .lock()
-            .expect("reminder targets lock poisoned")
-            .contains(window.label())
-    {
-        return Ok(false);
-    }
-    // Restore only after content and geometry are ready; unminimize itself may show a window.
-    if let Err(error) = window.unminimize().and_then(|_| window.show()) {
-        if active.as_ref().is_some_and(|event| event.is_rest) && complete_rest_round(state.inner())
+            .window_operations
+            .lock().map_err(lock_error)?;
+        let active = state
+            .0
+            .active_reminder
+            .lock().map_err(lock_error)?
+            .clone();
+        let current = active
+            .as_ref()
+            .is_some_and(|event| event.session_id == session_id);
+        if !current
+            || !state
+                .0
+                .reminder_targets
+                .lock().map_err(lock_error)?
+                .contains(window.label())
         {
-            emit_rest_timer_updated(&app, state.inner());
+            return Ok(false);
         }
-        close_reminder_session(&app, state.inner(), session_id);
-        let message = error.to_string();
-        let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", &message));
-        return Err(message);
-    }
-    if window.label() == REMINDER_LABEL || window.label() == WINDOWED_REMINDER_LABEL {
-        window.set_focus().map_err(|error| error.to_string())?;
-    }
-    Ok(true)
+        // Restore only after content and geometry are ready; unminimize itself may show a window.
+        if let Err(error) = window.unminimize().and_then(|_| window.show()) {
+            if active.as_ref().is_some_and(|event| event.is_rest) && complete_rest_round(&state)
+            {
+                emit_rest_timer_updated(&app, &state);
+            }
+            close_reminder_session(&app, &state, session_id);
+            let message = error.to_string();
+            let _ = report_native("Emit native event", app.emit_to("main", "notification-failed", &message));
+            return Err(message);
+        }
+        if window.label() == REMINDER_LABEL || window.label() == WINDOWED_REMINDER_LABEL {
+            window.set_focus().map_err(|error| error.to_string())?;
+        }
+        Ok(true)
+    }).await
 }
 
 #[tauri::command]
 async fn hide_idle_window(window: WebviewWindow, state: State<'_, AppState>) -> Result<(), String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    if window.label() == "main"
-        || (is_reminder_window_label(window.label())
-            && !state
-                .0
-                .reminder_targets
-                .lock()
-                .expect("reminder targets lock poisoned")
-                .contains(window.label()))
-    {
-        hide_cached_window(&window, state.inner())?;
-    }
-    Ok(())
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        if window.label() == "main"
+            || (is_reminder_window_label(window.label())
+                && !state
+                    .0
+                    .reminder_targets
+                    .lock().map_err(lock_error)?
+                    .contains(window.label()))
+        {
+            hide_cached_window(&window, &state)?;
+        }
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
-fn get_rest_timer_status(state: State<'_, AppState>) -> RestTimerStatus {
-    rest_timer_status(state.inner())
+async fn get_rest_timer_status(state: State<'_, AppState>) -> Result<RestTimerStatus, String> {
+    let state = state.inner().clone();
+    blocking_command(move || {
+        Ok(rest_timer_status(&state))
+    }).await
 }
 
 #[tauri::command]
-fn get_native_errors(state: State<'_, AppState>) -> NativeErrors {
-    state.0.native_errors.lock().expect("native errors lock poisoned").clone()
+fn get_native_errors(state: State<'_, AppState>) -> Result<NativeErrors, String> {
+    Ok(state.0.native_errors.lock().map_err(lock_error)?.clone())
 }
 
 #[cfg(target_os = "windows")]
@@ -1872,17 +1897,15 @@ async fn execute_power_action(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking_command(move || {
         let _operation = state
             .0
             .window_operations
-            .lock()
-            .expect("window operations lock poisoned");
+            .lock().map_err(lock_error)?;
         let matches = state
             .0
             .active_reminder
-            .lock()
-            .expect("reminder session lock poisoned")
+            .lock().map_err(lock_error)?
             .as_ref()
             .is_some_and(|event| {
                 event.session_id == session_id && event.power_action.as_ref() == Some(&action)
@@ -1908,10 +1931,10 @@ async fn execute_power_action(
             );
             return Err(error);
         }
-        let _operation = state.0.window_operations.lock().expect("window operations lock poisoned");
+        let _operation = state.0.window_operations.lock().map_err(lock_error)?;
         close_reminder_session(&app, &state, session_id);
         Ok(true)
-    }).await.map_err(|error| format!("System action worker failed: {error}"))?
+    }).await
 }
 
 fn test_reminder_event(settings: &AppSettings, kind: TestReminderKind) -> ReminderTriggeredEvent {
@@ -1948,28 +1971,30 @@ async fn test_reminder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    let settings = app_data(&state).settings;
-    let mut event = test_reminder_event(&settings, kind);
-    if let Some(reminder) = reminder {
-        if event.is_rest {
-            return Err("Break preview cannot include a scheduled reminder".to_string());
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        let settings = app_data(&state).settings;
+        let mut event = test_reminder_event(&settings, kind);
+        if let Some(reminder) = reminder {
+            if event.is_rest {
+                return Err("Break preview cannot include a scheduled reminder".to_string());
+            }
+            let mut preview = AppData { version: DATA_VERSION, settings: settings.clone(), reminders: vec![reminder] };
+            validate_and_normalize(&mut preview)?;
+            event.title = preview.reminders[0].title.clone();
+            event.power_action = preview.reminders[0].power_action.clone();
+            event.reminder_type = preview.reminders[0].reminder_type.clone();
         }
-        let mut preview = AppData { version: DATA_VERSION, settings: settings.clone(), reminders: vec![reminder] };
-        validate_and_normalize(&mut preview)?;
-        event.title = preview.reminders[0].title.clone();
-        event.power_action = preview.reminders[0].power_action.clone();
-        event.reminder_type = preview.reminders[0].reminder_type.clone();
-    }
-    // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
-    sync_reminder_settings(&app, &settings);
-    enqueue_reminders(&state, vec![QueuedReminder { due_at: Local::now(), event }]);
-    drain_reminder_queue(&app, &state);
-    Ok(())
+        // 弹窗窗口会复用，触发前必须把最新设置同步过去，否则外观类设置不会生效。
+        sync_reminder_settings(&app, &settings);
+        enqueue_reminders(&state, vec![QueuedReminder { due_at: Local::now(), event }]);
+        drain_reminder_queue(&app, &state);
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
@@ -1980,7 +2005,7 @@ async fn import_data(
 ) -> Result<Option<AppData>, String> {
     if window.label() != "main" { return Err("Import is only available in the main window".into()); }
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking_command(move || {
         let Some(path) = app.dialog().file().add_filter("JSON", &["json"]).blocking_pick_file() else {
             return Ok(None);
         };
@@ -1988,10 +2013,9 @@ async fn import_data(
         let _operation = state
             .0
             .window_operations
-            .lock()
-            .expect("window operations lock poisoned");
+            .lock().map_err(lock_error)?;
         let data = read_import_file(&path)?;
-        let mut current = state.0.data.lock().expect("settings lock poisoned");
+        let mut current = state.0.data.lock().map_err(lock_error)?;
         write_json(&state.0.data_path, &data)?;
         *current = data.clone();
         state.0.rest_active.store(false, Ordering::SeqCst);
@@ -1999,8 +2023,7 @@ async fn import_data(
         *state
             .0
             .rest_next
-            .lock()
-            .expect("break reminder lock poisoned") = None;
+            .lock().map_err(lock_error)? = None;
         state.0.paused.store(false, Ordering::SeqCst);
         drop(current);
         reset_reminder_session(&app, &state, "reminders-reset");
@@ -2011,14 +2034,14 @@ async fn import_data(
         sync_reminder_settings(&app, &data.settings);
         emit_rest_timer_updated(&app, &state);
         Ok(Some(data))
-    }).await.map_err(|error| format!("Import worker failed: {error}"))?
+    }).await
 }
 
 #[tauri::command]
 async fn export_data(window: WebviewWindow, app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     if window.label() != "main" { return Err("Export is only available in the main window".into()); }
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking_command(move || {
         let Some(path) = app.dialog().file().add_filter("JSON", &["json"]).set_file_name("RemindOn-backup.json").blocking_save_file() else {
             return Ok(false);
         };
@@ -2027,7 +2050,7 @@ async fn export_data(window: WebviewWindow, app: AppHandle, state: State<'_, App
         let data = app_data(&state);
         write_json(&path, &data)?;
         Ok(true)
-    }).await.map_err(|error| format!("Export worker failed: {error}"))?
+    }).await
 }
 
 fn validate_json_path(path: &Path) -> Result<(), String> {
@@ -2055,23 +2078,26 @@ async fn import_popup_image(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
-    let origin = PathBuf::from(&source);
-    if !origin.is_file() {
-        return Err("The selected image does not exist".to_string());
-    }
-    image_extension(&origin)?;
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
-    // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
-    let target = directory.join("popup-background.img");
-    let data_url = save_popup_image(&origin, &target)?;
-    emit_to_reminder_windows(&app, "popup-image-updated", ());
-    Ok(data_url)
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
+        let origin = PathBuf::from(&source);
+        if !origin.is_file() {
+            return Err("The selected image does not exist".to_string());
+        }
+        image_extension(&origin)?;
+        let directory = app
+            .path()
+            .app_config_dir()
+            .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
+        // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
+        let target = directory.join("popup-background.img");
+        let data_url = save_popup_image(&origin, &target)?;
+        emit_to_reminder_windows(&app, "popup-image-updated", ());
+        Ok(data_url)
+    }).await
 }
 
 fn read_bounded_image(path: &Path) -> Result<Vec<u8>, String> {
@@ -2144,23 +2170,26 @@ async fn read_popup_image(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
-    let directory = match app.path().app_config_dir() {
-        Ok(directory) => directory,
-        Err(_) => return Ok(None),
-    };
-    // 固定文件名，找不到就代表用户还没设置背景。
-    let target = directory.join("popup-background.img");
-    if !target.is_file() {
-        return Ok(None);
-    }
-    let bytes = read_bounded_image(&target)?;
-    let mime = image_mime(&bytes)?;
-    Ok(Some(format!(
-        "data:{};base64,{}",
-        mime,
-        base64_encode(&bytes)
-    )))
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
+        let directory = match app.path().app_config_dir() {
+            Ok(directory) => directory,
+            Err(_) => return Ok(None),
+        };
+        // 固定文件名，找不到就代表用户还没设置背景。
+        let target = directory.join("popup-background.img");
+        if !target.is_file() {
+            return Ok(None);
+        }
+        let bytes = read_bounded_image(&target)?;
+        let mime = image_mime(&bytes)?;
+        Ok(Some(format!(
+            "data:{};base64,{}",
+            mime,
+            base64_encode(&bytes)
+        )))
+    }).await
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -2190,26 +2219,29 @@ fn base64_encode(bytes: &[u8]) -> String {
 
 #[tauri::command]
 async fn clear_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let _image = state.0.popup_image_operations.lock().expect("image lock poisoned");
-    let directory = match app.path().app_config_dir() {
-        Ok(directory) => directory,
-        Err(_) => return Ok(()),
-    };
-    let target = directory.join("popup-background.img");
-    if target.is_file() {
-        fs::remove_file(&target).map_err(|error| format!("Failed to remove the image: {error}"))?;
-    }
-    // 清理旧版本按扩展名保存的残留文件。
-    if let Ok(entries) = fs::read_dir(&directory) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("popup-background.") && name != "popup-background.img" {
-                let _ = fs::remove_file(entry.path());
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
+        let directory = match app.path().app_config_dir() {
+            Ok(directory) => directory,
+            Err(_) => return Ok(()),
+        };
+        let target = directory.join("popup-background.img");
+        if target.is_file() {
+            fs::remove_file(&target).map_err(|error| format!("Failed to remove the image: {error}"))?;
+        }
+        // 清理旧版本按扩展名保存的残留文件。
+        if let Ok(entries) = fs::read_dir(&directory) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("popup-background.") && name != "popup-background.img" {
+                    let _ = fs::remove_file(entry.path());
+                }
             }
         }
-    }
-    emit_to_reminder_windows(&app, "popup-image-updated", ());
-    Ok(())
+        emit_to_reminder_windows(&app, "popup-image-updated", ());
+        Ok(())
+    }).await
 }
 
 fn tray_menu(
@@ -2386,7 +2418,11 @@ fn start_system_theme_watcher(app: AppHandle, state: AppState) {
                 }
                 last = now;
                 // 设置可能被并发改写，取锁后再判断当前偏好。
-                if !matches!(app_data(&state).settings.theme, Theme::System) {
+                let theme = match state.0.data.lock() {
+                    Ok(data) => data.settings.theme.clone(),
+                    Err(error) => { eprintln!("System theme watcher stopped: {error}"); return; }
+                };
+                if !matches!(theme, Theme::System) {
                     continue;
                 }
                 apply_theme_to_windows(&app, &Theme::System);
@@ -2443,8 +2479,7 @@ fn ensure_main_window(
     state
         .0
         .window_cache
-        .lock()
-        .expect("window cache lock poisoned")
+        .lock().map_err(lock_error)?
         .reuse("main");
     let app_theme = app_data(state).settings.theme;
     let window = match app.get_webview_window("main") {
@@ -2467,8 +2502,7 @@ fn ensure_main_window(
             *state
                 .0
                 .pending_navigation
-                .lock()
-                .expect("pending navigation lock poisoned") = Some(navigation.to_string());
+                .lock().map_err(lock_error)? = Some(navigation.to_string());
         }
     }
     window.unminimize().map_err(|error| error.to_string())?;
@@ -2503,28 +2537,31 @@ fn show_about(app: &AppHandle) {
 
 #[tauri::command]
 async fn open_reminder_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    ensure_main_window(&app, state.inner(), Some("events")).map(|_| ())
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        ensure_main_window(&app, &state, Some("events")).map(|_| ())
+    }).await
 }
 
 #[tauri::command]
 async fn take_pending_navigation(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let _operation = state
-        .0
-        .window_operations
-        .lock()
-        .expect("window operations lock poisoned");
-    state.0.main_ready.store(true, Ordering::SeqCst);
-    Ok(state
-        .0
-        .pending_navigation
-        .lock()
-        .expect("pending navigation lock poisoned")
-        .take())
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _operation = state
+            .0
+            .window_operations
+            .lock().map_err(lock_error)?;
+        state.0.main_ready.store(true, Ordering::SeqCst);
+        Ok(state
+            .0
+            .pending_navigation
+            .lock().map_err(lock_error)?
+            .take())
+    }).await
 }
 
 fn setup_tray(app: &tauri::App, language: Language) -> tauri::Result<()> {
@@ -2722,7 +2759,10 @@ pub fn run() {
         .run(|app, event| {
             if let RunEvent::WindowEvent { label, event: WindowEvent::Destroyed, .. } = &event {
                 let state = app.state::<AppState>();
-                state.0.window_cache.lock().expect("window cache lock poisoned").destroyed(label);
+                match state.0.window_cache.lock() {
+                    Ok(mut cache) => cache.destroyed(label),
+                    Err(error) => eprintln!("Window cleanup stopped: {error}"),
+                };
             }
             if let RunEvent::ExitRequested { code, ref api, .. } = event {
                 if code.is_none() {
@@ -2746,12 +2786,14 @@ pub fn run() {
                     // Capture the closing session before queuing: a newer reminder may arrive
                     // while an earlier native window operation is still completing.
                     let closing_reminder = if is_reminder_window_label(&label) {
-                        app.state::<AppState>()
+                        match app.state::<AppState>()
                             .0
                             .active_reminder
                             .lock()
-                            .expect("reminder session lock poisoned")
-                            .clone()
+                        {
+                            Ok(active) => active.clone(),
+                            Err(error) => { eprintln!("Close callback stopped: {error}"); return; }
+                        }
                     } else {
                         None
                     };
@@ -2794,6 +2836,20 @@ mod tests {
     fn native_reporting_preserves_success_and_failure() {
         assert_eq!(report_native("window main size", Ok::<_, String>(42)), Ok(42));
         assert_eq!(report_native::<(), _>("window main size", Err("native failure")), Err("native failure"));
+    }
+
+    #[test]
+    fn poisoned_locks_return_errors_without_recovering_state() {
+        let lock = Mutex::new(0);
+        let _: Result<(), _> = std::panic::catch_unwind(|| {
+            let mut value = lock.lock().unwrap();
+            *value = 1;
+            panic!("simulated mutation failure");
+        });
+        let error = guarded(|| { drop(lock.lock().map_err(lock_error)?); Ok(()) }).unwrap_err();
+        assert!(error.contains("lock poisoned"));
+        assert!(lock.is_poisoned());
+        assert!(guarded::<()>(|| panic!("internal failure")).unwrap_err().contains("internal failure"));
     }
 
     #[test]
