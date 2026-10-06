@@ -95,12 +95,17 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
   }
   const result = await syncGiteeRelease(options)
   assert.equal(result.releaseId, 42)
-  assert.deepEqual(uploaded, [...selectedNames, 'latest.json'])
+  // 资产并发上传，完成顺序不确定，按集合比较。
+  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json'].sort())
   await syncGiteeRelease(options)
-  assert.deepEqual(uploaded, [...selectedNames, 'latest.json', 'latest.json'])
+  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json'].sort())
   assert.equal(existingAssets.length, selectedNames.length + 1)
   corruptDownload = true
-  await assert.rejects(syncGiteeRelease(options), /SHA256 does not match GitHub/)
+  // 并发下所有资产同时校验失败，错误按数量聚合；具体原因仍逐条打印。
+  await assert.rejects(syncGiteeRelease(options), (error) => {
+    assert.match(error.message, new RegExp(`of ${selectedNames.length} Gitee assets failed to mirror`))
+    return true
+  })
   assert.equal(existingAssets.length, selectedNames.length + 1)
 })
 }

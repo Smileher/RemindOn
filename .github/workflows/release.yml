@@ -162,6 +162,8 @@ jobs:
   sync-gitee:
     needs: [prepare, publish]
     runs-on: ubuntu-latest
+    # Gitee 只是镜像源；不可用时不应把整个 Release 判为失败，否则会连带阻塞官网发布。
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

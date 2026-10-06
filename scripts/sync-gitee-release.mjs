@@ -5,7 +5,10 @@ import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const api = 'https://gitee.com/api/v5/repos/smileher/RemindOn'
-const requestTimeoutMs = 10 * 60 * 1000
+// Gitee 会掐断长时间的上传连接；超时过长只会让整个 job 挂到 GitHub 的6 小时上限。
+const requestTimeoutMs = 3 * 60 * 1000
+// 整轮镜像的总预算，防止个别资产反复重试把 workflow拖死。
+const syncDeadlineMs = 25 * 60 * 1000
 const assetNames = (version, legacyX64) => [
   `RemindOn_${version}_x64-setup.exe`,
   ...(!legacyX64 ? [`RemindOn_${version}_arm64-setup.exe`] : []),
@@ -148,7 +151,8 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
 
   const existing = await request(fetchImpl, token, `/releases/${release.id}/attach_files?per_page=100`)
   const assets = new Map(existing.map((asset) => [asset.name, asset]))
-  for (const name of names) {
+  // 并发镜像：单个资产超时或失败不再阻塞其余资产，避免一个卡住整轮。
+  const outcomes = await Promise.allSettled(names.map(async (name) => {
     const bytes = await readFile(join(assetDir, name))
     if (!assets.has(name)) {
       assets.set(name, await uploadWithRetry(fetchImpl, token, release.id, name, bytes))
@@ -160,7 +164,11 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     const expected = createHash('sha256').update(bytes).digest('hex')
     const actual = createHash('sha256').update(Buffer.from(await downloaded.arrayBuffer())).digest('hex')
     if (actual !== expected) throw new Error(`Gitee asset SHA256 does not match GitHub: ${name}`)
-  }
+    return name
+  }))
+  const failed = outcomes.filter((outcome) => outcome.status === 'rejected')
+  for (const outcome of failed) console.error(`Gitee asset failed: ${outcome.reason.message}`)
+  if (failed.length) throw new Error(`${failed.length} of ${names.length} Gitee assets failed to mirror`)
   const manifest = createGiteeManifest(githubManifest, assets)
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   const previousManifest = assets.get('latest.json')
@@ -182,6 +190,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   }
   const githubRelease = JSON.parse(await readFile(releasePath, 'utf8'))
   const githubManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  // 整轮镜像设硬性上限：Gitee 不可用时尽快失败，让 workflow 报错而不是挂到 6 小时上限。
+  const hardStop = setTimeout(() => {
+    console.error(`Gitee mirror exceeded ${syncDeadlineMs} ms budget; aborting.`)
+    process.exit(3)
+  }, syncDeadlineMs + 60_000)
+  hardStop.unref()
   const result = await syncGiteeRelease({ tag, githubRelease, githubManifest, assetDir, token: process.env.GITEE_TOKEN, legacyX64: option === '--legacy-x64' })
+  clearTimeout(hardStop)
   console.log(`Synchronized Gitee release ${tag}: ${result.assetCount} binary assets and latest.json`)
 }
