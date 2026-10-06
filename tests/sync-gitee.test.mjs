@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import https from 'node:https'
 import { EventEmitter } from 'node:events'
+import childProcess from 'node:child_process'
 import { createGiteeManifest, syncGiteeRelease } from '../scripts/sync-gitee-release.mjs'
 
 const version = '0.8.0'
@@ -131,7 +132,7 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
 })
 }
 
-for (const failure of ['response error', 'aborted response', 'deadline']) {
+for (const failure of ['response error', 'aborted response', 'deadline', 'curl fallback']) {
 test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout: 2000 }, async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'remindon-gitee-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -155,6 +156,10 @@ test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout:
     const request = new EventEmitter()
     request.destroy = (error) => request.emit('error', error)
     request.end = (body) => {
+      if (failure === 'curl fallback') {
+        queueMicrotask(() => request.emit('error', new Error('socket hang up')))
+        return
+      }
       const text = body.toString('utf8')
       manifestBytes = Buffer.from(text.split('Content-Type: application/octet-stream\r\n\r\n')[1].split('\r\n--')[0], 'utf8')
       assets.push({ id: 100, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` })
@@ -171,12 +176,34 @@ test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout:
     }
     return request
   })
+  let curlCount = 0
+  context.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
+    curlCount += 1
+    assert.equal(command, 'curl')
+    assert.ok(args.includes('--fail-with-body'))
+    assert.ok(!args.some((arg) => arg.includes('test-token')))
+    assert.equal(options.timeout, 8 * 60 * 1000 + 5000)
+    const child = { stdin: new EventEmitter() }
+    child.stdin.end = (body) => {
+      const text = body.toString('utf8')
+      assert.ok(text.includes('test-token'))
+      manifestBytes = Buffer.from(text.split('Content-Type: application/octet-stream\r\n\r\n')[1].split('\r\n--')[0], 'utf8')
+      const asset = { id: 100, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` }
+      assets.push(asset)
+      callback(null, JSON.stringify(asset))
+    }
+    return child
+  })
+  if (failure === 'curl fallback') {
+    context.mock.method(console, 'warn', () => queueMicrotask(() => context.mock.timers.tick(5000)))
+  }
   const result = await syncGiteeRelease({
     tag: `v${version}`, githubRelease: { tag_name: `v${version}`, assets: names.map((name) => ({ name })) },
     githubManifest: manifest(), assetDir: directory, token: 'test-token',
   })
   assert.equal(result.assetCount, names.length)
   assert.equal(uploadCount, 1)
+  assert.equal(curlCount, failure === 'curl fallback' ? 1 : 0)
   assert.equal(assets.filter((asset) => asset.name === 'latest.json').length, 1)
 })
 }

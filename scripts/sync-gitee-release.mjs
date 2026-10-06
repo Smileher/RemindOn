@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import https from 'node:https'
+import childProcess from 'node:child_process'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -57,10 +58,10 @@ async function downloadWithRetry(fetchImpl, url, name) {
   }
 }
 
-async function upload(fetchImpl, token, releaseId, name, bytes) {
+async function upload(fetchImpl, token, releaseId, name, bytes, useCurl = false) {
   console.log(`Uploading Gitee asset: ${name} (${bytes.byteLength} bytes)`)
   if (fetchImpl === fetch) {
-    return uploadWithHttps(token, releaseId, name, bytes)
+    return uploadWithHttps(token, releaseId, name, bytes, useCurl)
   }
   const body = new FormData()
   body.set('access_token', token)
@@ -74,7 +75,7 @@ async function uploadWithRetry(fetchImpl, token, releaseId, name, bytes) {
   let lastError
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      return await upload(fetchImpl, token, releaseId, name, bytes)
+      return await upload(fetchImpl, token, releaseId, name, bytes, attempt > 1)
     } catch (error) {
       lastError = error
       // The upload may have completed before the connection was reset.
@@ -100,7 +101,7 @@ async function uploadWithRetry(fetchImpl, token, releaseId, name, bytes) {
   throw lastError
 }
 
-function uploadWithHttps(token, releaseId, name, bytes) {
+function uploadWithHttps(token, releaseId, name, bytes, useCurl) {
   const boundary = `----RemindOn-${Date.now().toString(36)}`
   const prefix = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="access_token"\r\n\r\n${token}\r\n` +
@@ -111,6 +112,31 @@ function uploadWithHttps(token, releaseId, name, bytes) {
   const suffix = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
   const body = Buffer.concat([prefix, Buffer.from(bytes), suffix])
   const url = new URL(`${api}/releases/${releaseId}/attach_files`)
+  if (useCurl) {
+    // 托管 runner 自带 curl；令牌只通过 stdin 发送，不放进命令参数或日志。
+    return new Promise((resolve, reject) => {
+      const child = childProcess.execFile('curl', [
+        '--silent', '--show-error', '--fail-with-body',
+        '--connect-timeout', String(apiTimeoutMs / 1000), '--max-time', String(uploadDeadlineMs / 1000),
+        '--header', `Content-Type: multipart/form-data; boundary=${boundary}`,
+        '--data-binary', '@-', url.href,
+      ], { timeout: uploadDeadlineMs + 5000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+        if (error) {
+          reject(new Error(`Gitee curl upload failed for ${name}: ${error.message}`))
+          return
+        }
+        try {
+          const asset = JSON.parse(stdout)
+          if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
+          resolve(asset)
+        } catch (error) {
+          reject(error)
+        }
+      })
+      child.stdin.on('error', reject)
+      child.stdin.end(body)
+    })
+  }
   return new Promise((resolve, reject) => {
     let settled = false
     const finish = (error, asset) => {
