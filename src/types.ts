@@ -56,8 +56,15 @@ export interface AppSettings {
 
 export interface AppData {
   version: number
+  autostartOwner?: { platform: string; channel: string; target: string } | null
   settings: AppSettings
   reminders: Reminder[]
+}
+
+export interface AutostartStatus {
+  enabled: boolean
+  conflict: boolean
+  reason: string | null
 }
 
 export interface ReminderTriggeredEvent {
@@ -94,7 +101,7 @@ export const defaultData = (language: Language = 'zh-CN'): AppData => ({
   version: 6,
   settings: {
     language,
-    autostart: true,
+    autostart: false,
     minimizeToTray: true,
     popupAlwaysOnTop: true,
     popupFullscreen: true,

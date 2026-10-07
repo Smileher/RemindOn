@@ -1,6 +1,6 @@
 [package]
 name = "remindon"
-version = "1.2.0"
+version = "1.2.1"
 description = "A small cross-platform desktop reminder"
 authors = ["Smileher"]
 edition = "2021"
@@ -32,9 +32,13 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"
 windows-core = "0.61.2"
+windows = { version = "=0.61.3", features = ["ApplicationModel"] }
 winreg = "0.55"
 notify-rust = "4.18"
 windows-sys = { version = "0.61", features = ["Win32_Storage_Packaging_Appx", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "=1.10.0"
 
 [profile.release]
 opt-level = "z"

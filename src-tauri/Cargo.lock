@@ -3102,10 +3102,11 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remindon"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "chrono",
  "notify-rust",
+ "plist",
  "reqwest",
  "serde",
  "serde_json",
@@ -3120,6 +3121,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "webview2-com",
+ "windows",
  "windows-core 0.61.2",
  "windows-sys 0.61.2",
  "winreg 0.55.0",

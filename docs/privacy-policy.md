@@ -12,7 +12,7 @@ RemindOn 不要求注册账号，也不提供广告、用户画像、统计分�
 
 提醒、提醒文案、计划时间、主题、语言、通知、开机自启和定时操作等设置保存在当前设备的本地应用数据目录：
 
-- Windows：`%APPDATA%\com.remindon.app\remindon.json`
+- Windows：`%USERPROFILE%\.remindon\remindon.json`（v1.2.1 起）
 - macOS：`~/Library/Application Support/com.remindon.app/remindon.json`
 
 你可以在应用中主动导入或导出 JSON 备份。导入或导出的文件由你选择位置，并不会自动上传给 RemindOn 维护者。
@@ -57,7 +57,7 @@ RemindOn does not require an account and does not provide advertising, profiling
 
 Reminders, reminder text, schedules, theme, language, notification, startup, and scheduled action settings are stored locally in the application data directory on your device:
 
-- Windows: `%APPDATA%\com.remindon.app\remindon.json`
+- Windows: `%USERPROFILE%\.remindon\remindon.json` (from v1.2.1)
 - macOS: `~/Library/Application Support/com.remindon.app/remindon.json`
 
 You can manually import or export a JSON backup in the app. Files you choose to import or export remain under your control and are not automatically uploaded to the RemindOn maintainer.

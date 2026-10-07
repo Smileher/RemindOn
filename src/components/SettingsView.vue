@@ -11,6 +11,7 @@ const props = defineProps<{
   settings: AppSettings
   accentColors: AccentColor[]
   autostartError: string
+  autostartNotice?: string
   notificationError: string
   actionMessage: string
   canReset: boolean
@@ -136,7 +137,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </div>
       </div>
       <label class="setting-card setting-toggle">
-        <div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div>
+        <div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><span v-if="autostartNotice">{{ autostartNotice }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div>
         <input :checked="settings.autostart" type="checkbox" @change="emit('update:setting', 'autostart', ($event.target as HTMLInputElement).checked)" />
       </label>
       <label class="setting-card setting-toggle">

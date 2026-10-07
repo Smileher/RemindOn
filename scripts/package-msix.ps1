@@ -82,7 +82,7 @@ $Publisher = [Security.SecurityElement]::Escape($Publisher)
 $PublisherDisplayName = [Security.SecurityElement]::Escape($PublisherDisplayName)
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
-<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap rescap">
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap desktop rescap">
   <Identity Name="$IdentityName" Publisher="$Publisher" Version="$Version" ProcessorArchitecture="$Architecture" />
   <Properties>
     <DisplayName>RemindOn</DisplayName>
@@ -95,6 +95,11 @@ $manifest = @"
   <Applications>
     <Application Id="RemindOn" Executable="RemindOn.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements AppListEntry="default" DisplayName="RemindOn" Description="RemindOn desktop reminders" BackgroundColor="transparent" Square44x44Logo="Assets\Square44x44Logo.png" Square150x150Logo="Assets\Square150x150Logo.png" />
+      <Extensions>
+        <desktop:Extension Category="windows.startupTask" Executable="RemindOn.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="RemindOnStartup" Enabled="false" DisplayName="RemindOn" />
+        </desktop:Extension>
+      </Extensions>
     </Application>
   </Applications>
   <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>

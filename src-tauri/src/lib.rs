@@ -16,7 +16,6 @@ use tauri::{
     State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
-use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
 
 mod browser;
@@ -24,6 +23,7 @@ mod i18n;
 #[cfg(target_os = "windows")]
 mod notification;
 mod updater;
+mod startup;
 
 const DATA_VERSION: u32 = 6;
 const REST_ID: &str = "__rest__";
@@ -197,7 +197,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: Language::ZhCn,
-            autostart: true,
+            autostart: false,
             minimize_to_tray: true,
             popup_always_on_top: true,
             popup_fullscreen: true,
@@ -259,6 +259,8 @@ pub struct Reminder {
 #[serde(rename_all = "camelCase")]
 pub struct AppData {
     pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostart_owner: Option<startup::AutostartOwner>,
     pub settings: AppSettings,
     pub reminders: Vec<Reminder>,
 }
@@ -267,6 +269,7 @@ impl Default for AppData {
     fn default() -> Self {
         Self {
             version: DATA_VERSION,
+            autostart_owner: None,
             settings: AppSettings::default(),
             reminders: default_reminders(Language::ZhCn),
         }
@@ -363,13 +366,19 @@ struct InnerState {
 struct AppState(Arc<InnerState>);
 
 fn data_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+    let directory = config_directory(app)?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
     Ok(directory.join("remindon.json"))
+}
+
+fn config_directory(app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    return app.path().home_dir().map(|path| path.join(".remindon"))
+        .map_err(|error| format!("Failed to resolve the user directory: {error}"));
+    #[cfg(not(target_os = "windows"))]
+    app.path().app_config_dir()
+        .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))
 }
 
 fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
@@ -1610,6 +1619,7 @@ async fn save_data(
         let mut current = state.0.data.lock().map_err(lock_error)?;
         // 普通保存保留后端当前模式，只有主窗口明确切换时才覆盖它。
         data.settings.popup_fullscreen = popup_fullscreen.unwrap_or(current.settings.popup_fullscreen);
+        startup::preserve_local_state(&mut data, &current);
         let current_by_id: HashMap<_, _> = current.reminders.iter().map(|item| (&item.id, item)).collect();
         for reminder in &mut data.reminders {
             if current_by_id.get(&reminder.id).is_none_or(|old| !same_reminder_plan(old, reminder)) {
@@ -1621,7 +1631,6 @@ async fn save_data(
         let rest_interval_changed =
             current.settings.rest_interval_minutes != data.settings.rest_interval_minutes;
         let changed_ids = changed_reminder_ids(&current.reminders, &data.reminders);
-        let autostart_changed = current.settings.autostart != data.settings.autostart;
         commit_app_data(&state.0.data_path, &mut current, data.clone())?;
         clear_persistence_error(&app, &state);
         if rest_enabled_changed && !data.settings.rest_enabled {
@@ -1640,15 +1649,6 @@ async fn save_data(
                 .lock().map_err(lock_error)? = None;
         }
         drop(current);
-        if autostart_changed {
-            // The frontend owns enable/disable; only acknowledge an observed matching state.
-            let error = match app.autolaunch().is_enabled() {
-                Ok(enabled) if enabled == data.settings.autostart => None,
-                Ok(_) => Some("Saved autostart preference does not match the system state".to_string()),
-                Err(error) => Some(error.to_string()),
-            };
-            state.0.native_errors.lock().map_err(lock_error)?.autostart_error = error;
-        }
         state.0.reminder_queue.lock().map_err(lock_error)?
             .retain(|item| !changed_ids.contains(&item.event.id)
                 && (!item.event.is_rest || data.settings.rest_enabled));
@@ -2046,7 +2046,7 @@ async fn test_reminder(
             if event.is_rest {
                 return Err("Break preview cannot include a scheduled reminder".to_string());
             }
-            let mut preview = AppData { version: DATA_VERSION, settings: settings.clone(), reminders: vec![reminder] };
+            let mut preview = AppData { version: DATA_VERSION, autostart_owner: None, settings: settings.clone(), reminders: vec![reminder] };
             validate_and_normalize(&mut preview)?;
             event.title = preview.reminders[0].title.clone();
             event.power_action = preview.reminders[0].power_action.clone();
@@ -2077,8 +2077,9 @@ async fn import_data(
             .0
             .window_operations
             .lock().map_err(lock_error)?;
-        let data = read_import_file(&path)?;
+        let mut data = read_import_file(&path)?;
         let mut current = state.0.data.lock().map_err(lock_error)?;
+        startup::preserve_local_state(&mut data, &current);
         commit_app_data(&state.0.data_path, &mut current, data.clone())?;
         state.0.rest_active.store(false, Ordering::SeqCst);
         state.0.rest_round_pending.store(false, Ordering::SeqCst);
@@ -2109,7 +2110,8 @@ async fn export_data(window: WebviewWindow, app: AppHandle, state: State<'_, App
         };
         let path = path.into_path().map_err(|error| error.to_string())?;
         validate_json_path(&path)?;
-        let data = app_data(&state);
+        let mut data = app_data(&state);
+        data.autostart_owner = None;
         write_json(&path, &data)?;
         Ok(true)
     }).await
@@ -2148,10 +2150,7 @@ async fn import_popup_image(
             return Err("The selected image does not exist".to_string());
         }
         image_extension(&origin)?;
-        let directory = app
-            .path()
-            .app_config_dir()
-            .map_err(|error| format!("Failed to resolve the app configuration directory: {error}"))?;
+        let directory = config_directory(&app)?;
         fs::create_dir_all(&directory)
             .map_err(|error| format!("Failed to create the app configuration directory: {error}"))?;
         // 固定文件名，用户选什么图都存成同一个名字，配置里不需要记录来源。
@@ -2235,7 +2234,7 @@ async fn read_popup_image(
     let state = state.inner().clone();
     blocking_command(move || {
         let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
-        let directory = match app.path().app_config_dir() {
+        let directory = match config_directory(&app) {
             Ok(directory) => directory,
             Err(_) => return Ok(None),
         };
@@ -2284,7 +2283,7 @@ async fn clear_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result
     let state = state.inner().clone();
     blocking_command(move || {
         let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
-        let directory = match app.path().app_config_dir() {
+        let directory = match config_directory(&app) {
             Ok(directory) => directory,
             Err(_) => return Ok(()),
         };
@@ -2714,18 +2713,9 @@ pub fn run() {
             let mut data = load_json(&path).map_err(std::io::Error::other)?;
             let first_start = !path.exists();
             validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
-            let autostart = app.autolaunch();
-            let result = if data.settings.autostart { autostart.enable() } else { autostart.disable() };
             let mut native_errors = NativeErrors::default();
-            if let Err(error) = result {
-                native_errors.autostart_error = Some(error.to_string());
-            }
-            match autostart.is_enabled() {
-                Ok(enabled) => data.settings.autostart = enabled,
-                Err(error) => {
-                    data.settings.autostart = false;
-                    native_errors.autostart_error = Some(error.to_string());
-                }
+            if let Err(error) = startup::observe(app.handle(), &mut data) {
+                native_errors.autostart_error = Some(error);
             }
             write_json(&path, &data).map_err(std::io::Error::other)?;
             let hide_on_start = data.settings.minimize_to_tray && !first_start;
@@ -2780,6 +2770,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_data,
             save_data,
+            startup::get_autostart_status,
+            startup::set_autostart,
             start_scheduler_command,
             stop_scheduler_command,
             set_scheduler_paused,

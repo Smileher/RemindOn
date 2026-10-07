@@ -120,6 +120,11 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
         if (command === 'load_data') return structuredClone(settingsData)
         if (command === 'get_native_errors') return nativeErrors
+        if (command === 'get_autostart_status') {
+          if (nativeErrors.autostartError) throw nativeErrors.autostartError
+          return { enabled: false, conflict: false, reason: null }
+        }
+        if (command === 'set_autostart') return { enabled: args.enabled, conflict: false, reason: null }
         if (command === 'save_data') return saveData(JSON.parse(JSON.stringify(args.data)), args)
         if (command === 'read_popup_image') return null
         if (command === 'clear_popup_image') return
@@ -145,7 +150,6 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
       ask: () => confirmReset(), confirm: () => confirmReset(),
       open: (options) => nativeHandlers.get('open')?.(options), save: noop,
     },
-    '@tauri-apps/plugin-autostart': { disable: async () => nativeHandlers.get('disable')?.(), enable: async () => nativeHandlers.get('enable')?.(), isEnabled: async () => false },
     '@tauri-apps/plugin-notification': { sendNotification: noop, onAction: async () => ({ unregister: async () => {} }), isPermissionGranted: async () => true, requestPermission: async () => 'granted' },
     '@lucide/vue': new Proxy({}, { get: () => ({ render: noop }) }),
     './components/ReminderPopup.vue': { default: { render: noop } },
@@ -427,8 +431,7 @@ test('failed reset restores settings and autostart without overriding the native
   app.setConfirm(async () => true)
   await app.state.resetSettings()
   assert.equal(JSON.stringify(app.state.data.value.settings), before)
-  assert.ok(nativeCalls.includes('enable'))
-  assert.equal(nativeCalls.at(-1), 'enable')
+  assert.equal(app.calls.includes('set_autostart'), false)
   assert.ok(!nativeCalls.includes(null) && !nativeCalls.includes('light'))
   assert.equal(app.calls.includes('clear_popup_image'), false)
   assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
@@ -465,15 +468,61 @@ test('native startup failures display actual autostart status and retain backgro
   assert.equal(app.state.notificationError.value, translate('zh-CN', 'status.notificationFailed', { error: 'notifications disabled' }))
 })
 
-test('reset saves the system theme and synchronizes enabled-by-default autostart', async () => {
+test('startup is queried on launch without enabling a registration', async () => {
+  const app = await mountApp()
+  assert.equal(app.state.data.value.settings.autostart, false)
+  assert.ok(app.calls.includes('get_autostart_status'))
+  assert.equal(app.calls.includes('set_autostart'), false)
+})
+
+test('external startup disable updates the switch without re-enabling it', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings.autostart = true
+  app.focus(true)
+  await new Promise(setImmediate)
+  assert.equal(app.state.data.value.settings.autostart, false)
+  assert.equal(app.calls.includes('set_autostart'), false)
+})
+
+test('startup conflict retains the disabled switch and displays a localized explanation', async () => {
+  const app = await mountApp()
+  app.setInvoke('set_autostart', async () => { throw 'conflict' })
+  app.setInvoke('get_autostart_status', async () => ({ enabled: false, conflict: true, reason: null }))
+  await app.state.updateAutostart(true)
+  assert.equal(app.state.data.value.settings.autostart, false)
+  assert.equal(app.state.autostartNotice.value, translate('zh-CN', 'settings.autostartConflict'))
+  assert.equal(app.state.autostartError.value, translate('zh-CN', 'settings.autostartConflict'))
+})
+
+test('a startup query failure preserves the observed switch and reports the error', async () => {
+  const app = await mountApp()
+  app.state.data.value.settings.autostart = true
+  app.setInvoke('get_autostart_status', async () => { throw 'query denied' })
+  await app.state.refreshAutostart()
+  assert.equal(app.state.data.value.settings.autostart, true)
+  assert.equal(app.state.autostartError.value, translate('zh-CN', 'status.autostartFailed', { error: 'query denied' }))
+})
+
+test('only an explicit startup toggle changes native registration and does not run a separate settings save', async () => {
+  const app = await mountApp()
+  const before = app.calls.length
+  await app.state.updateAutostart(true)
+  assert.equal(app.state.data.value.settings.autostart, true)
+  assert.deepEqual(app.calls.slice(before), ['set_autostart'])
+  await app.state.updateAutostart(false)
+  assert.equal(app.state.data.value.settings.autostart, false)
+})
+
+test('reset saves the system theme and preserves autostart without changing native startup', async () => {
   const app = await mountApp()
   const nativeCalls = []
   app.setNative('enable', async () => nativeCalls.push('enable'))
   app.setNative('disable', async () => nativeCalls.push('disable'))
   app.setNative('setTheme', async (theme) => nativeCalls.push(theme))
   app.setConfirm(async () => true)
+  app.state.data.value.settings.autostart = true
   await app.state.resetSettings()
-  assert.deepEqual(nativeCalls, ['enable'])
+  assert.deepEqual(nativeCalls, [])
   assert.equal(app.state.data.value.settings.autostart, true)
   assert.equal(app.state.data.value.settings.theme, 'system')
 })
@@ -576,7 +625,7 @@ test('window focus changes preserve the active backend break', async () => {
     const before = app.calls.length
     app.focus(focused)
     await new Promise(setImmediate)
-    assert.deepEqual(app.calls.slice(before), ['get_rest_timer_status', 'get_native_errors'])
+    assert.deepEqual(app.calls.slice(before), ['get_rest_timer_status', 'get_native_errors', 'get_autostart_status'])
     assert.equal(app.state.restIsActive.value, true)
     assert.equal(app.state.nextRestTrigger.value, null)
   }

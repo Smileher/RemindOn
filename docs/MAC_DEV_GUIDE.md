@@ -187,7 +187,7 @@ macOS 分发到别人机器时，未签名应用会被 Gatekeeper 拦，需要 A
 
 配置文件 `remindon.json` 在：
 
-- Windows：`%APPDATA%\com.remindon.app\remindon.json`
+- Windows：`%USERPROFILE%\.remindon\remindon.json`（v1.2.1 起）
 - macOS：`~/Library/Application Support/com.remindon.app/remindon.json`
 
 用 Finder 打开这个目录：`Cmd + Shift + G`，粘贴 `~/Library/Application Support/`，回车。

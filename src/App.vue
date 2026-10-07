@@ -5,7 +5,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ask, confirm, open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
-import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import ReminderPopup from './components/ReminderPopup.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import EventsView from './components/EventsView.vue'
@@ -15,7 +14,7 @@ import AboutView from './components/AboutView.vue'
 import { translate } from './i18n'
 import type { MessageKey } from './i18n'
 import { logError } from './error'
-import type { AccentColor, AppData, Language, NativeErrors, PowerAction, Reminder, ReminderForm, ReminderTriggeredEvent, ReminderType, RestTimerStatus, SettingsTab, TestReminderKind } from './types'
+import type { AccentColor, AppData, AutostartStatus, Language, NativeErrors, PowerAction, Reminder, ReminderForm, ReminderTriggeredEvent, ReminderType, RestTimerStatus, SettingsTab, TestReminderKind } from './types'
 import { defaultData, defaultReminders } from './types'
 import { useUpdater } from './composables/useUpdater'
 
@@ -39,6 +38,7 @@ const notificationError = ref('')
 const persistenceError = ref('')
 const schedulerError = ref('')
 const autostartError = ref('')
+const autostartNotice = ref('')
 const appVersion = ref('1.1')
 const popupBackgroundPreview = ref('')
 const {
@@ -144,6 +144,7 @@ const canResetSettings = computed(() => {
   const localized = {
     ...defaults,
     language,
+    autostart: current.autostart,
     restMessage: translate(language, 'rest.defaultMessage'),
   }
   return Boolean(popupBackgroundPreview.value) || (Object.keys(localized) as Array<keyof typeof localized>).some(
@@ -433,17 +434,39 @@ async function updateAutostart(value: boolean) {
   return queueSettings(async () => {
     autostartError.value = ''
     try {
-      if (value) await enable()
-      else await disable()
-      if (!await saveSetting('autostart', value)) {
-        if (value) await disable()
-        else await enable()
-      }
+      applyAutostartStatus(await invoke<AutostartStatus>('set_autostart', { enabled: value }))
     } catch (error) {
       logError('update autostart', error)
-      autostartError.value = t('status.autostartFailed', { error: formatError(error) })
+      await refreshAutostart()
+      autostartError.value = startupMessage(formatError(error))
     }
   })
+}
+
+function startupMessage(reason: string) {
+  const keys: Record<string, MessageKey> = {
+    conflict: 'settings.autostartConflict',
+    disabledByUser: 'settings.autostartDisabledByUser',
+    disabledByPolicy: 'settings.autostartDisabledByPolicy',
+    enabledByPolicy: 'settings.autostartDisabledByPolicy',
+    temporaryPath: 'settings.autostartTemporaryPath',
+  }
+  return keys[reason] ? t(keys[reason]) : t('status.autostartFailed', { error: reason })
+}
+
+function applyAutostartStatus(status: AutostartStatus) {
+  data.value.settings.autostart = status.enabled
+  autostartNotice.value = status.conflict ? t('settings.autostartConflict') : status.reason ? startupMessage(status.reason) : ''
+  autostartError.value = ''
+}
+
+async function refreshAutostart() {
+  try {
+    applyAutostartStatus(await invoke<AutostartStatus>('get_autostart_status'))
+  } catch (error) {
+    logError('read autostart status', error)
+    autostartError.value = startupMessage(formatError(error))
+  }
 }
 
 function localizedDefaultMessages(language: Language) {
@@ -583,13 +606,12 @@ async function resetSettings() {
     const defaults = defaultData().settings
     data.value.settings = {
       ...defaults,
+      autostart: previous.autostart,
       language: previous.language,
       restMessage: translate(previous.language, 'rest.defaultMessage'),
     }
     restMessageDraft.value = data.value.settings.restMessage
     try {
-      if (defaults.autostart) await enable()
-      else await disable()
       await persist(defaults.popupFullscreen)
       await refreshTimers()
     } catch (error) {
@@ -598,15 +620,6 @@ async function resetSettings() {
         popupFullscreen: modeRevision === externalModeRevision ? previous.popupFullscreen : data.value.settings.popupFullscreen,
       }
       restMessageDraft.value = previous.restMessage
-      const rollback = await Promise.allSettled([
-        previous.autostart ? enable() : disable(),
-      ])
-      for (const result of rollback) {
-        if (result.status === 'rejected') logError('restore system settings after reset', result.reason)
-      }
-      if (rollback[0].status === 'rejected') {
-        autostartError.value = t('status.autostartFailed', { error: formatError(rollback[0].reason) })
-      }
       logError('reset settings', error)
       actionMessage.value = t('status.saveFailed')
       return
@@ -731,15 +744,12 @@ onMounted(async () => {
     } catch {
       // Keep the package-version fallback in standalone preview mode.
     }
-    try {
-      data.value.settings.autostart = await isEnabled()
-    } catch {
-      // Keep the saved value when the platform autostart API is unavailable.
-    }
     await refreshNativeErrors()
+    await refreshAutostart()
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(() => {
       void refreshTimers()
       void refreshNativeErrors()
+      void queueSettings(refreshAutostart)
     })
     unlisten = await getCurrentWindow().listen<ReminderTriggeredEvent>('reminder-triggered', async () => {
       await queueSettings(async () => {
@@ -869,6 +879,7 @@ onUnmounted(() => {
         v-model:initial-tab="settingsTab"
         :accent-colors="accentColors"
         :autostart-error="autostartError"
+        :autostart-notice="autostartNotice"
         :notification-error="notificationError"
         :action-message="actionMessage"
         :can-reset="canResetSettings"

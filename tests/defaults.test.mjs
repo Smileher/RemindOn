@@ -13,7 +13,7 @@ test('new configuration enables a 40-minute break and shared popup defaults', ()
   assert.equal(settings.popupFullscreen, true)
   assert.equal(settings.popupAlwaysOnTop, true)
   assert.equal(settings.popupFadeEnabled, true)
-  assert.equal(settings.autostart, true)
+  assert.equal(settings.autostart, false)
   assert.equal(settings.minimizeToTray, true)
 })
 
