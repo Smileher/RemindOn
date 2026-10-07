@@ -129,10 +129,14 @@ const selectedSnoozeLabel = computed(() =>
     || t('popup.minutes', { minutes: 5 }),
 )
 
-const restElapsed = computed(() => t('popup.rested', {
-  minutes: Math.floor(restElapsedSeconds.value / 60),
-  seconds: restElapsedSeconds.value % 60,
-}))
+const restElapsed = computed(() => {
+  const hours = Math.floor(restElapsedSeconds.value / 3600)
+  const minutes = Math.floor(restElapsedSeconds.value / 60) % 60
+  const seconds = restElapsedSeconds.value % 60
+  return hours > 0
+    ? t('popup.restedHours', { hours, minutes, seconds })
+    : t('popup.rested', { minutes, seconds })
+})
 
 async function toggleFullscreenMode() {
   try {

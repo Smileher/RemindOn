@@ -37,6 +37,23 @@ test('new settings enable fullscreen reminders by default', () => {
   assert.equal(defaultData().settings.popupFullscreen, true)
 })
 
+test('rest elapsed display carries minutes into hours in both languages', async () => {
+  const popup = await mountPopup({ active: restEvent })
+  assert.equal(popup.state.restElapsed.value, '已休息：0 分 0 秒')
+  await popup.advance(3_599_000)
+  assert.equal(popup.state.restElapsed.value, '已休息：59 分 59 秒')
+  await popup.advance(1_000)
+  assert.equal(popup.state.restElapsed.value, '已休息：1 小时 0 分 0 秒')
+  await popup.advance(3_661_000)
+  assert.equal(popup.state.restElapsed.value, '已休息：2 小时 1 分 1 秒')
+  popup.state.settings.value.language = 'en'
+  assert.equal(popup.state.restElapsed.value, 'Resting: 2h 1m 1s')
+  await popup.state.handleTrigger({ ...restEvent, sessionId: 2 })
+  popup.state.settings.value.language = 'en'
+  await popup.advance(61_000)
+  assert.equal(popup.state.restElapsed.value, 'Resting: 1m 1s')
+})
+
 test('mode changes preserve the rest start and automatic power deadline', async () => {
   const popup = await mountPopup()
   const startedAt = popup.now()
