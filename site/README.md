@@ -40,6 +40,9 @@ node site/build.mjs
 ## 维护
 
 - 中英文文案：`content.mjs`；共享页面结构：`template.mjs`；深浅主题及响应式样式：`style.css`。
+- 功能区保留四张核心卡片，顺序与软件界面一致，休息提醒置前；下载区使用对称的平台主入口，下方提供 Windows 安装版与便携版。
+- `downloads.js` 优先使用 Windows UA Client Hints，再检查明确的 ARM64 UA 标记，无法确定时默认 x64。手动切换同时控制安装版和便携版，优先于异步识别结果；无 JavaScript 时展示所有架构链接。
+- `assets/store-{zh,en}-{dark,light}.svg` 来自微软官方 `https://get.microsoft.com/images/{zh-cn,en-us}%20{dark,light}.svg`，保持原始内容与比例。官网徽标跟随页面主题，项目 README 使用 `<picture>` 跟随系统主题；构建时复制到本地资源目录，无需访客访问外部徽标服务器。
 - 软件界面调整后，同步更新 `content.mjs` 中各语言的 `mockup` 文案与 `template.mjs` 的 mockup 结构，使展示与真实界面保持一致。
 - 基础路径与正式域名定义在 `template.mjs`。首版固定使用 GitHub 项目 Pages 地址，不配置自定义域名。
 - 构建时复制现有应用 Logo 和 PNG 图标，无需维护另一套品牌资源。

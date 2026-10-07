@@ -54,6 +54,13 @@ export async function buildSite() {
   await copyFile(join(siteDir, '..', 'src-tauri', 'icons', 'icon.png'), join(outputDir, 'assets', 'share-icon.png'))
   await copyFile(join(siteDir, 'style.css'), join(outputDir, 'assets', 'style.css'))
   await copyFile(join(siteDir, 'theme.js'), join(outputDir, 'assets', 'theme.js'))
+  await copyFile(join(siteDir, 'downloads.js'), join(outputDir, 'assets', 'downloads.js'))
+  for (const language of Object.keys(locales)) {
+    for (const theme of ['light', 'dark']) {
+      const badge = `store-${language}-${theme}.svg`
+      await copyFile(join(siteDir, 'assets', badge), join(outputDir, 'assets', badge))
+    }
+  }
   for (const [language, { path }] of Object.entries(locales)) {
     await mkdir(join(outputDir, path), { recursive: true })
     await writeFile(join(outputDir, path, 'index.html'), renderPage(language, release), 'utf8')

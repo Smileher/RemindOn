@@ -45,10 +45,6 @@ export function renderPage(language, release) {
   const url = `${origin}${basePath}${t.path}`
   const logo = `${basePath}assets/remindon.svg`
   const releaseDate = new Intl.DateTimeFormat(t.lang, { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(release.publishedAt))
-  const allFeatures = [
-    ...t.features.map((feature) => ({ ...feature, tags: feature.tags || [] })),
-    ...t.details.map((detail) => ({ ...detail, tags: [] })),
-  ]
   const trustRow = [t.platforms, ...t.trust].map((item) => `<span>${e(item)}</span>`).join('<span class="sep" aria-hidden="true"></span>')
   const mockup = t.mockup
   const macSize = (release.downloads[macPackage.key].size / 1024 / 1024).toFixed(1)
@@ -81,6 +77,7 @@ export function renderPage(language, release) {
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="${logo}" type="image/svg+xml">
   <script src="${basePath}assets/theme.js"></script>
+  <script src="${basePath}assets/downloads.js" type="module"></script>
   <link rel="stylesheet" href="${basePath}assets/style.css">
 </head>
 <body>
@@ -150,7 +147,7 @@ export function renderPage(language, release) {
     <section class="features section" id="features" aria-labelledby="features-title">
       <div class="wrap">
         <div class="section-head"><p class="eyebrow">${e(t.featuresLabel)}</p><h2 id="features-title">${e(t.featuresTitle)}</h2><p>${e(t.featuresIntro)}</p></div>
-        <div class="features-grid">${allFeatures.map((feature, i) => `<article class="feature" style="--i:${i % 3}"><span class="feature-icon ${iconColors[i % 3]}">${icon(feature.icon, '', 22)}</span><h3>${e(feature.title)}</h3><p>${e(feature.text)}</p>${feature.tags.length ? `<div class="feature-tags mono">${feature.tags.map((tag) => `<span class="chip">${e(tag)}</span>`).join('')}</div>` : ''}</article>`).join('')}</div>
+        <div class="features-grid">${t.features.map((feature, i) => `<article class="feature" style="--i:${i % 2}"><span class="feature-icon ${iconColors[i % 3]}">${icon(feature.icon, '', 22)}</span><h3>${e(feature.title)}</h3><p>${e(feature.text)}</p></article>`).join('')}</div>
       </div>
     </section>
     <section class="download-section section" id="download" aria-labelledby="download-title">
@@ -158,15 +155,18 @@ export function renderPage(language, release) {
       <div class="download-grid">
         <article class="platform-card">
           <div class="platform-heading"><span class="platform-icon">${icon('windows', '', 22)}</span><div><h3>Windows</h3><p>${e(t.windowsIntro)}</p></div></div>
-          <a class="store-primary" href="${e(storePackage.externalUrl)}"><span class="store-primary-copy"><span class="store-badge mono">${e(t.storeBadge)}</span><strong>${e(t.storePrimary)}</strong><small>${e(t.storeNote)}</small></span>${icon('arrow', 'arrow', 16)}</a>
-          <p class="platform-subhead mono">${e(t.otherVersions)}</p>
-          <div class="platform-options" aria-label="${e(t.chooseVersion)}">${windowsPackages.map((pkg) => { const download = release.downloads[pkg.key]; return `<a class="platform-option" href="${e(download.url)}"><span class="platform-option-copy"><strong>${e(pkg.arch)}</strong><small>${e(pkg.text)}</small></span><span class="platform-option-action">${e(pkg.action)}${icon('download', 'arrow', 15)}</span></a>` }).join('')}</div>
+          <div class="platform-primary"><a class="store-link" href="${e(storePackage.externalUrl)}" aria-label="${e(t.storePrimary)}"><img class="store-image store-image-dark" src="${basePath}assets/store-${language}-dark.svg" width="161" height="44" alt="${e(t.storePrimary)}"><img class="store-image store-image-light" src="${basePath}assets/store-${language}-light.svg" width="161" height="44" alt="${e(t.storePrimary)}"></a></div>
+          <p class="platform-note">${e(t.storeNote)}</p>
         </article>
         <article class="platform-card">
           <div class="platform-heading"><span class="platform-icon">${icon('apple', '', 22)}</span><div><h3>${e(macPackage.title)}</h3><p>${e(t.macIntro)}</p></div></div>
-          <a class="store-primary mac-primary" href="${e(release.downloads[macPackage.key].url)}"><span class="store-primary-copy"><strong>${e(macPackage.action)}</strong><small>${e(macPackage.arch)}</small></span>${icon('download', 'arrow', 16)}</a>
-          <p class="platform-subhead mac-note mono">${e(macPackage.text)} · ${macSize} MiB</p>
+          <div class="platform-primary"><a class="mac-primary" href="${e(release.downloads[macPackage.key].url)}"><span><strong>${e(macPackage.action)}</strong><small>${e(macPackage.arch)} · ${macSize} MiB</small></span>${icon('download', '', 20)}</a></div>
+          <p class="platform-note">${e(macPackage.text)}</p>
         </article>
+      </div>
+      <div class="direct-downloads" id="windows-downloads">
+        <div class="direct-heading"><h3>${e(t.otherVersions)}</h3><div class="arch-controls" role="group" aria-label="${e(t.chooseVersion)}" hidden><button type="button" data-architecture="x64" aria-pressed="true">x64</button><button type="button" data-architecture="arm64" aria-pressed="false">ARM64</button></div></div>
+        <div class="direct-options">${windowsPackages.map((pkg) => { const download = release.downloads[pkg.key]; const architecture = pkg.key.endsWith('Arm64') ? 'arm64' : 'x64'; const portable = pkg.key.startsWith('portable'); return `<a class="direct-option" data-package-architecture="${architecture}" href="${e(download.url)}"><span><strong>${e(portable ? t.portableLabel : t.installerLabel)} <span class="package-arch mono">${architecture === 'arm64' ? 'ARM64' : 'x64'}</span></strong><small>${e(portable ? t.portableNote : t.directNote)}</small></span>${icon('download', '', 18)}</a>` }).join('')}</div>
       </div>
       <div class="download-bottom"><p>${e(t.downloadNote)}</p><a class="text-link" href="${repository}/releases">${e(t.allReleases)}${icon('arrow', 'arrow', 15)}</a></div></div>
     </section>

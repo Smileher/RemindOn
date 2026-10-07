@@ -2,6 +2,14 @@
 
 轻量桌面提醒工具，基于 Tauri 2、Vue 3、TypeScript 和 Rust，面向 Windows 与 Apple Silicon Mac。无需账号或服务器，数据保存在本地。
 
+## 下载
+
+Windows 推荐通过 Microsoft Store 安装，支持 x64 与 ARM64，更新由商店管理。
+
+<a href="https://apps.microsoft.com/detail/9P9K31N2CJBW"><picture><source media="(prefers-color-scheme: light)" srcset="site/assets/store-zh-dark.svg"><img src="site/assets/store-zh-light.svg" height="80" alt="从 Microsoft Store 获取 RemindOn"></picture></a>
+
+[下载 Mac 版](https://smileher.github.io/RemindOn/#download)（Apple Silicon） · [Windows 安装版与便携版](https://smileher.github.io/RemindOn/#windows-downloads)
+
 ## 宣传官网
 
 宣传官网：<https://smileher.github.io/RemindOn/>。支持中英文，主题默认跟随系统，也可手动切换深浅，下载信息随正式版本发布自动更新。
