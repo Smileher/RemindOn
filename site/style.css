@@ -614,12 +614,12 @@ section { position: relative; padding: var(--section-y) 0; scroll-margin-top: 96
 .store-link { display: block; width: 234px; max-width: 100%; transition: transform .25s; }
 .store-link:hover { transform: translateY(-2px); }
 .store-image { width: 100%; height: auto; aspect-ratio: 161 / 44; }
-.store-image-light { display: none; }
-:root[data-theme="dark"] .store-image-dark { display: none; }
-:root[data-theme="dark"] .store-image-light { display: block; }
+.store-image-dark { display: none; }
+:root[data-theme="dark"] .store-image-light { display: none; }
+:root[data-theme="dark"] .store-image-dark { display: block; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .store-image-dark { display: none; }
-  :root:not([data-theme]) .store-image-light { display: block; }
+  :root:not([data-theme]) .store-image-light { display: none; }
+  :root:not([data-theme]) .store-image-dark { display: block; }
 }
 .mac-primary {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
