@@ -53,6 +53,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div>
         <span v-if="updateProgress !== null">{{ updateProgress }}%</span>
       </div>
+      <p v-if="updateMode === 'portable' && updateStatus === 'available' && updateProgress === 100" class="update-download-note" role="status">{{ t('update.portableDownloaded') }}</p>
       <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
     </div>
     <div v-else class="update-panel" aria-live="polite">

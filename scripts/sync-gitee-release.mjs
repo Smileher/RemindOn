@@ -16,8 +16,8 @@ const syncDeadlineMs = 25 * 60 * 1000
 const assetNames = (version, legacyX64) => [
   `RemindOn_${version}_x64-setup.exe`,
   ...(!legacyX64 ? [`RemindOn_${version}_arm64-setup.exe`] : []),
-  `RemindOn_${version}_x64_portable.exe`,
-  ...(!legacyX64 ? [`RemindOn_${version}_arm64_portable.exe`] : []),
+  `RemindOn_${version}_x64_portable.zip`,
+  ...(!legacyX64 ? [`RemindOn_${version}_arm64_portable.zip`] : []),
   'RemindOn_aarch64.app.tar.gz',
   `RemindOn_${version}_aarch64.dmg`,
 ]
@@ -208,13 +208,6 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     throw new Error('Legacy x64 mode cannot be used with an ARM64 update manifest')
   }
   const names = assetNames(githubManifest.version, legacyX64)
-  // Mirror ZIP downloads when present; historical releases still use the original EXEs.
-  for (const name of [...names]) {
-    if (name.endsWith('_portable.exe')) {
-      const archive = name.replace(/\.exe$/, '.zip')
-      if (githubRelease.assets.some((asset) => asset.name === archive)) names.push(archive)
-    }
-  }
   for (const name of names) {
     if (!githubRelease.assets.some((asset) => asset.name === name)) throw new Error(`GitHub release is missing: ${name}`)
   }

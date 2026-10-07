@@ -658,9 +658,9 @@ fn validate_download_asset(version: &str, asset: &PortableDownloadAsset) -> Resu
 #[cfg(target_os = "windows")]
 fn expected_download_file_name(version: &str) -> String {
     if cfg!(target_arch = "aarch64") {
-        format!("RemindOn_{version}_arm64_portable.exe")
+        format!("RemindOn_{version}_arm64_portable.zip")
     } else {
-        format!("RemindOn_{version}_x64_portable.exe")
+        format!("RemindOn_{version}_x64_portable.zip")
     }
 }
 
@@ -743,6 +743,10 @@ async fn download_to_file(
         emit_download_progress(app, downloaded, total);
     }
     file.flush().map_err(|error| error.to_string())?;
+    // Complete progress even when the server omits Content-Length.
+    if downloaded > 0 {
+        emit_download_progress(app, downloaded, Some(downloaded));
+    }
     Ok(())
 }
 
@@ -879,6 +883,14 @@ mod tests {
         assert!(validate_release_version("0.7.0").is_ok());
         assert!(validate_download_asset("0.7.0", &asset).is_ok());
         assert!(validate_release_version("0.7").is_err());
+
+        #[cfg(target_os = "windows")]
+        {
+            assert!(asset.file_name.ends_with("_portable.zip"));
+            asset.file_name = asset.file_name.replace(".zip", ".exe");
+            assert!(validate_download_asset("0.7.0", &asset).is_err());
+            asset = valid_asset("0.7.0");
+        }
 
         asset.url = asset.url.replace("Smileher/RemindOn", "other/project");
         assert!(validate_download_asset("0.7.0", &asset).is_err());

@@ -6,8 +6,8 @@ const names = [
   'RemindOn_0.7.0_x64-setup.exe',
   'RemindOn_0.7.0_arm64-setup.exe',
   'RemindOn_aarch64.app.tar.gz',
-  'RemindOn_0.7.0_x64_portable.exe',
-  'RemindOn_0.7.0_arm64_portable.exe',
+  'RemindOn_0.7.0_x64_portable.zip',
+  'RemindOn_0.7.0_arm64_portable.zip',
   'RemindOn_0.7.0_aarch64.dmg',
 ]
 const release = {
@@ -40,6 +40,7 @@ test('a missing platform, missing signature or mismatched version stops publicat
   assert.throws(() => createUpdaterManifest('0.7.0', { ...release, assets: release.assets.filter((asset) => asset.name !== names[1]) }, signatures, checksums), /windows-aarch64/)
   assert.throws(() => createUpdaterManifest('0.7.0', release, { ...signatures, [`${names[2]}.sig`]: '  ' }, checksums), /darwin-aarch64/)
   assert.throws(() => createUpdaterManifest('0.7.0', release, signatures, { ...checksums, [`${names[4]}.sha256`]: 'invalid' }), /windows-aarch64-portable/)
+  assert.throws(() => createUpdaterManifest('0.7.0', release, signatures, { ...checksums, [`${names[3]}.sha256`]: undefined, [`${names[3].replace('.zip', '.exe')}.sha256`]: 'a'.repeat(64) }), /windows-x86_64-portable/)
 })
 
 test('draft asset URLs are converted to permanent version URLs before publication', () => {

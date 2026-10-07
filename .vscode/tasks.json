@@ -26,8 +26,9 @@
     {
       "label": "RemindOn: 构建 Windows 便携版",
       "type": "shell",
-      "command": "pnpm",
-      "args": ["tauri:build", "--no-bundle", "--ci"],
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "./scripts/build-portable.ps1"],
+      "detail": "构建 x64 便携 ZIP 和 ZIP 的 SHA-256，输出到 src-tauri/target/portable/<版本>/。",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },

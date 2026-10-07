@@ -333,8 +333,8 @@ git tag v1.2.0 && git push origin v1.2.0
 ```
 RemindOn_<版本>_x64-setup.exe
 RemindOn_<版本>_arm64-setup.exe
-RemindOn_<版本>_x64_portable.exe
-RemindOn_<版本>_arm64_portable.exe
+RemindOn_<版本>_x64_portable.zip
+RemindOn_<版本>_arm64_portable.zip
 RemindOn_<版本>_aarch64.dmg
 ```
 所以 Windows 便携版和 Mac 的 dmg 都是必需产物，CI 已自动处理。

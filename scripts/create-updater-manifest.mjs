@@ -30,8 +30,8 @@ export function createUpdaterManifest(version, release, signatures, checksums) {
     platforms[platform] = { url: permanentAssetUrl(asset, release), signature }
   }
   const portablePackages = {
-    'windows-x86_64-portable': `RemindOn_${version}_x64_portable.exe`,
-    'windows-aarch64-portable': `RemindOn_${version}_arm64_portable.exe`,
+    'windows-x86_64-portable': `RemindOn_${version}_x64_portable.zip`,
+    'windows-aarch64-portable': `RemindOn_${version}_arm64_portable.zip`,
     'darwin-aarch64-portable': `RemindOn_${version}_aarch64.dmg`,
   }
   const downloads = {}

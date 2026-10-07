@@ -277,6 +277,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .update-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 7px; color: var(--accent-strong); background: var(--accent-soft); }
 .update-icon.checking svg, .update-actions svg.checking { animation: update-spin .8s linear infinite; }
 .update-panel .update-error { display: -webkit-box; grid-column: 1 / -1; margin: 0; overflow: hidden; color: var(--danger); font-size: var(--font-xs); line-height: 1.4; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.update-download-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--font-xs); line-height: 1.4; overflow-wrap: anywhere; }
 .update-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .update-actions .icon-button { border: 1px solid var(--border); background: var(--surface-hover); }
 .update-panel .button:disabled { cursor: wait; opacity: .55; transform: none; }

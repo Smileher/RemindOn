@@ -63,14 +63,14 @@ cargo test --manifest-path src-tauri/Cargo.toml
 # Windows：构建 NSIS 安装包
 pnpm tauri:build --bundles nsis
 
-# Windows：构建便携 EXE（不打包）
-pnpm tauri:build --no-bundle
+# Windows：构建便携 ZIP（默认 x64；ARM64 加 -Architecture arm64）
+pwsh -NoProfile -File ./scripts/build-portable.ps1
 
 # macOS：在 Apple Silicon Mac 上构建 DMG
 pnpm tauri:build --bundles app,dmg
 ```
 
-安装包输出到 `src-tauri/target/release/bundle/`。Windows 可执行文件为 `src-tauri/target/release/remindon.exe`；发布时另生成版本化的便携程序，例如 `RemindOn_1.1.0_x64_portable.exe`。macOS 构建需在对应平台验证。
+安装包输出到 `src-tauri/target/release/bundle/`。本地便携构建输出到 `src-tauri/target/portable/<版本>/`，仅交付版本化 ZIP 和 ZIP 的 SHA-256，例如 `RemindOn_1.2.0_x64_portable.zip`；ZIP 内包含对应架构的 EXE。ARM64 构建需安装对应 Rust target 和 MSVC/Clang 工具链。macOS 构建需在对应平台验证。
 
 ## 使用说明
 
@@ -95,7 +95,7 @@ pnpm tauri:build --bundles app,dmg
 
 更新文件托管在 [GitHub Releases](https://github.com/Smileher/RemindOn/releases)，并自动同步到 [Gitee 镜像](https://gitee.com/smileher/RemindOn/releases)，无需自建服务器。客户端读取最新正式版本的 `latest.json`，使用内置公钥校验更新包签名。普通版启动后最多每 24 小时自动检查一次；检查失败保持安静，手动检查失败时会显示错误并提供下载入口。
 
-- Windows NSIS 安装版可在应用内安装更新。便携版会把版本化 EXE 下载到系统“下载”目录；下载完成后可点击“打开所在位置”，退出旧程序后自行运行或替换为新版。
+- Windows NSIS 安装版可在应用内安装更新。便携版会把版本化 ZIP 下载到系统“下载”目录并校验 ZIP 的 SHA-256；下载完成后，请从托盘退出旧程序，解压 ZIP 并手动替换为新版。不会自动解压、替换或启动新版。
 - Windows 同时发布 x64 和 ARM64 安装版、便携版。请根据系统架构选择对应文件，ARM64 版本不能安装到 x64 设备上。
 - macOS 仅发布 Apple Silicon 版本。位于 `/Applications` 或 `~/Applications` 的应用副本可自动更新；从 DMG 或其他位置运行时，会把最新版 DMG 下载到系统“下载”目录。
 - GitHub 下载连接失败或无进度时，关于页面会显示 5 秒倒计时，并允许立即切换到 Gitee；倒计时结束后自动切换。Gitee 清单与 GitHub 清单版本、签名和 SHA-256 相同，只替换下载地址。
@@ -118,7 +118,7 @@ pnpm tauri:build --bundles nsis
 
 1. 同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和界面的版本回退值，并更新 Cargo 锁文件。
 2. 执行上述检查，提交代码并推送版本标签，例如 `v1.1.0`。
-3. Release 工作流创建草稿，并行构建 Windows x64、Windows ARM64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 EXE、macOS DMG 和对应 SHA-256。
+3. Release 工作流创建草稿，并行构建 Windows x64、Windows ARM64、macOS Apple Silicon 安装包及签名，同时上传版本化 Windows 便携 ZIP、macOS DMG 和对应 SHA-256；便携 EXE 仅放在 ZIP 内，不单独发布。
 4. 所有构建成功后统一生成包含安装包签名及便携下载信息的 GitHub `latest.json`，再公开发布。失败时保留草稿，不向客户端发布不完整的更新。
 5. Release 成功后，独立的 `Retry Gitee release sync` 工作流自动创建或复用同 tag 的 Gitee Release，上传 6 个二进制资产和 Gitee 版 `latest.json`。镜像失败不会阻塞 Release 或 Pages；Gitee 仓库不接收源码同步。
 
