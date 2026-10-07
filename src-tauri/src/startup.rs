@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri::{AppHandle, State};
+#[cfg(not(target_os = "macos"))]
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::{blocking_command, commit_app_data, lock_error, AppData, AppState};
