@@ -38,6 +38,8 @@ if (-not $makeAppx) {
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 }
 if (-not $makeAppx) { throw 'Install the Windows SDK with MakeAppx.exe before packaging.' }
+$makePri = Join-Path (Split-Path $makeAppx) 'makepri.exe'
+if (-not (Test-Path -LiteralPath $makePri -PathType Leaf)) { throw 'MakePRI.exe was not found in the Windows SDK.' }
 $signtool = Join-Path (Split-Path $makeAppx) 'signtool.exe'
 if ($CertificatePath -and -not (Test-Path -LiteralPath $signtool -PathType Leaf)) { throw 'SignTool.exe was not found in the Windows SDK.' }
 $root = Join-Path ([IO.Path]::GetTempPath()) "remindon-msix-$Architecture-$([guid]::NewGuid())"
@@ -100,6 +102,13 @@ $manifest = @"
 "@
 $manifestPath = Join-Path $stage 'AppxManifest.xml'
 [IO.File]::WriteAllText($manifestPath, $manifest, [Text.Encoding]::UTF8)
+
+# Qualified icon files need a PRI index so Windows can select the unplated variants.
+$priConfig = Join-Path $root 'priconfig.xml'
+& $makePri createconfig /cf $priConfig /dq en-US /pv 10.0.0 /o
+if ($LASTEXITCODE -ne 0) { throw "MakePRI configuration failed with exit code $LASTEXITCODE" }
+& $makePri new /pr $stage /cf $priConfig /mn $manifestPath /of (Join-Path $stage 'resources.pri') /o
+if ($LASTEXITCODE -ne 0) { throw "MakePRI indexing failed with exit code $LASTEXITCODE" }
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $msixPath = Join-Path $OutputDirectory "RemindOn_${Version}_${Architecture}.msix"
