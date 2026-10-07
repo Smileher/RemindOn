@@ -5,7 +5,7 @@ import { locales } from '../content.mjs'
 import { renderPage, repository } from '../template.mjs'
 
 function releaseFixture(version = '0.7.0') {
-  const names = [`RemindOn_${version}_x64-setup.exe`, `RemindOn_${version}_arm64-setup.exe`, `RemindOn_${version}_x64_portable.exe`, `RemindOn_${version}_arm64_portable.exe`, `RemindOn_${version}_aarch64.dmg`, 'RemindOn_aarch64.app.tar.gz']
+  const names = [`RemindOn_${version}_x64-setup.exe`, `RemindOn_${version}_arm64-setup.exe`, `RemindOn_${version}_x64_portable.exe`, `RemindOn_${version}_arm64_portable.exe`, `RemindOn_${version}_aarch64.dmg`, 'RemindOn_aarch64.app.tar.gz', `RemindOn_${version}_x64_portable.zip`, `RemindOn_${version}_arm64_portable.zip`]
   return {
     tag_name: `v${version}`, draft: false, prerelease: false,
     published_at: '2026-09-10T07:18:05Z', html_url: `${repository}/releases/tag/v${version}`,
@@ -17,6 +17,8 @@ test('a new version updates GitHub downloads and the Store entry on both pages',
   const release = parseRelease(releaseFixture('0.8.0'))
   assert.equal(release.version, '0.8.0')
   assert.deepEqual(Object.keys(release.downloads), ['windows', 'windowsArm64', 'portable', 'portableArm64', 'mac'])
+  assert.match(release.downloads.portable.url, /_x64_portable\.zip$/)
+  assert.match(release.downloads.portableArm64.url, /_arm64_portable\.zip$/)
   for (const language of Object.keys(locales)) {
     const html = renderPage(language, release)
     assert.match(html, /v0\.8\.0/)
@@ -57,9 +59,18 @@ test('the landing renders the glass structure and bilingual mockup copy', () => 
 test('missing platform package fails instead of linking a signature or update archive', () => {
   for (const index of [0, 1, 2, 3, 4]) {
     const release = releaseFixture()
-    release.assets.splice(index, 1)
+    const removed = release.assets.splice(index, 1)[0]
+    release.assets = release.assets.filter((asset) => asset.name !== removed.name.replace(/\.exe$/, '.zip'))
     assert.throws(() => parseRelease(release), /Missing or invalid release asset/)
   }
+})
+
+test('historical releases without portable ZIPs keep executable downloads', () => {
+  const fixture = releaseFixture()
+  fixture.assets = fixture.assets.filter((asset) => !asset.name.endsWith('.zip'))
+  const release = parseRelease(fixture)
+  assert.match(release.downloads.portable.url, /_x64_portable\.exe$/)
+  assert.match(release.downloads.portableArm64.url, /_arm64_portable\.exe$/)
 })
 
 test('drafts, prereleases, invalid versions and dates cannot be published', () => {

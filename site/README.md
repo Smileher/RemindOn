@@ -21,7 +21,7 @@ node --test site/tests/*.test.mjs
 node site/build.mjs
 ```
 
-版本号、发布日期、文件大小及 GitHub 下载地址由 GitHub API 的最新正式 Release 一次性提供，不从 `package.json` 回退，不在访客浏览器中调用 API。页面展示 Windows x64/ARM64 安装包与便携 EXE、Apple Silicon DMG，并提供 Microsoft Store 官方渠道入口；签名文件和应用更新专用压缩包不会作为下载按钮。
+版本号、发布日期、文件大小及 GitHub 下载地址由 GitHub API 的最新正式 Release 一次性提供，不从 `package.json` 回退，不在访客浏览器中调用 API。页面展示 Windows x64/ARM64 安装包与便携 ZIP（历史版本回退 EXE）、Apple Silicon DMG，并提供 Microsoft Store 官方渠道入口；签名文件和应用更新专用压缩包不会作为下载按钮。
 
 接口失败、版本数据异常或必要附件缺失都会使正式构建失败，不上传新 Pages 产物，不替换线上页面。
 

@@ -16,6 +16,8 @@ const names = [
   `RemindOn_${version}_arm64_portable.exe`,
   'RemindOn_aarch64.app.tar.gz',
   `RemindOn_${version}_aarch64.dmg`,
+  `RemindOn_${version}_x64_portable.zip`,
+  `RemindOn_${version}_arm64_portable.zip`,
 ]
 
 function manifest() {

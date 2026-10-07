@@ -50,8 +50,8 @@ export const locales = {
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · 安装版', text: '安装到电脑，支持在应用内安装更新。', action: '下载安装版' },
       { key: 'windowsArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · 安装版', text: '适用于 ARM64 Windows 设备，支持在应用内安装更新。', action: '下载 ARM64 安装版' },
-      { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · 便携版', text: '直接运行 EXE，无需安装。配置仍保存在系统应用数据目录。', action: '下载便携版' },
-      { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · 便携版', text: '适用于 ARM64 Windows 设备，直接运行 EXE，无需安装。', action: '下载 ARM64 便携版' },
+      { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · 便携版', text: '解压 ZIP 后运行 EXE，无需安装。配置仍保存在系统应用数据目录。', action: '下载便携版' },
+      { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · 便携版', text: '适用于 ARM64 Windows 设备，解压 ZIP 后运行 EXE，无需安装。', action: '下载 ARM64 便携版' },
       { key: 'mac', icon: 'apple', title: 'macOS', arch: 'Apple Silicon · DMG', text: '适用于 M 系列芯片 Mac，安装时将应用拖入“应用程序”。', action: '下载 Mac 版' },
       { key: 'store', externalUrl: microsoftStoreUrl, icon: 'windows', title: 'Microsoft Store', arch: 'Windows · 商店版', text: '从 Microsoft Store 安装，应用由商店自动管理更新。', action: '打开 Microsoft Store' },
     ],
@@ -113,8 +113,8 @@ export const locales = {
     packages: [
       { key: 'windows', icon: 'windows', title: 'Windows', arch: 'x64 · Installer', text: 'Install on your computer, with support for in-app updates.', action: 'Download installer' },
       { key: 'windowsArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · Installer', text: 'For ARM64 Windows devices, with support for in-app updates.', action: 'Download ARM64 installer' },
-      { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · Portable', text: 'Run the EXE without installing. Settings still live in the system app data folder.', action: 'Download portable' },
-      { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · Portable', text: 'Run the EXE on ARM64 Windows without installing.', action: 'Download ARM64 portable' },
+      { key: 'portable', icon: 'windows', title: 'Windows', arch: 'x64 · Portable', text: 'Extract the ZIP and run the EXE without installing. Settings still live in the system app data folder.', action: 'Download portable' },
+      { key: 'portableArm64', icon: 'windows', title: 'Windows', arch: 'ARM64 · Portable', text: 'Extract the ZIP and run the EXE on ARM64 Windows without installing.', action: 'Download ARM64 portable' },
       { key: 'mac', icon: 'apple', title: 'macOS', arch: 'Apple Silicon · DMG', text: 'For Macs with an M-series chip. Drag the app into Applications to install.', action: 'Download for Mac' },
       { key: 'store', externalUrl: microsoftStoreUrl, icon: 'windows', title: 'Microsoft Store', arch: 'Windows · Store', text: 'Install from Microsoft Store, with updates managed by the store.', action: 'Open Microsoft Store' },
     ],

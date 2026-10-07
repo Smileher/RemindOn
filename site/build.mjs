@@ -23,8 +23,8 @@ export function parseRelease(release) {
   const packages = {
     windows: `RemindOn_${version}_x64-setup.exe`,
     windowsArm64: `RemindOn_${version}_arm64-setup.exe`,
-    portable: `RemindOn_${version}_x64_portable.exe`,
-    portableArm64: `RemindOn_${version}_arm64_portable.exe`,
+    portable: release.assets.some((asset) => asset.name === `RemindOn_${version}_x64_portable.zip`) ? `RemindOn_${version}_x64_portable.zip` : `RemindOn_${version}_x64_portable.exe`,
+    portableArm64: release.assets.some((asset) => asset.name === `RemindOn_${version}_arm64_portable.zip`) ? `RemindOn_${version}_arm64_portable.zip` : `RemindOn_${version}_arm64_portable.exe`,
     mac: `RemindOn_${version}_aarch64.dmg`,
   }
   const downloads = {}

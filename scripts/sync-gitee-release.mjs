@@ -208,6 +208,13 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
     throw new Error('Legacy x64 mode cannot be used with an ARM64 update manifest')
   }
   const names = assetNames(githubManifest.version, legacyX64)
+  // Mirror ZIP downloads when present; historical releases still use the original EXEs.
+  for (const name of [...names]) {
+    if (name.endsWith('_portable.exe')) {
+      const archive = name.replace(/\.exe$/, '.zip')
+      if (githubRelease.assets.some((asset) => asset.name === archive)) names.push(archive)
+    }
+  }
   for (const name of names) {
     if (!githubRelease.assets.some((asset) => asset.name === name)) throw new Error(`GitHub release is missing: ${name}`)
   }

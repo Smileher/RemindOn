@@ -42,7 +42,7 @@ jobs:
           TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
-          gh release download "$TAG" --pattern '*.exe' --pattern '*.dmg' --pattern '*.app.tar.gz' --dir assets
+          gh release download "$TAG" --pattern '*.exe' --pattern '*.dmg' --pattern '*.app.tar.gz' --pattern '*.zip' --dir assets
           gh release download "$TAG" --pattern 'latest.json' --dir assets
       - name: Sync Gitee release
         env:
