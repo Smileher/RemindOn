@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "updater",
-  "description": "Allow the main window to update RemindOn and open its releases page",
+  "description": "Allow the main window to update RemindOn and open its website or Store updates",
   "windows": ["main"],
   "permissions": [
     "updater:default",
@@ -10,8 +10,11 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "https://github.com/Smileher/RemindOn/releases/latest" },
-        { "url": "https://smileher.github.io/RemindOn/" }
+        { "url": "https://smileher.github.io/RemindOn/" },
+        { "url": "https://smileher.github.io/RemindOn/en/" },
+        { "url": "https://smileher.github.io/RemindOn/#download" },
+        { "url": "https://smileher.github.io/RemindOn/en/#download" },
+        { "url": "ms-windows-store://downloadsandupdates" }
       ]
     }
   ]

@@ -45,7 +45,7 @@ const popupImageIsDefault = ref(false)
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
-  loadStatus: loadUpdateStatus, checkForUpdates, openReleases, openAuthorPage, dispose: disposeUpdater,
+  loadStatus: loadUpdateStatus, checkForUpdates, openReleases, openAuthorPage, openStoreUpdates, dispose: disposeUpdater,
 } = useUpdater()
 let unlisten: (() => void) | undefined
 let unlistenNavigation: (() => void) | undefined
@@ -817,6 +817,7 @@ onUnmounted(() => {
       :app-version="appVersion"
       :has-update="Boolean(newVersion)"
       @navigate="currentView = $event; settingsTab = 'general'"
+      @open-website="openAuthorPage(data.settings.language)"
     />
 
     <main :class="['content', { 'content-about': currentView === 'about' }]">
@@ -910,8 +911,9 @@ onUnmounted(() => {
         :update-error="updateError"
         :update-busy="updateBusy"
         @check-for-updates="checkForUpdates()"
-        @open-releases="openReleases"
-        @open-author-page="openAuthorPage"
+        @open-releases="openReleases(data.settings.language)"
+        @open-author-page="openAuthorPage(data.settings.language)"
+        @open-store-updates="openStoreUpdates"
       />
     </main>
   </div>

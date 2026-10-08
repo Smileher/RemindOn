@@ -297,6 +297,22 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .donation-code > img:first-child { display: block; width: 100%; height: 100%; object-fit: cover; clip-path: inset(1px); }
 .donation-logo { position: absolute; top: 50%; left: 50%; width: 32px; height: 32px; border: 3px solid #fff; border-radius: 8px; transform: translate(-50%, -50%); }
 .about-copyright { margin: 0; color: var(--subtle); font-size: var(--font-xs); text-align: center; animation: about-item-enter .22s .1s ease-out both; }
+.sidebar-footer { display: flex; align-items: center; justify-content: space-between; text-align: left; }
+.about-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
+.website-link { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 4px 0; color: var(--muted); background: transparent; font-size: var(--font-xs); }
+.website-link:hover { color: var(--accent-strong); }
+.store-update-panel { grid-template-columns: minmax(0, 1fr) auto; }
+.store-update-panel .update-summary strong { white-space: normal; line-height: 1.5; font-weight: 400; }
+.store-update-button { width: 161px; height: 44px; flex: 0 0 auto; border: 0; border-radius: 6px; padding: 0; background: transparent; }
+.store-update-button img { display: block; width: 100%; height: 100%; }
+.store-update-button:hover { opacity: .85; }
+.store-badge-dark { display: none !important; }
+.theme-dark .store-badge-light { display: none; }
+.theme-dark .store-badge-dark { display: block !important; }
+@media (prefers-color-scheme: dark) {
+  .theme-system .store-badge-light { display: none; }
+  .theme-system .store-badge-dark { display: block !important; }
+}
 
 @keyframes page-enter {
   from { opacity: 0; transform: translateY(4px); }
@@ -414,6 +430,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
   .setting-choice .segmented { justify-self: start; }
   .data-actions-row { flex-wrap: wrap; }
   .update-panel { grid-template-columns: minmax(0, 1fr); }
+  .store-update-panel { grid-template-columns: minmax(0, 1fr) auto; }
   .update-actions { justify-content: flex-start; }
   .donation-code { width: 116px; height: 116px; flex-basis: 116px; }
 }

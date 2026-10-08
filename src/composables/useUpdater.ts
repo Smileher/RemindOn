@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import type { Language } from '../types'
 
 function logUpdaterError(context: string, error: unknown) {
   console.error(`[RemindOn] ${context}`, error)
@@ -112,21 +113,31 @@ export function useUpdater() {
     }
   }
 
-  async function openReleases() {
+  async function openReleases(language: Language = 'zh-CN') {
     errorMessage.value = ''
     try {
-      await openUrl('https://github.com/Smileher/RemindOn/releases/latest')
+      await openUrl(`https://smileher.github.io/RemindOn/${language === 'en' ? 'en/' : ''}#download`)
     } catch (error) {
-      logUpdaterError('open release page', error)
+      logUpdaterError('open download page', error)
       errorMessage.value = 'update-failed'
     }
   }
 
-  async function openAuthorPage() {
+  async function openAuthorPage(language: Language = 'zh-CN') {
     try {
-      await openUrl('https://smileher.github.io/RemindOn/')
+      await openUrl(`https://smileher.github.io/RemindOn/${language === 'en' ? 'en/' : ''}`)
     } catch (error) {
       logUpdaterError('open author page', error)
+    }
+  }
+
+  async function openStoreUpdates() {
+    errorMessage.value = ''
+    try {
+      await openUrl('ms-windows-store://downloadsandupdates')
+    } catch (error) {
+      logUpdaterError('open Microsoft Store updates', error)
+      errorMessage.value = 'store-open-failed'
     }
   }
 
@@ -140,6 +151,6 @@ export function useUpdater() {
 
   return {
     mode, status, newVersion, progress, errorMessage, busy,
-    loadStatus, checkForUpdates, openReleases, openAuthorPage, dispose,
+    loadStatus, checkForUpdates, openReleases, openAuthorPage, openStoreUpdates, dispose,
   }
 }

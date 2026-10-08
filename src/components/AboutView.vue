@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { BellRing, Download, ExternalLink, Info, RotateCw } from '@lucide/vue'
+import { BellRing, Download, ExternalLink, Globe, RotateCw } from '@lucide/vue'
+import storeZhLight from '../../site/assets/store-zh-light.svg'
+import storeZhDark from '../../site/assets/store-zh-dark.svg'
+import storeEnLight from '../../site/assets/store-en-light.svg'
+import storeEnDark from '../../site/assets/store-en-dark.svg'
 import brandIcon from '../assets/remindon.svg'
 import donationCode from '../assets/donate.png'
 import { translate } from '../i18n'
@@ -23,6 +27,7 @@ const emit = defineEmits<{
   checkForUpdates: []
   openReleases: []
   openAuthorPage: []
+  openStoreUpdates: []
 }>()
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
@@ -56,11 +61,15 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <p v-if="updateMode === 'portable' && updateStatus === 'available' && updateProgress === 100" class="update-download-note" role="status">{{ t('update.portableDownloaded') }}</p>
       <p v-if="updateError" class="update-error" role="alert">{{ t('update.failed') }}</p>
     </div>
-    <div v-else class="update-panel" aria-live="polite">
+    <div v-else class="update-panel store-update-panel" aria-live="polite">
       <div class="update-summary">
-        <span class="update-icon"><Info :size="18" /></span>
         <div><span>{{ t('update.title') }}</span><strong>{{ t('update.storeManaged') }}</strong></div>
       </div>
+      <button class="store-update-button" type="button" :aria-label="t('update.storeOpen')" :title="t('update.storeOpen')" @click="emit('openStoreUpdates')">
+        <img class="store-badge-light" :src="language === 'en' ? storeEnLight : storeZhLight" alt="Microsoft Store" />
+        <img class="store-badge-dark" :src="language === 'en' ? storeEnDark : storeZhDark" alt="Microsoft Store" />
+      </button>
+      <p v-if="updateError" class="update-error" role="alert">{{ t('update.storeFailed') }}</p>
     </div>
 
     <div class="support-section">
@@ -68,11 +77,11 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <span class="support-icon"><BellRing :size="19" /></span>
         <div>
           <strong>{{ t('about.support') }}</strong>
-          <span>{{ t('about.author') }} <button class="author-link" type="button" @click="emit('openAuthorPage')">Smileher <ExternalLink :size="12" /></button></span>
+          <span>{{ t('about.author') }} Smileher</span>
         </div>
       </div>
       <div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div>
     </div>
-    <p class="about-copyright">{{ t('about.copyright') }}</p>
+    <footer class="about-footer"><button class="website-link" type="button" @click="emit('openAuthorPage')"><Globe :size="14" />{{ t('about.website') }}<ExternalLink :size="12" /></button><p class="about-copyright">{{ t('about.copyright') }}</p></footer>
   </section>
 </template>

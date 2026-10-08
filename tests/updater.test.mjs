@@ -128,11 +128,24 @@ test('dispose removes Rust event listeners so a destroyed window stays detached'
   assert.equal(updater.newVersion.value, '')
 })
 
-test('manual downloads open only the project release page and expose open errors', async () => {
+test('manual downloads open the localized website and expose open errors', async () => {
   const updater = useUpdater()
   await updater.openReleases()
-  assert.deepEqual(openUrl.mock.calls[0].arguments, ['https://github.com/Smileher/RemindOn/releases/latest'])
+  assert.deepEqual(openUrl.mock.calls[0].arguments, ['https://smileher.github.io/RemindOn/#download'])
+  await updater.openReleases('en')
+  assert.deepEqual(openUrl.mock.calls[1].arguments, ['https://smileher.github.io/RemindOn/en/#download'])
   openUrl.mock.mockImplementation(async () => { throw new Error('browser unavailable') })
   await updater.openReleases()
   assert.equal(updater.errorMessage.value, 'update-failed')
+})
+
+test('website links follow the language and Store updates launch the native app', async () => {
+  const updater = useUpdater()
+  await updater.openAuthorPage('en')
+  assert.deepEqual(openUrl.mock.calls[0].arguments, ['https://smileher.github.io/RemindOn/en/'])
+  await updater.openStoreUpdates()
+  assert.deepEqual(openUrl.mock.calls[1].arguments, ['ms-windows-store://downloadsandupdates'])
+  openUrl.mock.mockImplementation(async () => { throw new Error('Store unavailable') })
+  await updater.openStoreUpdates()
+  assert.equal(updater.errorMessage.value, 'store-open-failed')
 })
