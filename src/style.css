@@ -104,6 +104,7 @@ button { cursor: pointer; }
 .accent-graphite { --accent: var(--accent-graphite); --accent-strong: #647178; --accent-soft: rgba(171, 184, 191, .14); }
 .app-shell { --accent-ink: var(--accent); --chrome-bg: color-mix(in srgb, var(--accent) 6%, var(--sidebar-bg)); --nav-selected: color-mix(in srgb, var(--accent) 24%, var(--sidebar-bg)); --glass-line: color-mix(in srgb, var(--text) 9%, transparent); }
 .theme-light { --accent-ink: var(--accent-strong); --nav-selected: color-mix(in srgb, var(--accent) 30%, var(--sidebar-bg)); }
+.app-shell { --accent-copy: color-mix(in srgb, var(--accent-ink) 55%, var(--text)); }
 @media (prefers-color-scheme: light) {
   .theme-system { --accent-ink: var(--accent-strong); --nav-selected: color-mix(in srgb, var(--accent) 30%, var(--sidebar-bg)); }
 }
@@ -147,7 +148,7 @@ html.appearance-changing::view-transition-new(root) { z-index: 2; mix-blend-mode
 .eyebrow, .card-label { margin: 0 0 4px; color: var(--accent-strong); font-size: var(--font-xs); font-weight: 800; }
 h1 { margin: 0; color: var(--text); font-size: var(--font-title); line-height: 1.25; }
 h2 { margin: 0; color: var(--text); font-size: var(--font-section); }
-.page-subtitle { margin: 4px 0 0; color: var(--muted); font-size: var(--font-sm); }
+.page-subtitle { margin: 4px 0 0; color: var(--accent-copy); font-size: var(--font-sm); }
 
 .button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 6px; min-height: 34px; border: 1px solid color-mix(in srgb, var(--border) 75%, transparent); border-radius: 6px; padding: 7px 12px; color: var(--text); background: var(--surface); box-shadow: inset 0 1px 0 var(--glass-line); white-space: nowrap; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
 button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; }
@@ -290,7 +291,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .rest-page .status-panel { padding-top: 2px; padding-bottom: 22px; }
 .rest-page .status-panel strong { font-size: 26px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
 .rest-page .status-icon { color: var(--accent-ink); background: var(--accent-soft); }
-.rest-page .page-subtitle { color: var(--muted); line-height: 1.5; }
+.rest-page .page-subtitle { line-height: 1.5; }
 .popup-settings-link { border: 0; padding-right: 0; color: var(--accent-ink); background: transparent; box-shadow: none; }
 .popup-settings-link:hover { background: transparent; }
 
@@ -299,7 +300,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .about-overview > img { width: 56px; height: 56px; flex: 0 0 56px; border-radius: 8px; }
 .about-product { min-width: 0; }
 .about-product h1 { font-size: var(--font-title); }
-.about-product p { margin: 4px 0 0; color: var(--muted); font-size: var(--font-sm); }
+.about-product p { margin: 4px 0 0; color: var(--accent-copy); font-size: var(--font-sm); }
 .about-version { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: var(--font-xs); }
 .update-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 820px; margin: 0 auto 15px; border: 1px solid var(--border); border-radius: 7px; padding: 9px 12px; color: var(--accent-strong); background: var(--accent-soft); font-size: var(--font-sm); }
@@ -333,10 +334,16 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .donation-code > img:first-child { display: block; width: 100%; height: 100%; object-fit: cover; clip-path: inset(1px); }
 .donation-logo { position: absolute; top: 50%; left: 50%; width: 32px; height: 32px; border: 3px solid #fff; border-radius: 8px; transform: translate(-50%, -50%); }
 .about-copyright { margin: 0; color: var(--subtle); font-size: var(--font-xs); text-align: center; animation: about-item-enter .22s .1s ease-out both; }
+.author-name { display: inline-grid; grid-template-columns: 1fr; width: 8ch; min-height: 1.5em; border: 0; padding: 0; color: var(--accent-copy); background: transparent; font-size: inherit; font-weight: 600; line-height: 1.5; text-align: left; vertical-align: baseline; transition: color .3s ease; }
+.author-name > span { grid-area: 1 / 1; color: inherit; font-size: inherit; }
+.author-name:hover { color: var(--accent-ink); }
+.author-reveal-enter-active, .author-reveal-leave-active { transition: opacity .3s ease, transform .3s ease; }
+.author-reveal-enter-from { opacity: 0; transform: translateY(4px); }
+.author-reveal-leave-to { opacity: 0; transform: translateY(-4px); }
 .sidebar-footer { display: flex; align-items: center; justify-content: space-between; text-align: left; }
 .about-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
 .website-link { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 4px 0; color: var(--muted); background: transparent; font-size: var(--font-xs); }
-.website-link:hover { color: var(--accent-strong); }
+.website-link:hover { color: var(--accent-copy); }
 .store-update-panel { grid-template-columns: minmax(0, 1fr) auto; }
 .store-update-panel .update-summary strong { white-space: normal; line-height: 1.5; font-weight: 400; }
 .store-update-button { width: 161px; height: 44px; flex: 0 0 auto; border: 0; border-radius: 6px; padding: 0; background: transparent; }
@@ -474,6 +481,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .author-name, .author-reveal-enter-active, .author-reveal-leave-active { transition: none; }
   .page-section, .about-overview, .update-panel, .support-section, .about-copyright,
   .support-copy b::after, .update-icon.checking svg, .update-actions svg.checking,
   .update-progress-track.indeterminate span, .popup-shell.popup-enter .popup-header,

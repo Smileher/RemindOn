@@ -425,7 +425,7 @@ section { position: relative; padding: var(--section-y) 0; scroll-margin-top: 96
 .mu-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 14px; }
 .mu-eyebrow { font-size: 9.5px; letter-spacing: .14em; color: rgba(255, 255, 255, .38); margin: 0 0 5px; }
 .mu-head h4 { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
-.mu-sub { font-size: 11px; color: rgba(255, 255, 255, .5); margin-top: 3px; }
+.mu-sub { font-size: 11px; color: #a3d0fb; margin-top: 3px; }
 .mu-actions { display: flex; align-items: center; gap: 7px; flex: none; }
 .mu-btn {
   display: inline-flex; align-items: center; gap: 5px;

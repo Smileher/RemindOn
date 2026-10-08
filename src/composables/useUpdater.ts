@@ -134,7 +134,7 @@ export function useUpdater() {
   async function openStoreUpdates() {
     errorMessage.value = ''
     try {
-      await openUrl('ms-windows-store://downloadsandupdates')
+      await openUrl('ms-windows-store://pdp/?productid=9P9K31N2CJBW')
     } catch (error) {
       logUpdaterError('open Microsoft Store updates', error)
       errorMessage.value = 'store-open-failed'

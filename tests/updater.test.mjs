@@ -144,7 +144,7 @@ test('website links follow the language and Store updates launch the native app'
   await updater.openAuthorPage('en')
   assert.deepEqual(openUrl.mock.calls[0].arguments, ['https://smileher.github.io/RemindOn/en/'])
   await updater.openStoreUpdates()
-  assert.deepEqual(openUrl.mock.calls[1].arguments, ['ms-windows-store://downloadsandupdates'])
+  assert.deepEqual(openUrl.mock.calls[1].arguments, ['ms-windows-store://pdp/?productid=9P9K31N2CJBW'])
   openUrl.mock.mockImplementation(async () => { throw new Error('Store unavailable') })
   await updater.openStoreUpdates()
   assert.equal(updater.errorMessage.value, 'store-open-failed')
