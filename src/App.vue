@@ -24,7 +24,10 @@ type AutomaticPowerAction = Extract<PowerAction, 'shutdown' | 'lock' | 'restart'
 
 const isPopup = window.location.hash === '#/reminder'
 const isStoreBuild = typeof __REMINDON_STORE_BUILD__ !== 'undefined' && __REMINDON_STORE_BUILD__
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
+const systemDark = ref(systemTheme.matches)
 const data = ref<AppData>(defaultData())
+const displayedTheme = computed(() => data.value.settings.theme === 'system' ? (systemDark.value ? 'dark' : 'light') : data.value.settings.theme)
 const currentView = ref<View>('rest')
 const settingsTab = ref<SettingsTab>('general')
 const showForm = ref(false)
@@ -39,7 +42,7 @@ const persistenceError = ref('')
 const schedulerError = ref('')
 const autostartError = ref('')
 const autostartNotice = ref('')
-const appVersion = ref('1.1')
+const appVersion = ref('1.3')
 const popupBackgroundPreview = ref('')
 const popupImageIsDefault = ref(false)
 const {
@@ -383,34 +386,52 @@ async function updateSetting<K extends keyof AppData['settings']>(key: K, value:
   const rect = (event?.currentTarget as HTMLElement | null)?.getBoundingClientRect()
   const origin = event && rect ? { x: event.detail ? event.clientX : rect.left + rect.width / 2, y: event.detail ? event.clientY : rect.top + rect.height / 2 } : null
   return queueSettings(async () => {
-    if (!origin || (key !== 'theme' && key !== 'accentColor') || data.value.settings[key] === value || !document.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!origin || (key !== 'theme' && key !== 'accentColor') || data.value.settings[key] === value) {
       return saveSetting(key, value)
     }
-    // 仅动画化当前窗口的快照；保存失败仍由原有逻辑回退设置。
-    let save: Promise<boolean> | undefined
-    document.documentElement.classList.add('appearance-changing')
+    return animateAppearance(key, origin, () => saveSetting(key, value))
+  })
+}
+
+// 手动主题、系统主题和配色共用快照动画；动画不可用时照常执行原操作。
+async function animateAppearance(kind: 'theme' | 'accentColor', origin: { x: number; y: number }, operation: () => Promise<boolean>) {
+  if (!document.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return operation()
+  let result: Promise<boolean> | undefined
+  document.documentElement.classList.add('appearance-changing')
+  try {
+    const transition = document.startViewTransition(async () => {
+      result = operation()
+      await nextTick()
+    })
     try {
-      const transition = document.startViewTransition(async () => {
-        save = saveSetting(key, value)
-        await nextTick()
-      })
-      try {
-        await transition.ready
-        const radius = Math.hypot(Math.max(origin.x, window.innerWidth - origin.x), Math.max(origin.y, window.innerHeight - origin.y))
-        const frames = key === 'theme'
-          ? { clipPath: [`circle(0px at ${origin.x}px ${origin.y}px)`, `circle(${radius}px at ${origin.x}px ${origin.y}px)`] }
-          : { opacity: [0, 1] }
-        document.documentElement.animate(frames, { duration: key === 'theme' ? 450 : 220, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' })
-      } catch {
-        // 隐藏窗口或不支持快照动画时，设置保存仍照常完成。
-      }
-      await transition.finished.catch(() => {})
-      return await (save ?? saveSetting(key, value))
+      await transition.ready
+      const radius = Math.hypot(Math.max(origin.x, window.innerWidth - origin.x), Math.max(origin.y, window.innerHeight - origin.y))
+      const frames = kind === 'theme'
+        ? { clipPath: [`circle(0px at ${origin.x}px ${origin.y}px)`, `circle(${radius}px at ${origin.x}px ${origin.y}px)`] }
+        : { opacity: [0, 1] }
+      document.documentElement.animate(frames, { duration: kind === 'theme' ? 450 : 480, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' })
     } catch {
-      return await (save ?? saveSetting(key, value))
-    } finally {
-      document.documentElement.classList.remove('appearance-changing')
+      // 隐藏窗口或不支持快照动画时，设置保存仍照常完成。
     }
+    await transition.finished.catch(() => {})
+    return await (result ?? operation())
+  } catch {
+    return await (result ?? operation())
+  } finally {
+    document.documentElement.classList.remove('appearance-changing')
+  }
+}
+
+function handleSystemThemeChange(event: MediaQueryListEvent) {
+  void queueSettings(async () => {
+    if (event.matches === systemDark.value) return
+    const apply = async () => { systemDark.value = event.matches; return true }
+    if (data.value.settings.theme !== 'system') { await apply(); return }
+    const rect = document.querySelector<HTMLElement>('[data-system-theme]')?.getBoundingClientRect()
+    const origin = rect && rect.width && rect.top >= 0 && rect.bottom <= window.innerHeight
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    await animateAppearance('theme', origin, apply)
   })
 }
 
@@ -752,6 +773,7 @@ function handleMainWindowEscape(event: KeyboardEvent) {
 
 onMounted(async () => {
   if (isPopup) return
+  systemTheme.addEventListener?.('change', handleSystemThemeChange)
   window.addEventListener('keydown', handleMainWindowEscape)
   void loadUpdateStatus?.()
   void loadPopupImagePreview()
@@ -824,6 +846,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  systemTheme.removeEventListener?.('change', handleSystemThemeChange)
   window.removeEventListener('keydown', handleMainWindowEscape)
   disposeUpdater()
   unlisten?.()
@@ -841,7 +864,7 @@ onUnmounted(() => {
 
 <template>
   <ReminderPopup v-if="isPopup" />
-  <div v-else :class="['app-shell', `theme-${data.settings.theme}`, `accent-${data.settings.accentColor}`]">
+  <div v-else :class="['app-shell', `theme-${displayedTheme}`, `accent-${data.settings.accentColor}`]">
     <AppSidebar
       :current-view="currentView"
       :language="data.settings.language"

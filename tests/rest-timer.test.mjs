@@ -98,6 +98,7 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
   const calls = []
   let mounted
   let focused
+  let themeChanged
   let hideCount = 0
   let readStatus = async () => status
   let saveData = async (value) => structuredClone(value)
@@ -184,7 +185,7 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
       },
       window: {
         innerWidth: 780, innerHeight: 540,
-        matchMedia: () => ({ matches: false }),
+        matchMedia: () => ({ matches: false, addEventListener: (_name, callback) => { themeChanged = callback }, removeEventListener: noop }),
         location: { hash: '' },
         setInterval: () => 1,
         clearInterval: noop,
@@ -214,6 +215,7 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
     emit: (name, payload) => emitTo('main', name, payload),
     emitTo,
     focus: (isFocused) => focused({ payload: isFocused }),
+    systemThemeChange: (matches) => themeChanged({ matches }),
     keydown: (event) => windowListeners.get('keydown')?.(event),
     getHideCount: () => hideCount,
     render: () => renderToString(vue.createSSRApp({
@@ -567,6 +569,7 @@ test('appearance snapshots preserve save rollback and fall back if the transitio
   const classes = new Set()
   const animations = []
   const appearanceDocument = {
+    querySelector: () => null,
     documentElement: {
       classList: { add: value => classes.add(value), remove: value => classes.delete(value) },
       animate: (frames, options) => animations.push({ frames, options }),
@@ -584,6 +587,21 @@ test('appearance snapshots preserve save rollback and fall back if the transitio
   assert.equal(classes.size, 0)
   assert.equal(await app.state.updateSetting('accentColor', 'rose', event), true)
   assert.deepEqual(Array.from(animations[1].frames.opacity), [0, 1])
+  assert.equal(animations[1].options.duration, 480)
+  await app.state.updateSetting('theme', 'system')
+  const saveCount = app.calls.filter(command => command === 'save_data').length
+  app.systemThemeChange(true)
+  await new Promise(setImmediate)
+  assert.equal(app.state.displayedTheme.value, 'dark')
+  assert.equal(app.state.data.value.settings.theme, 'system')
+  assert.equal(animations.at(-1).frames.clipPath[0], 'circle(0px at 390px 270px)')
+  assert.equal(app.calls.filter(command => command === 'save_data').length, saveCount)
+  await app.state.updateSetting('theme', 'dark')
+  const animationCount = animations.length
+  app.systemThemeChange(false)
+  await new Promise(setImmediate)
+  assert.equal(app.state.displayedTheme.value, 'dark')
+  assert.equal(animations.length, animationCount)
   app.setSaveData(async () => { throw new Error('disk full') })
   assert.equal(await app.state.updateSetting('theme', 'light', event), false)
   assert.equal(app.state.data.value.settings.theme, 'dark')

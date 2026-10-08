@@ -64,9 +64,9 @@ const activeTab = ref(props.initialTab || 'general')
 watch(() => props.initialTab, (tab) => { activeTab.value = tab || 'general' })
 watch(activeTab, (tab) => emit('update:initialTab', tab))
 const tabs = [
+  { id: 'popup', label: 'settings.groupPopup' },
   { id: 'general', label: 'settings.groupGeneral' },
   { id: 'appearance', label: 'settings.groupAppearance' },
-  { id: 'popup', label: 'settings.groupPopup' },
   { id: 'notification', label: 'settings.groupNotification' },
   { id: 'data', label: 'settings.groupData' },
 ] as const
@@ -150,9 +150,9 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <div class="setting-card setting-choice">
         <div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div>
         <div class="segmented">
+          <button data-system-theme :class="{ selected: settings.theme === 'system' }" type="button" @click="emit('update:setting', 'theme', 'system' as Theme, $event)">{{ t('settings.system') }}</button>
           <button :class="{ selected: settings.theme === 'dark' }" type="button" @click="emit('update:setting', 'theme', 'dark' as Theme, $event)">{{ t('settings.dark') }}</button>
           <button :class="{ selected: settings.theme === 'light' }" type="button" @click="emit('update:setting', 'theme', 'light' as Theme, $event)">{{ t('settings.light') }}</button>
-          <button :class="{ selected: settings.theme === 'system' }" type="button" @click="emit('update:setting', 'theme', 'system' as Theme, $event)">{{ t('settings.system') }}</button>
         </div>
       </div>
       <div class="setting-card color-setting">
