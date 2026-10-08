@@ -214,9 +214,9 @@ impl Default for AppSettings {
             theme: Theme::System,
             accent_color: AccentColor::Blue,
             popup_background_fit: PopupBackgroundFit::Contain,
-            popup_background_scale: 42,
-            popup_background_offset_x: 39,
-            popup_background_offset_y: 30,
+            popup_background_scale: 40,
+            popup_background_offset_x: 35,
+            popup_background_offset_y: 25,
             popup_fade_enabled: default_popup_fade_enabled(),
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
@@ -3109,9 +3109,9 @@ mod tests {
         settings.popup_background_scale = 99;
         initialize_popup_image(&directory, &mut settings).unwrap();
         assert_eq!(fs::read(&target).unwrap(), DEFAULT_POPUP_IMAGE);
-        assert_eq!(settings.popup_background_scale, 42);
-        assert_eq!(settings.popup_background_offset_x, 39);
-        assert_eq!(settings.popup_background_offset_y, 30);
+        assert_eq!(settings.popup_background_scale, 40);
+        assert_eq!(settings.popup_background_offset_x, 35);
+        assert_eq!(settings.popup_background_offset_y, 25);
         assert_eq!(settings.popup_background_fit, PopupBackgroundFit::Contain);
         fs::remove_file(&target).unwrap();
         initialize_popup_image(&directory, &mut settings).unwrap();
