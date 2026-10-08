@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { BellRing, Download, ExternalLink, Globe, RotateCw } from '@lucide/vue'
 import storeZhLight from '../../site/assets/store-zh-light.svg'
 import storeZhDark from '../../site/assets/store-zh-dark.svg'
@@ -33,6 +33,21 @@ const emit = defineEmits<{
 
 const showRealName = ref(false)
 const authorName = computed(() => showRealName.value ? 'ChenHe' : 'Smileher')
+let authorResetTimer: ReturnType<typeof setTimeout> | undefined
+
+function toggleAuthorName() {
+  clearTimeout(authorResetTimer)
+  authorResetTimer = undefined
+  showRealName.value = !showRealName.value
+  if (showRealName.value) {
+    authorResetTimer = setTimeout(() => {
+      showRealName.value = false
+      authorResetTimer = undefined
+    }, 5000)
+  }
+}
+
+onUnmounted(() => clearTimeout(authorResetTimer))
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -81,11 +96,11 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <span class="support-icon"><BellRing :size="19" /></span>
         <div>
           <strong>{{ t('about.support') }}</strong>
-          <span>{{ t('about.author') }} <button class="author-name" type="button" :aria-pressed="showRealName" :aria-label="t('about.authorName', { name: authorName })" @click="showRealName = !showRealName"><Transition name="author-reveal"><span :key="authorName">{{ authorName }}</span></Transition></button></span>
+          <span>{{ t('about.author') }} <button class="author-name" type="button" :aria-pressed="showRealName" :aria-label="t('about.authorName', { name: authorName })" @click="toggleAuthorName"><Transition name="author-reveal"><span :key="authorName">{{ authorName }}</span></Transition></button></span>
         </div>
       </div>
       <div class="donation-code"><img :src="donationCode" alt="" /><img class="donation-logo" :src="brandIcon" alt="" /></div>
     </div>
-    <footer class="about-footer"><button class="website-link" type="button" @click="emit('openAuthorPage')"><Globe :size="14" />{{ t('about.website') }}<ExternalLink :size="12" /></button><p class="about-copyright">{{ t('about.copyright') }} <button class="author-name" type="button" :aria-pressed="showRealName" :aria-label="t('about.authorName', { name: authorName })" @click="showRealName = !showRealName"><Transition name="author-reveal"><span :key="authorName">{{ authorName }}</span></Transition></button></p></footer>
+    <footer class="about-footer"><button class="website-link" type="button" @click="emit('openAuthorPage')"><Globe :size="14" />{{ t('about.website') }}<ExternalLink :size="12" /></button><p class="about-copyright">{{ t('about.copyright') }} <button class="author-name" type="button" :aria-pressed="showRealName" :aria-label="t('about.authorName', { name: authorName })" @click="toggleAuthorName"><Transition name="author-reveal"><span :key="authorName">{{ authorName }}</span></Transition></button></p></footer>
   </section>
 </template>

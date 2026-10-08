@@ -42,7 +42,7 @@ const persistenceError = ref('')
 const schedulerError = ref('')
 const autostartError = ref('')
 const autostartNotice = ref('')
-const appVersion = ref('1.3')
+const appVersion = ref('1.3.1')
 const popupBackgroundPreview = ref('')
 const popupImageIsDefault = ref(false)
 const {
