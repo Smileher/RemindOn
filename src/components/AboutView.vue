@@ -49,11 +49,11 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         <div><span>{{ t('update.title') }}</span><strong>{{ updateStatusText }}</strong></div>
       </div>
       <div class="update-actions">
-        <button class="button" type="button" :disabled="updateBusy || updateMode === 'development' || updateMode === 'unsupported'" @click="emit('checkForUpdates')">
+        <button class="button update-primary-button" type="button" :disabled="updateBusy || updateMode === 'development' || updateMode === 'unsupported'" @click="emit('checkForUpdates')">
           <RotateCw :class="{ checking: updateStatus === 'checking' }" :size="14" />{{ t('update.check') }}
         </button>
-        <button v-if="updateMode === 'unsupported' || updateError" class="button" type="button" @click="emit('openReleases')"><Download :size="14" />{{ t('update.download') }}</button>
       </div>
+      <button v-if="updateMode === 'unsupported' || updateError" class="button update-download-button" type="button" @click="emit('openReleases')"><Download :size="14" />{{ t('update.download') }}</button>
       <div v-if="updateStatus === 'downloading'" class="update-progress" role="progressbar" :aria-label="t('update.downloading')" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="updateProgress ?? undefined">
         <div :class="['update-progress-track', { indeterminate: updateProgress === null }]"><span :style="updateProgress === null ? undefined : { width: `${updateProgress}%` }"></span></div>
         <span v-if="updateProgress !== null">{{ updateProgress }}%</span>

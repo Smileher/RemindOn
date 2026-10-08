@@ -89,7 +89,7 @@ test('a late native status read cannot hide a newer persistence failure', async 
   assert.equal(app.state.persistenceError.value, 'new failure')
 })
 
-async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null } } = {}) {
+async function mountApp({ enabled = true, status = resting, nativeErrors = { autostartError: null, notificationError: null }, appearanceDocument } = {}) {
   const settingsData = defaultData()
   settingsData.settings.restEnabled = enabled
   settingsData.settings.restIntervalMinutes = 1
@@ -183,6 +183,8 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
         return modules[name]
       },
       window: {
+        innerWidth: 780, innerHeight: 540,
+        matchMedia: () => ({ matches: false }),
         location: { hash: '' },
         setInterval: () => 1,
         clearInterval: noop,
@@ -192,7 +194,7 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
         removeEventListener: (name) => { windowListeners.delete(name) },
       },
       localStorage: { getItem: () => null, setItem: noop },
-      document: { visibilityState: 'visible', hasFocus: () => true },
+      document: appearanceDocument ?? { visibilityState: 'visible', hasFocus: () => true },
       console,
       crypto: { randomUUID },
     })
@@ -559,6 +561,38 @@ test('repeated theme changes persist without writing the competing app theme', a
   }
   assert.deepEqual(savedThemes, ['dark', 'light', 'dark', 'system', 'light', 'dark'])
   assert.deepEqual(nativeThemes, [])
+})
+
+test('appearance snapshots preserve save rollback and fall back if the transition API throws', async () => {
+  const classes = new Set()
+  const animations = []
+  const appearanceDocument = {
+    documentElement: {
+      classList: { add: value => classes.add(value), remove: value => classes.delete(value) },
+      animate: (frames, options) => animations.push({ frames, options }),
+    },
+    startViewTransition: callback => {
+      const ready = Promise.resolve().then(callback)
+      return { ready, finished: ready }
+    },
+  }
+  const app = await mountApp({ appearanceDocument })
+  const event = { currentTarget: { getBoundingClientRect: () => ({ left: 100, top: 200, width: 40, height: 30 }) }, detail: 0 }
+  assert.equal(await app.state.updateSetting('theme', 'dark', event), true)
+  assert.equal(animations[0].frames.clipPath[0], 'circle(0px at 120px 215px)')
+  assert.equal(animations[0].options.pseudoElement, '::view-transition-new(root)')
+  assert.equal(classes.size, 0)
+  assert.equal(await app.state.updateSetting('accentColor', 'rose', event), true)
+  assert.deepEqual(Array.from(animations[1].frames.opacity), [0, 1])
+  app.setSaveData(async () => { throw new Error('disk full') })
+  assert.equal(await app.state.updateSetting('theme', 'light', event), false)
+  assert.equal(app.state.data.value.settings.theme, 'dark')
+  assert.equal(classes.size, 0)
+  app.setSaveData(async data => data)
+  appearanceDocument.startViewTransition = () => { throw new Error('snapshot unavailable') }
+  assert.equal(await app.state.updateSetting('theme', 'light', event), true)
+  assert.equal(app.state.data.value.settings.theme, 'light')
+  assert.equal(classes.size, 0)
 })
 
 test('failed theme save restores the previous preference without changing the app theme', async () => {

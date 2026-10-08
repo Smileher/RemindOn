@@ -21,7 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:initialTab': [tab: SettingsTab]
-  'update:setting': [key: keyof AppSettings, value: AppSettings[keyof AppSettings]]
+  'update:setting': [key: keyof AppSettings, value: AppSettings[keyof AppSettings], event?: MouseEvent]
   importData: []
   exportData: []
   resetSettings: []
@@ -137,7 +137,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
         </div>
       </div>
       <label class="setting-card setting-toggle">
-        <div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><span v-if="autostartNotice">{{ autostartNotice }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div>
+        <div><strong>{{ t('settings.autostart') }}</strong><span>{{ t('settings.autostartHint') }}</span><span v-if="autostartNotice && autostartNotice !== autostartError">{{ autostartNotice }}</span><small v-if="autostartError" class="setting-error">{{ autostartError }}</small></div>
         <input :checked="settings.autostart" type="checkbox" @change="emit('update:setting', 'autostart', ($event.target as HTMLInputElement).checked)" />
       </label>
       <label class="setting-card setting-toggle">
@@ -150,9 +150,9 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <div class="setting-card setting-choice">
         <div><strong>{{ t('settings.appearance') }}</strong><span>{{ t('settings.appearanceHint') }}</span></div>
         <div class="segmented">
-          <button :class="{ selected: settings.theme === 'dark' }" type="button" @click="emit('update:setting', 'theme', 'dark' as Theme)">{{ t('settings.dark') }}</button>
-          <button :class="{ selected: settings.theme === 'light' }" type="button" @click="emit('update:setting', 'theme', 'light' as Theme)">{{ t('settings.light') }}</button>
-          <button :class="{ selected: settings.theme === 'system' }" type="button" @click="emit('update:setting', 'theme', 'system' as Theme)">{{ t('settings.system') }}</button>
+          <button :class="{ selected: settings.theme === 'dark' }" type="button" @click="emit('update:setting', 'theme', 'dark' as Theme, $event)">{{ t('settings.dark') }}</button>
+          <button :class="{ selected: settings.theme === 'light' }" type="button" @click="emit('update:setting', 'theme', 'light' as Theme, $event)">{{ t('settings.light') }}</button>
+          <button :class="{ selected: settings.theme === 'system' }" type="button" @click="emit('update:setting', 'theme', 'system' as Theme, $event)">{{ t('settings.system') }}</button>
         </div>
       </div>
       <div class="setting-card color-setting">
@@ -165,7 +165,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
             type="button"
             :aria-label="t(`settings.color${color}`)"
             :title="t(`settings.color${color}`)"
-            @click="emit('update:setting', 'accentColor', color)"
+            @click="emit('update:setting', 'accentColor', color, $event)"
           ></button>
         </div>
       </div>

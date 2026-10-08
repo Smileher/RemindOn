@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -379,8 +379,39 @@ async function removeReminder(id: string) {
   })
 }
 
-async function updateSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
-  return queueSettings(() => saveSetting(key, value))
+async function updateSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K], event?: MouseEvent) {
+  const rect = (event?.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  const origin = event && rect ? { x: event.detail ? event.clientX : rect.left + rect.width / 2, y: event.detail ? event.clientY : rect.top + rect.height / 2 } : null
+  return queueSettings(async () => {
+    if (!origin || (key !== 'theme' && key !== 'accentColor') || data.value.settings[key] === value || !document.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return saveSetting(key, value)
+    }
+    // 仅动画化当前窗口的快照；保存失败仍由原有逻辑回退设置。
+    let save: Promise<boolean> | undefined
+    document.documentElement.classList.add('appearance-changing')
+    try {
+      const transition = document.startViewTransition(async () => {
+        save = saveSetting(key, value)
+        await nextTick()
+      })
+      try {
+        await transition.ready
+        const radius = Math.hypot(Math.max(origin.x, window.innerWidth - origin.x), Math.max(origin.y, window.innerHeight - origin.y))
+        const frames = key === 'theme'
+          ? { clipPath: [`circle(0px at ${origin.x}px ${origin.y}px)`, `circle(${radius}px at ${origin.x}px ${origin.y}px)`] }
+          : { opacity: [0, 1] }
+        document.documentElement.animate(frames, { duration: key === 'theme' ? 450 : 220, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' })
+      } catch {
+        // 隐藏窗口或不支持快照动画时，设置保存仍照常完成。
+      }
+      await transition.finished.catch(() => {})
+      return await (save ?? saveSetting(key, value))
+    } catch {
+      return await (save ?? saveSetting(key, value))
+    } finally {
+      document.documentElement.classList.remove('appearance-changing')
+    }
+  })
 }
 
 async function saveSetting<K extends keyof AppData['settings']>(key: K, value: AppData['settings'][K]) {
@@ -403,7 +434,7 @@ async function saveSetting<K extends keyof AppData['settings']>(key: K, value: A
   }
 }
 
-async function applySetting(key: keyof AppData['settings'], value: AppData['settings'][keyof AppData['settings']]) {
+async function applySetting(key: keyof AppData['settings'], value: AppData['settings'][keyof AppData['settings']], event?: MouseEvent) {
   if (key === 'autostart') {
     await updateAutostart(Boolean(value))
     return
@@ -416,7 +447,7 @@ async function applySetting(key: keyof AppData['settings'], value: AppData['sett
     await updateLanguage(value as Language)
     return
   }
-  await updateSetting(key, value as never)
+  await updateSetting(key, value as never, event)
 }
 
 async function ensureNotificationPermission() {
