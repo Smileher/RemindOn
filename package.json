@@ -1,7 +1,7 @@
 {
   "name": "remindon",
   "version": "1.2.2",
-  "description": "RemindOn - 轻量定时提醒",
+  "description": "RemindOn - break reminders with personalized full-screen popups",
   "author": "Smileher",
   "private": true,
   "type": "module",

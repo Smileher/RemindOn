@@ -1,7 +1,7 @@
 import type { Language } from './types'
 
 const zh = {
-  'app.tagline': '轻量定时提醒',
+  'app.tagline': '记得休息，早点收工。',
   'nav.events': '定时提醒',
   'nav.rest': '休息提醒',
   'nav.settings': '参数设置',
@@ -216,7 +216,7 @@ const zh = {
 export type MessageKey = keyof typeof zh
 
 const en: Record<MessageKey, string> = {
-  'app.tagline': 'Lightweight timed reminders',
+  'app.tagline': 'Take breaks. Call it a day.',
   'nav.events': 'Scheduled reminders',
   'nav.rest': 'Breaks',
   'nav.settings': 'Settings',

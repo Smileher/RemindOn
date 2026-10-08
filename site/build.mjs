@@ -55,6 +55,7 @@ export async function buildSite() {
   await copyFile(join(siteDir, 'style.css'), join(outputDir, 'assets', 'style.css'))
   await copyFile(join(siteDir, 'theme.js'), join(outputDir, 'assets', 'theme.js'))
   await copyFile(join(siteDir, 'downloads.js'), join(outputDir, 'assets', 'downloads.js'))
+  await copyFile(join(siteDir, 'assets', 'github.svg'), join(outputDir, 'assets', 'github.svg'))
   for (const language of Object.keys(locales)) {
     for (const theme of ['light', 'dark']) {
       const badge = `store-${language}-${theme}.svg`

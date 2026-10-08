@@ -90,7 +90,7 @@ export function renderPage(language, release) {
       <div class="nav-right">
         <div class="theme-controls" role="group" aria-label="${e(t.theme)}" hidden>${['system', 'light', 'dark'].map((theme, i) => `<button type="button" class="btn-icon" data-theme-value="${theme}" aria-label="${e(t.themes[i])}" title="${e(t.themes[i])}" aria-pressed="${theme === 'system'}">${icon(theme, '', 17)}</button>`).join('')}</div>
         <nav class="language-nav" aria-label="${e(t.language)}"><a href="${basePath}" lang="zh-CN" hreflang="zh-CN"${language === 'zh' ? ' aria-current="page"' : ''}>${e(languageLabels.zh)}</a><span aria-hidden="true">/</span><a href="${basePath}en/" lang="en" hreflang="en"${language === 'en' ? ' aria-current="page"' : ''}>${e(languageLabels.en)}</a></nav>
-        <a class="btn btn-primary nav-cta" href="#download">${e(t.download)}${icon('arrow', 'arrow', 15)}</a>
+        <a class="btn-icon nav-github" href="${repository}" aria-label="${e(t.github)}" title="${e(t.github)}"><span class="github-mark" aria-hidden="true"></span></a>
       </div>
     </div>
   </nav>
@@ -100,7 +100,6 @@ export function renderPage(language, release) {
         <span class="eyebrow"><span class="pulse" aria-hidden="true"></span>${e(t.eyebrow)}</span>
         <h1 class="h-display hero-title"><span class="gradient-text">${e(t.headline[0])}</span><br><span class="gradient-text-cyan">${e(t.headline[1])}</span></h1>
         <p class="hero-sub">${e(t.intro)}</p>
-        <div class="hero-cta"><a class="btn btn-primary" href="#download">${icon('download', '', 16)}${e(t.download)}</a><a class="btn btn-ghost" href="${repository}">${e(t.github)}${icon('arrow', 'arrow', 15)}</a></div>
         <div class="hero-trust mono">${trustRow}</div>
       </div>
       <div class="wrap">
