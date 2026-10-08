@@ -531,7 +531,7 @@ async function pickPopupImage() {
     if (typeof path !== 'string') return
     const dataUrl = await invoke<string>('import_popup_image', { source: path })
     popupBackgroundPreview.value = dataUrl
-    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default')
+    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default').catch(() => false)
     actionMessage.value = t('status.imageSaved')
   } catch (error) {
     logError('pick popup image', error)
@@ -555,7 +555,7 @@ async function clearPopupImage() {
 async function loadPopupImagePreview() {
   try {
     popupBackgroundPreview.value = (await invoke<string | null>('read_popup_image')) ?? ''
-    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default')
+    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default').catch(() => false)
   } catch {
     popupBackgroundPreview.value = ''
     popupImageIsDefault.value = false

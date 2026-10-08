@@ -402,6 +402,20 @@ test('failed fullscreen and language edits preserve a newer native mode event', 
   }
 })
 
+test('default-image detection failures preserve loaded and imported image previews', async () => {
+  const app = await mountApp()
+  app.setInvoke('is_popup_image_default', async () => { throw new Error('detection unavailable') })
+  app.setInvoke('read_popup_image', async () => 'data:image/png;base64,existing')
+  await app.state.loadPopupImagePreview()
+  assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,existing')
+  assert.equal(app.state.popupImageIsDefault.value, false)
+  app.setNative('open', async () => 'custom.png')
+  app.setInvoke('import_popup_image', async () => 'data:image/png;base64,imported')
+  await app.state.pickPopupImage()
+  assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,imported')
+  assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.imageSaved'))
+})
+
 test('reset keeps English defaults and reminders while restoring the default image', async () => {
   const app = await mountApp()
   app.state.data.value.settings = defaultData().settings
