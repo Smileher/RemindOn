@@ -111,16 +111,16 @@ export function renderPage(language, release) {
               <div class="mockup-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="addr mono">RemindOn · v${e(release.version)}</span></div>
               <div class="mockup-ui" aria-hidden="true">
                 <aside class="mu-side">
-                  <div class="mu-ws"><span class="mu-ws-mark">${icon('bell', '', 12)}</span><span class="mu-ws-name">RemindOn</span></div>
+                  <div class="mu-ws"><img class="mu-ws-mark" src="${logo}" alt=""><span class="mu-ws-name">RemindOn</span></div>
                   <ul class="mu-proj">${mockupNav}
                     <li>${icon('sliders', '', 14)}<span>${e(mockup.settings)}</span></li>
                     <li>${icon('info', '', 14)}<span>${e(mockup.about)}</span></li>
                   </ul>
-                  <div class="mu-user"><span class="mu-avatar">${icon('sliders', '', 12)}</span><span class="mu-user-name">v${e(release.version)}</span></div>
+                  <div class="mu-user"><span class="mu-user-name">${icon('arrow', '', 12)} ${e(mockup.website)}</span><span class="mu-user-name">v${e(release.version)}</span></div>
                 </aside>
                 <div class="mu-main">
                   <div class="mu-head">
-                    <div class="mu-head-copy"><p class="mu-eyebrow mono">${e(mockup.eyebrow)}</p><h4>${e(mockup.title)}</h4><p class="mu-sub">${e(mockup.subtitle)}</p></div>
+                    <div class="mu-head-copy"><h4>${e(mockup.title)}</h4><p class="mu-sub">${e(mockup.subtitle)}</p></div>
                     <div class="mu-actions"><span class="mu-btn ghost">${icon('bell', '', 12)}${e(mockup.test)}</span></div>
                   </div>
                   <div class="mu-status">
@@ -136,6 +136,7 @@ export function renderPage(language, release) {
                     <div><strong>${e(mockup.messageLabel)}</strong><span>${e(mockup.messageHint)}</span></div>
                     <span class="mu-input mono">${e(mockup.message)}</span>
                   </div>
+                  <div class="mu-setting"><strong>${e(mockup.popup)}</strong><span class="mu-popup-link">${icon('sliders', '', 12)} ${e(mockup.settings)} ${icon('arrow', '', 12)}</span></div>
                 </div>
               </div>
             </div>

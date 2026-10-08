@@ -98,7 +98,7 @@ const powerActionOptions = computed<Array<{ value: AutomaticPowerAction; label: 
   { value: 'lock', label: t('power.lock') },
   { value: 'restart', label: t('power.restart') },
 ])
-const accentColors: AccentColor[] = ['mint', 'blue', 'violet', 'amber']
+const accentColors: AccentColor[] = ['blue', 'mint', 'violet', 'amber', 'cyan', 'rose', 'coral', 'graphite']
 
 const weekdayOptions = computed(() => Array.from({ length: 7 }, (_, index) => ({
   value: index + 1,
@@ -863,7 +863,7 @@ onUnmounted(() => {
       <RestView
         v-else-if="currentView === 'rest'"
         :language="data.settings.language"
-        :subtitle="t('rest.subtitle')"
+        :subtitle="t('app.tagline')"
         :enabled="data.settings.restEnabled"
         :interval-minutes="data.settings.restIntervalMinutes"
         :message="restMessageDraft"

@@ -187,6 +187,10 @@ pub enum AccentColor {
     Blue,
     Violet,
     Amber,
+    Cyan,
+    Rose,
+    Coral,
+    Graphite,
 }
 
 impl Default for AccentColor {
@@ -3137,6 +3141,18 @@ mod tests {
         data.settings.popup_background_scale = 999;
         validate_and_normalize(&mut data).unwrap();
         assert_eq!(data.settings.popup_background_scale, 400);
+    }
+
+    #[test]
+    fn expanded_accents_round_trip_without_changing_configuration_version() {
+        for name in ["mint", "blue", "violet", "amber", "cyan", "rose", "coral", "graphite"] {
+            let mut value = serde_json::to_value(AppData::default()).unwrap();
+            value["settings"]["accentColor"] = serde_json::json!(name);
+            let mut data: AppData = serde_json::from_value(value).unwrap();
+            validate_and_normalize(&mut data).unwrap();
+            assert_eq!(serde_json::to_value(&data).unwrap()["settings"]["accentColor"], name);
+            assert_eq!(data.version, DATA_VERSION);
+        }
     }
 
     #[test]

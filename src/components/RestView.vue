@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Coffee, Play, Settings2 } from '@lucide/vue'
+import { ArrowUpRight, Coffee, Play, Settings2 } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
 import type { Language } from '../types'
@@ -62,7 +62,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
 </script>
 
 <template>
-  <section class="page-section">
+  <section class="page-section rest-page">
     <header class="page-header reminder-header">
       <div>
         <h1>{{ t('rest.title') }}</h1>
@@ -102,7 +102,7 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       </label>
       <div class="setting-card">
         <div><strong>{{ t('settings.groupPopup') }}</strong></div>
-        <button class="button" type="button" @click="emit('previewSettings')"><Settings2 :size="14" />{{ t('rest.previewSettings') }}</button>
+        <button class="button popup-settings-link" type="button" @click="emit('previewSettings')"><Settings2 :size="14" />{{ t('rest.previewSettings') }}<ArrowUpRight :size="14" /></button>
       </div>
     </div>
     <small v-if="actionMessage" class="status-message page-message">{{ actionMessage }}</small>

@@ -20,7 +20,7 @@ export const locales = {
     trust: ['全屏休息提醒', '个性化弹窗', '定时提醒'],
     mockupAria: 'RemindOn 界面预览',
     mockup: {
-      eyebrow: 'BREAK', title: '休息提醒', subtitle: '离开屏幕片刻，给自己一点喘息。',
+      eyebrow: 'BREAK', title: '休息提醒', subtitle: '记得休息，早点收工。', website: '官网', popup: '弹窗设置',
       nav: ['休息提醒', '定时提醒'], navIcons: ['coffee', 'calendar'],
       settings: '参数设置', about: '关于', test: '测试通知',
       nextLabel: '下次休息', status: '还有 24 分 18 秒', progress: 42,
@@ -79,7 +79,7 @@ export const locales = {
     trust: ['Full-screen breaks', 'Personalized popups', 'Scheduled reminders'],
     mockupAria: 'Preview of the RemindOn interface',
     mockup: {
-      eyebrow: 'BREAK', title: 'Breaks', subtitle: 'Step away from the screen and take a breather.',
+      eyebrow: 'BREAK', title: 'Breaks', subtitle: 'Take breaks. Call it a day.', website: 'Website', popup: 'Popup settings',
       nav: ['Breaks', 'Scheduled reminders'], navIcons: ['coffee', 'calendar'],
       settings: 'Settings', about: 'About', test: 'Test',
       nextLabel: 'Next break', status: 'In 24 min 18 s', progress: 42,
