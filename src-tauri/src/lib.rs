@@ -39,6 +39,8 @@ const MAIN_WINDOW_HEIGHT: f64 = 540.0;
 const WINDOW_DESTROY_DELAY: StdDuration = StdDuration::from_secs(30);
 const POWER_COMMAND_TIMEOUT: StdDuration = StdDuration::from_secs(10);
 const MAX_POPUP_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_POPUP_IMAGE: &[u8] = include_bytes!("../assets/default-popup.png");
+const POPUP_IMAGE_INITIALIZED: &str = "popup-image-initialized";
 const POWER_GRACE_SECONDS: i64 = 60;
 const WINDOW_DESTROY_TIMEOUT: StdDuration = StdDuration::from_secs(2);
 const WINDOW_DESTROY_POLL: StdDuration = StdDuration::from_millis(10);
@@ -207,10 +209,10 @@ impl Default for AppSettings {
             system_notification_enabled: true,
             theme: Theme::System,
             accent_color: AccentColor::Blue,
-            popup_background_fit: PopupBackgroundFit::Stretch,
-            popup_background_scale: default_popup_background_scale(),
-            popup_background_offset_x: 0,
-            popup_background_offset_y: 0,
+            popup_background_fit: PopupBackgroundFit::Contain,
+            popup_background_scale: 42,
+            popup_background_offset_x: 39,
+            popup_background_offset_y: 30,
             popup_fade_enabled: default_popup_fade_enabled(),
             popup_text_color: String::new(),
             popup_title_size: default_popup_title_size(),
@@ -2175,6 +2177,52 @@ fn read_bounded_image(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+// 标记与图片分开保存，用户移除图片后不会在下次启动时重新补入。
+fn initialize_popup_image(directory: &Path, settings: &mut AppSettings) -> Result<(), String> {
+    if directory.join(POPUP_IMAGE_INITIALIZED).exists() {
+        return Ok(());
+    }
+    if !directory.join("popup-background.img").is_file() {
+        restore_default_popup_image(directory)?;
+        let defaults = AppSettings::default();
+        settings.popup_background_fit = defaults.popup_background_fit;
+        settings.popup_background_scale = defaults.popup_background_scale;
+        settings.popup_background_offset_x = defaults.popup_background_offset_x;
+        settings.popup_background_offset_y = defaults.popup_background_offset_y;
+    } else {
+        atomic_write(&directory.join(POPUP_IMAGE_INITIALIZED), b"1").map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn restore_default_popup_image(directory: &Path) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    atomic_write(&directory.join("popup-background.img"), DEFAULT_POPUP_IMAGE).map_err(|error| error.to_string())?;
+    atomic_write(&directory.join(POPUP_IMAGE_INITIALIZED), b"1").map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn reset_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
+        restore_default_popup_image(&config_directory(&app)?)?;
+        emit_to_reminder_windows(&app, "popup-image-updated", ());
+        Ok(format!("data:image/png;base64,{}", base64_encode(DEFAULT_POPUP_IMAGE)))
+    }).await
+}
+
+#[tauri::command]
+async fn is_popup_image_default(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let state = state.inner().clone();
+    blocking_command(move || {
+        let _image = state.0.popup_image_operations.lock().map_err(lock_error)?;
+        let target = config_directory(&app)?.join("popup-background.img");
+        if !target.is_file() { return Ok(false); }
+        Ok(read_bounded_image(&target)? == DEFAULT_POPUP_IMAGE)
+    }).await
+}
+
 fn save_popup_image(origin: &Path, target: &Path) -> Result<String, String> {
     image_extension(origin)?;
     let bytes = read_bounded_image(origin)?;
@@ -2288,6 +2336,7 @@ async fn clear_popup_image(app: AppHandle, state: State<'_, AppState>) -> Result
             Err(_) => return Ok(()),
         };
         let target = directory.join("popup-background.img");
+        atomic_write(&directory.join(POPUP_IMAGE_INITIALIZED), b"1").map_err(|error| error.to_string())?;
         if target.is_file() {
             fs::remove_file(&target).map_err(|error| format!("Failed to remove the image: {error}"))?;
         }
@@ -2713,6 +2762,8 @@ pub fn run() {
             let mut data = load_json(&path).map_err(std::io::Error::other)?;
             let first_start = !path.exists();
             validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
+            initialize_popup_image(path.parent().ok_or_else(|| std::io::Error::other("Missing configuration directory"))?, &mut data.settings)
+                .map_err(std::io::Error::other)?;
             let mut native_errors = NativeErrors::default();
             if let Err(error) = startup::observe(app.handle(), &mut data) {
                 native_errors.autostart_error = Some(error);
@@ -2789,6 +2840,8 @@ pub fn run() {
             import_popup_image,
             read_popup_image,
             clear_popup_image,
+            reset_popup_image,
+            is_popup_image_default,
             take_pending_navigation,
             popup_window_is_transparent,
             toggle_popup_fullscreen,
@@ -3040,6 +3093,35 @@ mod tests {
             assert_eq!(data.reminders[0].id, reminder_id);
             assert!(!serde_json::to_value(data.settings).unwrap().as_object().unwrap().contains_key("popupBackgroundPosition"));
         }
+    }
+
+    #[test]
+    fn default_image_initialization_preserves_custom_and_removed_images() {
+        let directory = std::env::temp_dir().join(format!("remindon-default-image-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("popup-background.img");
+        let marker = directory.join(POPUP_IMAGE_INITIALIZED);
+        let mut settings = AppSettings::default();
+        settings.popup_background_scale = 99;
+        initialize_popup_image(&directory, &mut settings).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), DEFAULT_POPUP_IMAGE);
+        assert_eq!(settings.popup_background_scale, 42);
+        assert_eq!(settings.popup_background_offset_x, 39);
+        assert_eq!(settings.popup_background_offset_y, 30);
+        assert_eq!(settings.popup_background_fit, PopupBackgroundFit::Contain);
+        fs::remove_file(&target).unwrap();
+        initialize_popup_image(&directory, &mut settings).unwrap();
+        assert!(!target.exists());
+        restore_default_popup_image(&directory).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), DEFAULT_POPUP_IMAGE);
+        fs::remove_file(&marker).unwrap();
+        fs::write(&target, b"custom image").unwrap();
+        settings.popup_background_scale = 77;
+        initialize_popup_image(&directory, &mut settings).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"custom image");
+        assert_eq!(settings.popup_background_scale, 77);
+        assert!(marker.exists());
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

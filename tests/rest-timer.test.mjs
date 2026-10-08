@@ -127,6 +127,8 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
         if (command === 'set_autostart') return { enabled: args.enabled, conflict: false, reason: null }
         if (command === 'save_data') return saveData(JSON.parse(JSON.stringify(args.data)), args)
         if (command === 'read_popup_image') return null
+        if (command === 'is_popup_image_default') return false
+        if (command === 'reset_popup_image') return 'data:image/png;base64,default'
         if (command === 'clear_popup_image') return
         if (command === 'hide_idle_window') { hideCount += 1; return }
         if (command === 'get_rest_timer_status') {
@@ -400,7 +402,7 @@ test('failed fullscreen and language edits preserve a newer native mode event', 
   }
 })
 
-test('reset keeps English defaults, reminder entries and clears image-only changes', async () => {
+test('reset keeps English defaults and reminders while restoring the default image', async () => {
   const app = await mountApp()
   app.state.data.value.settings = defaultData().settings
   app.state.data.value.settings.language = 'en'
@@ -413,7 +415,8 @@ test('reset keeps English defaults, reminder entries and clears image-only chang
   assert.equal(app.state.data.value.settings.language, 'en')
   assert.equal(app.state.data.value.settings.restMessage, translate('en', 'rest.defaultMessage'))
   assert.equal(app.state.data.value.reminders[0].id, 'keep')
-  assert.equal(app.state.popupBackgroundPreview.value, '')
+  assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,default')
+  assert.equal(app.state.popupImageIsDefault.value, true)
   assert.equal(app.state.canResetSettings.value, false)
 })
 
@@ -433,16 +436,16 @@ test('failed reset restores settings and autostart without overriding the native
   assert.equal(JSON.stringify(app.state.data.value.settings), before)
   assert.equal(app.calls.includes('set_autostart'), false)
   assert.ok(!nativeCalls.includes(null) && !nativeCalls.includes('light'))
-  assert.equal(app.calls.includes('clear_popup_image'), false)
+  assert.equal(app.calls.includes('reset_popup_image'), false)
   assert.equal(app.state.popupBackgroundPreview.value, 'data:image/png;base64,image')
   assert.equal(app.state.actionMessage.value, translate('zh-CN', 'status.saveFailed'))
 })
 
-test('image removal failure keeps the saved defaults and reports the actual image state', async () => {
+test('image restoration failure keeps the saved defaults and reports the actual image state', async () => {
   const app = await mountApp()
   app.state.data.value.settings.theme = 'light'
   app.state.popupBackgroundPreview.value = 'data:image/png;base64,image'
-  app.setInvoke('clear_popup_image', async () => { throw new Error('permission denied') })
+  app.setInvoke('reset_popup_image', async () => { throw new Error('permission denied') })
   app.setInvoke('read_popup_image', async () => 'data:image/png;base64,image')
   app.setConfirm(async () => true)
   await app.state.resetSettings()

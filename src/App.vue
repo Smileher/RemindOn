@@ -41,6 +41,7 @@ const autostartError = ref('')
 const autostartNotice = ref('')
 const appVersion = ref('1.1')
 const popupBackgroundPreview = ref('')
+const popupImageIsDefault = ref(false)
 const {
   mode: updateMode, status: updateStatus, newVersion, progress: updateProgress,
   errorMessage: updateError, busy: updateBusy,
@@ -147,7 +148,7 @@ const canResetSettings = computed(() => {
     autostart: current.autostart,
     restMessage: translate(language, 'rest.defaultMessage'),
   }
-  return Boolean(popupBackgroundPreview.value) || (Object.keys(localized) as Array<keyof typeof localized>).some(
+  return !popupImageIsDefault.value || (Object.keys(localized) as Array<keyof typeof localized>).some(
     (key) => JSON.stringify(current[key]) !== JSON.stringify(localized[key]),
   )
 })
@@ -530,6 +531,7 @@ async function pickPopupImage() {
     if (typeof path !== 'string') return
     const dataUrl = await invoke<string>('import_popup_image', { source: path })
     popupBackgroundPreview.value = dataUrl
+    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default')
     actionMessage.value = t('status.imageSaved')
   } catch (error) {
     logError('pick popup image', error)
@@ -542,6 +544,7 @@ async function clearPopupImage() {
   try {
     await invoke('clear_popup_image')
     popupBackgroundPreview.value = ''
+    popupImageIsDefault.value = false
     actionMessage.value = t('status.imageCleared')
   } catch (error) {
     logError('clear popup image', error)
@@ -552,8 +555,10 @@ async function clearPopupImage() {
 async function loadPopupImagePreview() {
   try {
     popupBackgroundPreview.value = (await invoke<string | null>('read_popup_image')) ?? ''
+    popupImageIsDefault.value = await invoke<boolean>('is_popup_image_default')
   } catch {
     popupBackgroundPreview.value = ''
+    popupImageIsDefault.value = false
   }
 }
 
@@ -626,13 +631,13 @@ async function resetSettings() {
     }
     autostartError.value = ''
     notificationError.value = ''
-    // 参数已落盘，删图失败时保留真实图片状态并提示，不回滚成旧参数。
+    // 参数已落盘，恢复资源失败时保留真实图片状态，不回滚成旧参数。
     try {
-      await invoke('clear_popup_image')
-      popupBackgroundPreview.value = ''
+      popupBackgroundPreview.value = await invoke<string>('reset_popup_image')
+      popupImageIsDefault.value = true
       actionMessage.value = t('status.resetDone')
     } catch (error) {
-      logError('clear popup image on reset', error)
+      logError('restore popup image on reset', error)
       await loadPopupImagePreview()
       actionMessage.value = t('status.imageFailed')
     }
