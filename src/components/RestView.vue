@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { Coffee, Play, Settings2 } from '@lucide/vue'
 import { translate } from '../i18n'
 import type { MessageKey } from '../i18n'
@@ -23,6 +24,37 @@ const emit = defineEmits<{
   'update:message': [value: string]
   messageCommitted: [value: string]
 }>()
+
+const intervalDraft = ref(String(props.intervalMinutes))
+const messageDraft = ref(props.message)
+const editingInterval = ref(false)
+const editingMessage = ref(false)
+
+// 倒计时和后端同步会刷新父组件，输入草稿只在未编辑时跟随已保存参数。
+watch(() => props.intervalMinutes, value => {
+  if (!editingInterval.value) intervalDraft.value = String(value)
+})
+watch(() => props.message, value => {
+  if (!editingMessage.value) messageDraft.value = value
+})
+
+function commitInterval() {
+  const value = Number(intervalDraft.value)
+  if (Number.isInteger(value) && value >= 1 && value <= 1440) {
+    emit('update:interval', intervalDraft.value)
+  } else {
+    intervalDraft.value = String(props.intervalMinutes)
+  }
+}
+
+function commitMessage() {
+  emit('update:message', messageDraft.value)
+  emit('messageCommitted', messageDraft.value)
+}
+
+function finishInput(event: KeyboardEvent) {
+  if (!event.isComposing) (event.target as HTMLInputElement).blur()
+}
 
 function t(key: MessageKey, params: Record<string, string | number> = {}) {
   return translate(props.language, key, params)
@@ -60,13 +92,13 @@ function t(key: MessageKey, params: Record<string, string | number> = {}) {
       <div class="setting-card">
         <div><strong>{{ t('rest.interval') }}</strong><span>{{ t('rest.intervalHint') }}</span></div>
         <label class="number-field">
-          <input :value="intervalMinutes" type="number" min="1" max="1440" @change="emit('update:interval', ($event.target as HTMLInputElement).value)" />
+          <input :value="intervalDraft" :aria-label="t('rest.interval')" type="number" min="1" max="1440" @input="intervalDraft = ($event.target as HTMLInputElement).value" @focus="editingInterval = true" @blur="editingInterval = false" @change="commitInterval" @keydown.enter="finishInput" />
           <span>{{ t('common.minutes') }}</span>
         </label>
       </div>
       <label class="setting-card stacked-setting">
         <div><strong>{{ t('rest.message') }}</strong><span>{{ t('rest.messageHint') }}</span></div>
-        <input :value="message" type="text" maxlength="120" @change="emit('update:message', ($event.target as HTMLInputElement).value); emit('messageCommitted', ($event.target as HTMLInputElement).value)" />
+        <input v-model="messageDraft" type="text" maxlength="120" @focus="editingMessage = true" @blur="editingMessage = false" @change="commitMessage" @keydown.enter="finishInput" />
       </label>
       <div class="setting-card">
         <div><strong>{{ t('settings.groupPopup') }}</strong></div>
