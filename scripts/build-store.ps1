@@ -60,7 +60,7 @@ try {
 
   $env:REMINDON_STORE_BUILD = '1'
   foreach ($item in $targets) {
-    & pnpm tauri build --target $item.Target --no-bundle --ci
+    & pnpm tauri build --target $item.Target --no-bundle --ci -- --locked
     if ($LASTEXITCODE -ne 0) { throw "Store executable build failed for $($item.Architecture)." }
     $executable = Join-Path $repository "src-tauri/target/$($item.Target)/release/remindon.exe"
     & "$PSScriptRoot/package-msix.ps1" -Architecture $item.Architecture -Version $version -IdentityName $identityName -Publisher $publisher -PublisherDisplayName $publisherDisplayName -SourceExecutable $executable -IconPath $iconPath -OutputDirectory $uploadPackages

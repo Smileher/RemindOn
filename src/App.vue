@@ -799,7 +799,7 @@ onMounted(async () => {
       // The standalone preview and older bridge mocks do not expose navigation state.
     }
     try {
-      appVersion.value = (await getVersion()).replace(/\.0$/, '')
+      appVersion.value = await getVersion()
     } catch {
       // Keep the package-version fallback in standalone preview mode.
     }

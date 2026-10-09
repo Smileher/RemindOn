@@ -513,18 +513,6 @@ fn local_datetime(date: NaiveDate, time: NaiveTime) -> Result<DateTime<Local>, S
         .ok_or_else(|| "Failed to resolve the local reminder time".to_string())
 }
 
-#[cfg(test)]
-fn next_daily(time: &str, after: DateTime<Local>) -> Result<String, String> {
-    let parsed_time = parse_time(time)?;
-    let today = local_datetime(after.date_naive(), parsed_time)?;
-    let candidate = if today > after {
-        today
-    } else {
-        local_datetime(after.date_naive() + Duration::days(1), parsed_time)?
-    };
-    Ok(candidate.to_rfc3339())
-}
-
 fn next_recurring(reminder: &Reminder, after: DateTime<Local>) -> Result<String, String> {
     let time = reminder
         .time
@@ -3328,10 +3316,15 @@ mod tests {
     #[test]
     fn daily_time_after_current_time_moves_to_next_day() {
         let after = Local.with_ymd_and_hms(2026, 9, 3, 10, 0, 0).unwrap();
-        let next = next_daily("09:00", after).unwrap();
+        let reminder = sample_recurring(ReminderType::Daily, "09:00");
+        let next = next_recurring(&reminder, after).unwrap();
         let parsed = parse_datetime(&next).unwrap();
         assert_eq!(parsed.date_naive(), after.date_naive() + Duration::days(1));
         assert_eq!(parsed.time(), NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+        let before = Local.with_ymd_and_hms(2026, 9, 3, 8, 0, 0).unwrap();
+        assert_eq!(parse_datetime(&next_recurring(&reminder, before).unwrap()).unwrap().date_naive(), before.date_naive());
+        let at = Local.with_ymd_and_hms(2026, 9, 3, 9, 0, 0).unwrap();
+        assert_eq!(parse_datetime(&next_recurring(&reminder, at).unwrap()).unwrap().date_naive(), at.date_naive() + Duration::days(1));
     }
 
     #[test]

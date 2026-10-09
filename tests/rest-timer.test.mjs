@@ -75,6 +75,11 @@ test('startup persistence failure displays loaded data before an explicit retry'
   assert.equal(app.state.persistenceError.value, '')
 })
 
+test('the displayed application version preserves the patch component', async () => {
+  const app = await mountApp()
+  assert.equal(app.state.appVersion.value, '0.9.0')
+})
+
 test('scheduler failures survive reload and cannot be cleared by a persistence retry', async () => {
   const app = await mountApp({ nativeErrors: { schedulerError: 'state lock poisoned' } })
   assert.equal(app.state.schedulerError.value, 'state lock poisoned')

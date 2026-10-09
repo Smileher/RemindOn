@@ -33,8 +33,10 @@ jobs:
           const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
           const tauri = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).version;
           const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/^version = "([^"]+)"/m)?.[1];
-          if (!/^\d+\.\d+\.\d+$/.test(version) || process.env.TAG !== `v${version}` || tauri !== version || cargo !== version) {
-            throw new Error('Run this workflow on a version tag matching package.json, Cargo.toml and tauri.conf.json');
+          const locked = readFileSync('src-tauri/Cargo.lock', 'utf8').match(/\[\[package\]\]\r?\nname = "remindon"\r?\nversion = "([^"]+)"/)?.[1];
+          const fallback = readFileSync('src/App.vue', 'utf8').match(/const appVersion = ref\('([^']+)'\)/)?.[1];
+          if (!/^\d+\.\d+\.\d+$/.test(version) || process.env.TAG !== `v${version}` || tauri !== version || cargo !== version || locked !== version || fallback !== version) {
+            throw new Error('The release tag, package.json, Cargo.toml, Cargo.lock, tauri.conf.json and UI fallback must match');
           }
           const notesPath = `docs/releases/${version}.md`;
           if (!existsSync(notesPath)) {
