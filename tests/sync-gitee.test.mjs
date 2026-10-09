@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -111,12 +111,13 @@ test(`Gitee ${legacyX64 ? 'legacy x64' : 'complete'} sync verifies anonymous dow
   // 资产并发上传，完成顺序不确定，按集合比较。
   assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json'].sort())
   await syncGiteeRelease(options)
-  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json'].sort())
+  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json'].sort())
   assert.equal(existingAssets.length, selectedNames.length + 1)
   transientDownload = true
   lostManifestResponse = true
+  githubManifest.notes = 'Updated release notes'
   await syncGiteeRelease(options)
-  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json', 'latest.json'].sort())
+  assert.deepEqual([...uploaded].sort(), [...selectedNames, 'latest.json', 'latest.json'].sort())
   assert.equal(existingAssets.length, selectedNames.length + 1)
   remoteBytes.set(selectedNames[0], Buffer.from('partial attachment'))
   await syncGiteeRelease(options)
@@ -184,10 +185,15 @@ test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout:
     assert.ok(!args.some((arg) => arg.includes('test-token')))
     assert.equal(options.timeout, 8 * 60 * 1000 + 5000)
     const child = { stdin: new EventEmitter() }
-    child.stdin.end = (body) => {
-      const text = body.toString('utf8')
-      assert.ok(text.includes('test-token'))
-      manifestBytes = Buffer.from(text.split('Content-Type: application/octet-stream\r\n\r\n')[1].split('\r\n--')[0], 'utf8')
+    child.stdin.end = async (config) => {
+      const lines = config.trim().split('\n')
+      const url = JSON.parse(lines.find((line) => line.startsWith('url = ')).slice(6))
+      assert.equal(new URL(url).searchParams.get('access_token'), 'test-token')
+      assert.ok(config.includes('access_token=test-token'))
+      const form = JSON.parse(lines.find((line) => line.startsWith('form = ')).slice(7))
+      const file = form.match(/^file=@"([^"]+)"/)[1]
+      manifestBytes = await readFile(file)
+      assert.ok(!manifestBytes.toString('utf8').includes('test-token'))
       const asset = { id: 100, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` }
       assets.push(asset)
       callback(null, JSON.stringify(asset))
@@ -204,6 +210,51 @@ test(`HTTPS upload recovers a completed attachment after ${failure}`, { timeout:
   assert.equal(result.assetCount, names.length)
   assert.equal(uploadCount, 1)
   assert.equal(curlCount, failure === 'curl fallback' ? 1 : 0)
+  assert.equal(assets.filter((asset) => asset.name === 'latest.json').length, 1)
+})
+}
+
+for (const failure of ['upload', 'verification']) {
+test(`Gitee restores the previous manifest after replacement ${failure} fails`, async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'remindon-gitee-rollback-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  for (const name of names) await writeFile(join(directory, name), name)
+  const oldBytes = Buffer.from(`${JSON.stringify({ ...manifest(), notes: 'Previous notes' }, null, 2)}\n`)
+  let remoteManifest = oldBytes
+  let assets = names.map((name, id) => ({ id, name, browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/${name}` }))
+  assets.push({ id: 100, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` })
+  let restored = false
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  context.mock.method(console, 'warn', () => queueMicrotask(() => context.mock.timers.tick(15000)))
+  const fetchImpl = async (url, options = {}) => {
+    const path = new URL(url).pathname
+    if (path.includes('/releases/download/')) {
+      const name = path.split('/').at(-1)
+      return new Response(name === 'latest.json' ? remoteManifest : name)
+    }
+    if (options.method === 'DELETE') {
+      assets = assets.filter((asset) => asset.id !== Number(path.split('/').at(-1)))
+      return new Response(null, { status: 204 })
+    }
+    if (options.method === 'POST') {
+      const bytes = Buffer.from(await options.body.get('file').arrayBuffer())
+      restored = bytes.equals(oldBytes)
+      if (!restored && failure === 'upload') throw new Error('new manifest upload failed')
+      remoteManifest = !restored && failure === 'verification' ? Buffer.from('corrupt manifest') : bytes
+      const asset = { id: 101, name: 'latest.json', browser_download_url: `https://gitee.com/smileher/RemindOn/releases/download/v${version}/latest.json` }
+      assets.push(asset)
+      return Response.json(asset)
+    }
+    if (path.endsWith('/attach_files')) return Response.json(assets)
+    if (path.endsWith('/releases')) return Response.json([{ id: 42, tag_name: `v${version}` }])
+    return Response.json({ default_branch: 'master' })
+  }
+  await assert.rejects(syncGiteeRelease({
+    tag: `v${version}`, githubRelease: { tag_name: `v${version}`, assets: names.map((name) => ({ name })) },
+    githubManifest: manifest(), assetDir: directory, token: 'test-token', fetchImpl,
+  }), failure === 'upload' ? /new manifest upload failed/ : /does not match/)
+  assert.equal(restored, true)
+  assert.deepEqual(remoteManifest, oldBytes)
   assert.equal(assets.filter((asset) => asset.name === 'latest.json').length, 1)
 })
 }

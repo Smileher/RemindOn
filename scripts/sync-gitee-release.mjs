@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import https from 'node:https'
 import childProcess from 'node:child_process'
 import { basename, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 const api = 'https://gitee.com/api/v5/repos/smileher/RemindOn'
@@ -101,7 +102,7 @@ async function uploadWithRetry(fetchImpl, token, releaseId, name, bytes) {
   throw lastError
 }
 
-function uploadWithHttps(token, releaseId, name, bytes, useCurl) {
+async function uploadWithHttps(token, releaseId, name, bytes, useCurl) {
   const boundary = `----RemindOn-${Date.now().toString(36)}`
   const prefix = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="access_token"\r\n\r\n${token}\r\n` +
@@ -113,32 +114,42 @@ function uploadWithHttps(token, releaseId, name, bytes, useCurl) {
   const body = Buffer.concat([prefix, Buffer.from(bytes), suffix])
   const url = new URL(`${api}/releases/${releaseId}/attach_files`)
   // Gitee 部分节点只读取 query 中的令牌；multipart 字段仍保留以兼容其它节点。
-  // curl 不把令牌放进命令参数，避免令牌出现在 runner 的进程参数或错误日志中。
-  if (!useCurl) url.searchParams.set('access_token', token)
+  url.searchParams.set('access_token', token)
   if (useCurl) {
-    // 托管 runner 自带 curl；令牌只通过 stdin 发送，不放进命令参数或日志。
-    return new Promise((resolve, reject) => {
-      const child = childProcess.execFile('curl', [
-        '--silent', '--show-error', '--fail-with-body',
-        '--connect-timeout', String(apiTimeoutMs / 1000), '--max-time', String(uploadDeadlineMs / 1000),
-        '--header', `Content-Type: multipart/form-data; boundary=${boundary}`,
-        '--data-binary', '@-', url.href,
-      ], { timeout: uploadDeadlineMs + 5000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
-        if (error) {
-          reject(new Error(`Gitee curl upload failed for ${name}: ${error.message}`))
-          return
-        }
-        try {
-          const asset = JSON.parse(stdout)
-          if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
-          resolve(asset)
-        } catch (error) {
-          reject(error)
-        }
+    // curl 配置通过 stdin 传入令牌；临时文件仅保存待上传附件。
+    const directory = await mkdtemp(join(tmpdir(), 'remindon-gitee-upload-'))
+    try {
+      const file = join(directory, 'asset')
+      await writeFile(file, bytes)
+      return await new Promise((resolve, reject) => {
+        const child = childProcess.execFile('curl', [
+          '--silent', '--show-error', '--fail-with-body',
+          '--connect-timeout', String(apiTimeoutMs / 1000), '--max-time', String(uploadDeadlineMs / 1000),
+          '--config', '-',
+        ], { timeout: uploadDeadlineMs + 5000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+          if (error) {
+            reject(new Error(`Gitee curl upload failed for ${name} (exit code ${error.code ?? 'unknown'})`))
+            return
+          }
+          try {
+            const asset = JSON.parse(stdout)
+            if (asset?.name !== name || !asset.browser_download_url) throw new Error(`Gitee did not return a download URL for ${name}`)
+            resolve(asset)
+          } catch (error) {
+            reject(error)
+          }
+        })
+        child.stdin.on('error', reject)
+        child.stdin.end([
+          `url = ${JSON.stringify(url.href)}`,
+          `form-string = ${JSON.stringify(`access_token=${token}`)}`,
+          `form = ${JSON.stringify(`file=@"${file.replaceAll('\\', '/')}";filename="${name.replaceAll('"', '')}";type=application/octet-stream`)}`,
+          '',
+        ].join('\n'))
       })
-      child.stdin.on('error', reject)
-      child.stdin.end(body)
-    })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
   return new Promise((resolve, reject) => {
     let settled = false
@@ -260,13 +271,34 @@ export async function syncGiteeRelease({ tag, githubRelease, githubManifest, ass
   const manifest = createGiteeManifest(githubManifest, assets)
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   const previousManifest = assets.get('latest.json')
+  let previousBytes
   if (previousManifest) {
+    previousBytes = await downloadWithRetry(fetchImpl, previousManifest.browser_download_url, 'latest.json')
+    if (manifestBytes.equals(previousBytes)) return { releaseId: release.id, assetCount: names.length }
     await request(fetchImpl, token, `/releases/${release.id}/attach_files/${previousManifest.id}`, { method: 'DELETE' })
   }
-  const uploadedManifest = await uploadWithRetry(fetchImpl, token, release.id, 'latest.json', manifestBytes)
-  const downloadedManifest = await downloadWithRetry(fetchImpl, uploadedManifest.browser_download_url, 'latest.json')
-  if (!manifestBytes.equals(downloadedManifest)) {
-    throw new Error('Gitee latest.json is not anonymously downloadable or does not match the generated manifest')
+  try {
+    const uploadedManifest = await uploadWithRetry(fetchImpl, token, release.id, 'latest.json', manifestBytes)
+    const downloadedManifest = await downloadWithRetry(fetchImpl, uploadedManifest.browser_download_url, 'latest.json')
+    if (!manifestBytes.equals(downloadedManifest)) {
+      throw new Error('Gitee latest.json is not anonymously downloadable or does not match the generated manifest')
+    }
+  } catch (error) {
+    if (previousBytes) {
+      // 替换失败保留上次可用清单；仍让 workflow 失败以便重试。
+      try {
+        const current = await request(fetchImpl, token, `/releases/${release.id}/attach_files?per_page=100`)
+        for (const asset of current.filter((asset) => asset.name === 'latest.json')) {
+          await request(fetchImpl, token, `/releases/${release.id}/attach_files/${asset.id}`, { method: 'DELETE' })
+        }
+        const restored = await uploadWithRetry(fetchImpl, token, release.id, 'latest.json', previousBytes)
+        const downloaded = await downloadWithRetry(fetchImpl, restored.browser_download_url, 'latest.json')
+        if (!previousBytes.equals(downloaded)) throw new Error('Restored Gitee latest.json failed verification')
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], 'Gitee manifest replacement and restoration both failed')
+      }
+    }
+    throw error
   }
   return { releaseId: release.id, assetCount: names.length }
 }
