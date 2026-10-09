@@ -28,7 +28,9 @@ export function useUpdater() {
   function applyRuntimeState(runtime: UpdateRuntimeState) {
     newVersion.value = runtime.version ?? ''
     status.value = runtime.phase === 'idle' ? 'upToDate' : runtime.phase
-    errorMessage.value = runtime.error ? 'update-failed' : ''
+    errorMessage.value = runtime.error === 'automatic-update-paused'
+      ? 'automatic-update-paused'
+      : runtime.error ? 'update-failed' : ''
   }
 
   function applyProgress(runtime: UpdateProgress) {

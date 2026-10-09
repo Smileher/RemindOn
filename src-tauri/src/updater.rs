@@ -32,6 +32,10 @@ const DOWNLOAD_PROGRESS_EVENT: &str = "portable-download-progress";
 const UPDATE_STATUS_EVENT: &str = "update-status";
 const UPDATE_PROGRESS_EVENT: &str = "update-progress";
 const UPDATE_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+const MAX_AUTO_UPDATE_ATTEMPTS: u32 = 3;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+const AUTO_UPDATE_PAUSED: &str = "automatic-update-paused";
 
 const STORE_BUILD: bool = option_env!("REMINDON_STORE_BUILD").is_some();
 
@@ -113,6 +117,33 @@ struct PortableDownloadProgress {
     percentage: Option<u8>,
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[derive(Default, Deserialize, Serialize)]
+struct UpdateAttempts {
+    version: String,
+    attempts: u32,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn record_update_attempt(path: &Path, current_version: &str, target_version: &str, force: bool) -> Result<bool, String> {
+    let mut record = match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<UpdateAttempts>(&bytes).map_err(|error| format!("Invalid update attempt record: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => UpdateAttempts::default(),
+        Err(error) => return Err(format!("Failed to read update attempt record: {error}")),
+    };
+    if record.version != target_version || !is_release_newer(&record.version, current_version)? {
+        record = UpdateAttempts { version: target_version.to_string(), attempts: 0 };
+    }
+    if !force && record.attempts >= MAX_AUTO_UPDATE_ATTEMPTS {
+        return Ok(false);
+    }
+    // 安装器可能直接退出旧进程，先落盘；新版启动后按实际版本重置计数。
+    record.attempts = record.attempts.saturating_add(1);
+    let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+    crate::atomic_write(path, &bytes).map_err(|error| format!("Failed to save update attempt record: {error}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub fn get_update_mode(app: tauri::AppHandle) -> Result<UpdateMode, String> {
     if cfg!(debug_assertions) {
@@ -150,9 +181,9 @@ pub fn get_update_progress(state: State<'_, AppState>) -> Result<Option<UpdatePr
 pub async fn check_for_updates(
     app: AppHandle,
     state: State<'_, AppState>,
-    _force: bool,
+    force: bool,
 ) -> Result<UpdateRuntimeState, String> {
-    run_update_check(app, state.inner().clone()).await
+    run_update_check(app, state.inner().clone(), force).await
 }
 
 pub fn start_background_update_checks(app: AppHandle, state: AppState) {
@@ -161,12 +192,12 @@ pub fn start_background_update_checks(app: AppHandle, state: AppState) {
             eprintln!("Background update checks stopped because state is poisoned");
             break;
         }
-        let _ = crate::report_native("Background update check", tauri::async_runtime::block_on(run_update_check(app.clone(), state.clone())));
+        let _ = crate::report_native("Background update check", tauri::async_runtime::block_on(run_update_check(app.clone(), state.clone(), false)));
         std::thread::sleep(std::time::Duration::from_secs(UPDATE_INTERVAL_SECONDS));
     });
 }
 
-async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRuntimeState, String> {
+async fn run_update_check(app: AppHandle, state: AppState, force: bool) -> Result<UpdateRuntimeState, String> {
     if STORE_BUILD || cfg!(debug_assertions) {
         return Ok(set_update_state(
             &app,
@@ -198,7 +229,7 @@ async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRunti
         .update_progress
         .lock().map_err(crate::lock_error)? = None;
 
-    let result = run_platform_update(&app, &state).await;
+    let result = run_platform_update(&app, &state, force).await;
     match result {
         Ok(state) => Ok(state),
         Err(error) => {
@@ -212,6 +243,7 @@ async fn run_update_check(app: AppHandle, state: AppState) -> Result<UpdateRunti
 async fn run_platform_update(
     app: &AppHandle,
     state: &AppState,
+    force: bool,
 ) -> Result<UpdateRuntimeState, String> {
     match get_update_mode(app.clone())? {
         UpdateMode::Installed => {
@@ -224,6 +256,10 @@ async fn run_platform_update(
             let Some(update) = update else {
                 return Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?);
             };
+            let attempts_path = crate::config_directory(app)?.join("update-attempts.json");
+            if !record_update_attempt(&attempts_path, &app.package_info().version.to_string(), &update.version, force)? {
+                return set_update_state(app, state, UpdatePhase::Error, Some(update.version), Some(AUTO_UPDATE_PAUSED.to_string()));
+            }
             set_update_state(
                 app,
                 state,
@@ -303,6 +339,7 @@ async fn run_platform_update(
 async fn run_platform_update(
     app: &AppHandle,
     state: &AppState,
+    _force: bool,
 ) -> Result<UpdateRuntimeState, String> {
     Ok(set_update_state(app, state, UpdatePhase::Idle, None, None)?)
 }
@@ -920,6 +957,38 @@ mod tests {
 
         fs::write(&second, b"corrupt update").unwrap();
         assert!(verified_download_path(&root, &file_name, &expected_hash).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_update_attempts_pause_across_restarts_and_allow_manual_or_new_versions() {
+        let root = test_root("update-attempts");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("update-attempts.json");
+        for _ in 0..MAX_AUTO_UPDATE_ATTEMPTS {
+            assert!(record_update_attempt(&path, "1.3.1", "1.3.2", false).unwrap());
+        }
+        let paused_record = fs::read(&path).unwrap();
+        assert!(!record_update_attempt(&path, "1.3.1", "1.3.2", false).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), paused_record);
+        assert!(record_update_attempt(&path, "1.3.1", "1.3.2", true).unwrap());
+        assert!(!record_update_attempt(&path, "1.3.1", "1.3.2", false).unwrap());
+        assert!(record_update_attempt(&path, "1.3.1", "1.3.3", false).unwrap());
+        let record: UpdateAttempts = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(record.attempts, 1);
+        assert_eq!(record.version, "1.3.3");
+        assert!(record_update_attempt(&path, "1.3.3", "1.3.3", false).unwrap());
+        let record: UpdateAttempts = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(record.attempts, 1);
+        assert!(record_update_attempt(&path, "1.3.3", "1.3.4", false).unwrap());
+        let record: UpdateAttempts = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(record.attempts, 1);
+        fs::write(&path, b"invalid record").unwrap();
+        assert!(record_update_attempt(&path, "1.3.1", "1.3.2", false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"invalid record");
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(record_update_attempt(&path, "1.3.1", "1.3.2", true).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

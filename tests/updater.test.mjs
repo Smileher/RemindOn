@@ -96,6 +96,26 @@ test('manual failures show an error and can be retried', async () => {
   assert.equal(updater.errorMessage.value, '')
 })
 
+test('paused automatic updates remain manually retryable', async () => {
+  invoke.mock.mockImplementation(async (command, args) => {
+    if (command === 'get_update_mode') return 'installed'
+    if (command === 'get_update_status') return { phase: 'error', version: '1.3.2', error: 'automatic-update-paused' }
+    if (command === 'get_update_progress') return null
+    if (command === 'check_for_updates') {
+      assert.deepEqual(args, { force: true })
+      return idleState
+    }
+  })
+  const updater = useUpdater()
+  await updater.loadStatus()
+  assert.equal(updater.errorMessage.value, 'automatic-update-paused')
+  assert.equal(updater.newVersion.value, '1.3.2')
+  assert.equal(updater.busy.value, false)
+  await updater.checkForUpdates()
+  assert.equal(updater.status.value, 'upToDate')
+  assert.equal(updater.errorMessage.value, '')
+})
+
 test('development and unsupported copies do not invoke the Rust check', async () => {
   for (const mode of ['development', 'unsupported']) {
     invoke.mock.mockImplementation(async (command) => command === 'get_update_mode' ? mode : undefined)
