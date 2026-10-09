@@ -789,7 +789,8 @@ onMounted(async () => {
     unlistenNavigation = await getCurrentWindow().listen<View>('navigate-to', (event) => {
       currentView.value = event.payload
     })
-    data.value = await invoke<AppData>('load_data')
+    // 启动写盘失败时先显示已校验的数据和重试提示，避免默认值覆盖用户配置。
+    data.value = await invoke<AppData>('load_data', { retryPersistence: false })
     restMessageDraft.value = data.value.settings.restMessage
     try {
       const pendingNavigation = await invoke<View | null>('take_pending_navigation')

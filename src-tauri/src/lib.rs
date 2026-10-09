@@ -393,6 +393,15 @@ fn write_json(path: &Path, data: &AppData) -> Result<(), String> {
     atomic_write(path, content.as_bytes()).map_err(|error| format!("Failed to save settings: {error}"))
 }
 
+fn persist_startup_data(path: &Path, data: &AppData) -> Result<(), String> {
+    let content = serde_json::to_string_pretty(data)
+        .map_err(|error| format!("Failed to serialize settings: {error}"))?;
+    if fs::read(path).is_ok_and(|saved| saved == content.as_bytes()) {
+        return Ok(());
+    }
+    atomic_write(path, content.as_bytes()).map_err(|error| format!("Failed to save settings: {error}"))
+}
+
 fn commit_app_data(path: &Path, current: &mut AppData, candidate: AppData) -> Result<(), String> {
     write_json(path, &candidate)?;
     *current = candidate;
@@ -1596,11 +1605,12 @@ fn ensure_scheduler_healthy(state: &AppState) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn load_data(app: AppHandle, state: State<'_, AppState>) -> Result<AppData, String> {
+async fn load_data(app: AppHandle, state: State<'_, AppState>, retry_persistence: Option<bool>) -> Result<AppData, String> {
     let state = state.inner().clone();
     blocking_command(move || {
         let data = state.0.data.lock().map_err(lock_error)?;
-        if state.0.native_errors.lock().map_err(lock_error)?.persistence_error.is_some() {
+        if retry_persistence.unwrap_or(true)
+            && state.0.native_errors.lock().map_err(lock_error)?.persistence_error.is_some() {
             ensure_scheduler_healthy(&state)?;
             write_json(&state.0.data_path, &data)?;
             clear_persistence_error(&app, &state);
@@ -2750,7 +2760,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(browser::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main_window(app);
+            if app.try_state::<AppState>().is_some() {
+                show_main_window(app);
+            }
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -2762,64 +2774,80 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let path = data_path(app.handle()).map_err(std::io::Error::other)?;
-            let mut data = load_json(&path).map_err(std::io::Error::other)?;
-            let first_start = !path.exists();
-            validate_and_normalize(&mut data).map_err(std::io::Error::other)?;
-            initialize_popup_image(path.parent().ok_or_else(|| std::io::Error::other("Missing configuration directory"))?, &mut data.settings)
-                .map_err(std::io::Error::other)?;
-            let mut native_errors = NativeErrors::default();
-            if let Err(error) = startup::observe(app.handle(), &mut data) {
-                native_errors.autostart_error = Some(error);
+            let initialization = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let path = data_path(app.handle()).map_err(std::io::Error::other)?;
+                let mut data = load_json(&path).map_err(std::io::Error::other)?;
+                let first_start = !path.exists();
+                validate_and_normalize(&mut data).map_err(|error| {
+                    std::io::Error::other(format!("Invalid settings in {}: {error}", path.display()))
+                })?;
+                initialize_popup_image(path.parent().ok_or_else(|| std::io::Error::other("Missing configuration directory"))?, &mut data.settings)
+                    .map_err(std::io::Error::other)?;
+                let mut native_errors = NativeErrors::default();
+                if let Err(error) = startup::observe(app.handle(), &mut data) {
+                    native_errors.autostart_error = Some(error);
+                }
+                // 写盘失败沿用运行时重试入口，调度在持久化恢复前暂停。
+                native_errors.persistence_error = persist_startup_data(&path, &data).err();
+                let hide_on_start = data.settings.minimize_to_tray && !first_start
+                    && native_errors.persistence_error.is_none();
+                let language = data.settings.language;
+                let state = AppState(Arc::new(InnerState {
+                    data: Mutex::new(data),
+                    data_path: path,
+                    paused: AtomicBool::new(false),
+                    scheduler_started: AtomicBool::new(false),
+                    scheduler_stop: AtomicBool::new(false),
+                    scheduler_error: Mutex::new(None),
+                    next_reminder_session: AtomicU64::new(0),
+                    power_action_session: AtomicU64::new(0),
+                    active_reminder: Mutex::new(None),
+                    rest_active: AtomicBool::new(false),
+                    rest_round_pending: AtomicBool::new(false),
+                    rest_next: Mutex::new(None),
+                    reminder_queue: Mutex::new(VecDeque::new()),
+                    pending_navigation: Mutex::new(None),
+                    window_operations: Mutex::new(()),
+                    popup_image_operations: Mutex::new(()),
+                    window_cache: Mutex::new(WindowCache::default()),
+                    reminder_targets: Mutex::new(HashSet::new()),
+                    main_ready: AtomicBool::new(false),
+                    main_visible: AtomicBool::new(false),
+                    native_errors: Mutex::new(native_errors),
+                    update_state: Mutex::new(updater::UpdateRuntimeState::default()),
+                    update_progress: Mutex::new(None),
+                }));
+                app.manage(state.clone());
+                setup_tray(app, language)?;
+                // 应用菜单要在启动时就替换好，否则要等第一次保存设置后才生效。
+                #[cfg(target_os = "macos")]
+                apply_application_menu(app.handle(), language);
+                if !hide_on_start {
+                    show_main_window(app.handle());
+                } else {
+                    notify_tray_background(app.handle(), &state);
+                }
+                spawn_scheduler(app.handle().clone(), state.clone());
+                // 启动即对齐一次原生外观（含窗口背景色），避免标题栏先显示默认灰再跳变。
+                let startup_theme = app_data(&state).settings.theme;
+                apply_theme_to_windows(app.handle(), &startup_theme);
+                #[cfg(target_os = "macos")]
+                start_system_theme_watcher(app.handle().clone(), state);
+                updater::start_background_update_checks(
+                    app.handle().clone(),
+                    app.state::<AppState>().inner().clone(),
+                );
+                Ok(())
+            })();
+            if let Err(error) = initialization {
+                eprintln!("RemindOn initialization failed: {error}");
+                let handle = app.handle().clone();
+                app.dialog()
+                    .message(format!("RemindOn could not start.\n\n{error}"))
+                    .title("RemindOn")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                    .show(move |_| handle.exit(1));
             }
-            write_json(&path, &data).map_err(std::io::Error::other)?;
-            let hide_on_start = data.settings.minimize_to_tray && !first_start;
-            let language = data.settings.language;
-            let state = AppState(Arc::new(InnerState {
-                data: Mutex::new(data),
-                data_path: path,
-                paused: AtomicBool::new(false),
-                scheduler_started: AtomicBool::new(false),
-                scheduler_stop: AtomicBool::new(false),
-                scheduler_error: Mutex::new(None),
-                next_reminder_session: AtomicU64::new(0),
-                power_action_session: AtomicU64::new(0),
-                active_reminder: Mutex::new(None),
-                rest_active: AtomicBool::new(false),
-                rest_round_pending: AtomicBool::new(false),
-                rest_next: Mutex::new(None),
-                reminder_queue: Mutex::new(VecDeque::new()),
-                pending_navigation: Mutex::new(None),
-                window_operations: Mutex::new(()),
-                popup_image_operations: Mutex::new(()),
-                window_cache: Mutex::new(WindowCache::default()),
-                reminder_targets: Mutex::new(HashSet::new()),
-                main_ready: AtomicBool::new(false),
-                main_visible: AtomicBool::new(false),
-                native_errors: Mutex::new(native_errors),
-                update_state: Mutex::new(updater::UpdateRuntimeState::default()),
-                update_progress: Mutex::new(None),
-            }));
-            app.manage(state.clone());
-            setup_tray(app, language)?;
-            // 应用菜单要在启动时就替换好，否则要等第一次保存设置后才生效。
-            #[cfg(target_os = "macos")]
-            apply_application_menu(app.handle(), language);
-            if !hide_on_start {
-                show_main_window(app.handle());
-            } else {
-                notify_tray_background(app.handle(), &state);
-            }
-            spawn_scheduler(app.handle().clone(), state.clone());
-            // 启动即对齐一次原生外观（含窗口背景色），避免标题栏先显示默认灰再跳变。
-            let startup_theme = app_data(&state).settings.theme;
-            apply_theme_to_windows(app.handle(), &startup_theme);
-            #[cfg(target_os = "macos")]
-            start_system_theme_watcher(app.handle().clone(), state);
-            updater::start_background_update_checks(
-                app.handle().clone(),
-                app.state::<AppState>().inner().clone(),
-            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2881,10 +2909,9 @@ pub fn run() {
                     // Keep the tray-only process alive after the last WebView is destroyed.
                     api.prevent_exit();
                 } else {
-                    app.state::<AppState>()
-                        .0
-                        .scheduler_stop
-                        .store(true, Ordering::SeqCst);
+                    if let Some(state) = app.try_state::<AppState>() {
+                        state.0.scheduler_stop.store(true, Ordering::SeqCst);
+                    }
                 }
             }
             if let RunEvent::WindowEvent {
@@ -3812,5 +3839,35 @@ mod tests {
         fs::remove_file(path).unwrap();
         fs::remove_dir(occupied).unwrap();
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn startup_persistence_skips_unchanged_files_and_reports_failed_changes() {
+        let directory = std::env::temp_dir().join(format!("remindon-startup-save-{}-{}", std::process::id(), Local::now().timestamp_nanos_opt().unwrap()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("remindon.json");
+        let mut data = AppData::default();
+        persist_startup_data(&path, &data).unwrap();
+        let content = fs::read(&path).unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // 禁止共享写入/删除，验证相同配置无需替换即可启动。
+            let locked = fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+            persist_startup_data(&path, &data).unwrap();
+            data.settings.rest_interval_minutes += 1;
+            assert!(persist_startup_data(&path, &data).is_err());
+            assert_eq!(fs::read(&path).unwrap(), content);
+            drop(locked);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            persist_startup_data(&path, &data).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), content);
+            data.settings.rest_interval_minutes += 1;
+        }
+        persist_startup_data(&path, &data).unwrap();
+        assert_ne!(fs::read(&path).unwrap(), content);
+        fs::remove_dir_all(directory).unwrap();
     }
 }

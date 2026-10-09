@@ -63,6 +63,18 @@ test('persistence retry synchronizes the draft before the next queued setting', 
   assert.equal(app.state.data.value.settings.theme, 'light')
 })
 
+test('startup persistence failure displays loaded data before an explicit retry', async () => {
+  const app = await mountApp({ nativeErrors: { persistenceError: 'file locked' } })
+  assert.equal(app.state.data.value.settings.restIntervalMinutes, 1)
+  assert.equal(app.state.persistenceError.value, 'file locked')
+  app.setInvoke('load_data', async (args) => {
+    assert.equal(args, undefined, 'explicit retries keep the existing retry behavior')
+    return JSON.parse(JSON.stringify(app.state.data.value))
+  })
+  await app.state.retryPersistence()
+  assert.equal(app.state.persistenceError.value, '')
+})
+
 test('scheduler failures survive reload and cannot be cleared by a persistence retry', async () => {
   const app = await mountApp({ nativeErrors: { schedulerError: 'state lock poisoned' } })
   assert.equal(app.state.schedulerError.value, 'state lock poisoned')
@@ -119,7 +131,12 @@ async function mountApp({ enabled = true, status = resting, nativeErrors = { aut
       invoke: async (command, args) => {
         calls.push(command)
         if (invokeHandlers.has(command)) return invokeHandlers.get(command)(args)
-        if (command === 'load_data') return structuredClone(settingsData)
+        if (command === 'load_data') {
+          if (calls.filter((command) => command === 'load_data').length === 1) {
+            assert.equal(args?.retryPersistence, false, 'initial load must not depend on a writable config file')
+          }
+          return structuredClone(settingsData)
+        }
         if (command === 'get_native_errors') return nativeErrors
         if (command === 'get_autostart_status') {
           if (nativeErrors.autostartError) throw nativeErrors.autostartError

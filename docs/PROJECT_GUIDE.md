@@ -68,6 +68,8 @@ Settings are saved automatically in `remindon.json`. Store, installer, portable,
 
 Import and export are available in Settings. Successful import closes active popups, clears the queue, cancels timers and pending computer actions, clears pause/snooze state, and restarts timing using the imported configuration. The current configuration version is 6 and older versions are not migrated. A damaged or incompatible stored file is backed up before defaults are generated; importing another version reports an error. Export does not transfer machine-specific autostart ownership.
 
+Unchanged settings are not rewritten at launch. If startup needs to save changes but writing fails, the main window shows the validated configuration and a retry banner; scheduled reminders pause until persistence recovers. A readable current-version file that fails business validation is preserved, and a startup error dialog identifies the file and validation error.
+
 ## Updates and release assets
 
 [GitHub Releases](https://github.com/Smileher/RemindOn/releases) hosts updates, mirrored to [Gitee](https://gitee.com/smileher/RemindOn/releases). The ordinary builds read `latest.json` and use the embedded public key to validate signed update packages. Automatic checks run at launch and then every 24 hours while the app stays running. Failures are recorded in About without opening a dialog; manual failures also show a download entry. Development and Store builds do not use this updater.
