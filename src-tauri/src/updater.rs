@@ -414,71 +414,7 @@ pub async fn download_portable_update(
     app: tauri::AppHandle,
     expected_version: String,
 ) -> Result<String, String> {
-    if get_update_mode(app.clone())? != UpdateMode::Portable {
-        return Err("The current copy is not running in portable mode".to_string());
-    }
-    validate_release_version(&expected_version)?;
-
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(300))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let manifest_bytes = client
-        .get(UPDATE_MANIFEST_URL)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|error| error.to_string())?
-        .bytes()
-        .await
-        .map_err(|error| error.to_string())?;
-    let manifest: UpdateManifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
-    if manifest.version != expected_version {
-        return Err("The available version changed; check for updates again".to_string());
-    }
-    let asset = manifest
-        .downloads
-        .get(PORTABLE_DOWNLOAD_TARGET)
-        .ok_or_else(|| "No portable update is available for the current platform".to_string())?;
-    validate_download_asset(&expected_version, asset)?;
-
-    let download_dir = app
-        .path()
-        .download_dir()
-        .map_err(|error| error.to_string())?;
-    fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
-    let expected_hash = asset.sha256.to_ascii_lowercase();
-    let preferred_path = download_dir.join(&asset.file_name);
-    if preferred_path.is_file()
-        && checksum_file(&preferred_path).is_ok_and(|hash| hash == expected_hash)
-    {
-        emit_download_progress(&app, 1, Some(1));
-        return Ok(preferred_path.to_string_lossy().into_owned());
-    }
-
-    let final_path = available_download_path(&download_dir, &asset.file_name);
-    let part_path = partial_download_path(&final_path);
-    if part_path.exists() {
-        fs::remove_file(&part_path).map_err(|error| error.to_string())?;
-    }
-    let result = download_to_file(&client, &app, asset, &part_path).await;
-    if let Err(error) = result {
-        let _ = fs::remove_file(&part_path);
-        return Err(error);
-    }
-    let downloaded_hash = checksum_file(&part_path)?;
-    if downloaded_hash != expected_hash {
-        let _ = fs::remove_file(&part_path);
-        return Err("The downloaded file failed verification; download it again".to_string());
-    }
-    if let Err(error) = fs::rename(&part_path, &final_path) {
-        let _ = fs::remove_file(&part_path);
-        return Err(error.to_string());
-    }
-    Ok(final_path.to_string_lossy().into_owned())
+    download_portable_update_from_manifest(&app, &expected_version, UPDATE_MANIFEST_URL).await
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -533,6 +469,10 @@ async fn download_portable_update_from_manifest(
         .map_err(|error| error.to_string())?;
     fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
     let expected_hash = asset.sha256.to_ascii_lowercase();
+    if let Some(path) = verified_download_path(&download_dir, &asset.file_name, &expected_hash) {
+        emit_download_progress(app, 1, Some(1));
+        return Ok(path.to_string_lossy().into_owned());
+    }
     let final_path = available_download_path(&download_dir, &asset.file_name);
     let part_path = partial_download_path(&final_path);
     if part_path.exists() {
@@ -692,6 +632,33 @@ fn available_download_path(directory: &Path, file_name: &str) -> PathBuf {
         }
     }
     unreachable!()
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn verified_download_path(directory: &Path, file_name: &str, expected_hash: &str) -> Option<PathBuf> {
+    let preferred = directory.join(file_name);
+    if preferred.is_file() && checksum_file(&preferred).is_ok_and(|hash| hash == expected_hash) {
+        return Some(preferred);
+    }
+    let file = Path::new(file_name);
+    let stem = file.file_stem()?.to_str()?;
+    let extension = file.extension()?.to_str()?;
+    let prefix = format!("{stem} (");
+    let suffix = format!(").{extension}");
+    // 兼容已下载的编号副本；编号中间被删除也不能导致再次下载。
+    for entry in fs::read_dir(directory).ok()? {
+        let Ok(entry) = entry else { continue; };
+        let name = entry.file_name();
+        let Some(index) = name.to_str().and_then(|name| name.strip_prefix(&prefix))
+            .and_then(|name| name.strip_suffix(&suffix)) else { continue; };
+        if index.parse::<u64>().is_ok_and(|index| index > 0) {
+            let path = entry.path();
+            if path.is_file() && checksum_file(&path).is_ok_and(|hash| hash == expected_hash) {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -929,6 +896,30 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .ends_with(".part"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verified_downloads_are_reused_without_overwriting_other_files() {
+        let root = test_root("reuse-download");
+        fs::create_dir_all(&root).unwrap();
+        let file_name = expected_download_file_name("0.7.0");
+        let preferred = root.join(&file_name);
+        fs::write(&preferred, b"verified update").unwrap();
+        let expected_hash = checksum_file(&preferred).unwrap();
+        assert_eq!(verified_download_path(&root, &file_name, &expected_hash), Some(preferred.clone()));
+
+        fs::write(&preferred, b"different file").unwrap();
+        let first = available_download_path(&root, &file_name);
+        fs::write(&first, b"partial file").unwrap();
+        let second = available_download_path(&root, &file_name);
+        fs::write(&second, b"verified update").unwrap();
+        fs::remove_file(first).unwrap();
+        assert_eq!(verified_download_path(&root, &file_name, &expected_hash), Some(second.clone()));
+        assert_eq!(fs::read(&preferred).unwrap(), b"different file");
+
+        fs::write(&second, b"corrupt update").unwrap();
+        assert!(verified_download_path(&root, &file_name, &expected_hash).is_none());
         fs::remove_dir_all(root).unwrap();
     }
 }
